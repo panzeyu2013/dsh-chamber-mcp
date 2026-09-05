@@ -1,0 +1,65 @@
+
+=== boot scratch instance
+cookie minted (yes)
+
+=== workspace.create ws-a/ws-b
+ws-a "3acbbbee-536b-4ca0-a965-cb2d3e108140" created=true
+ws-b "46fd26f9-82ff-400d-9106-4dd6916a163d" created=true
+
+=== baseline: plugin-inventory before install
+dsh-mcp-scope row present before install: false
+
+=== baseline: settings describe (ns count)
+namespaces: agent-default-model, subagent-model-selection, ui-theme, locale, ui-onboarding, ui-conversation, ui-chat, llm-deepseek, web-search-deepseek, agent-loop, agent-presets, shell, permission, llm-pi-ai
+mcp-scope present before install: false
+
+=== stop for install
+
+=== dsh plugin --profile web add file:<tgz>
+exit=0
+Packages: +97
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Packages are cloned from the content-addressable store to the virtual store.
+  Content-addressable store is at: /root/projects/dsh-mcp-scope/.smoke/homedir/.local/share/pnpm/store/v11
+  Virtual store is at:             node_modules/.pnpm
+Progress: resolved 96, reused 96, downloaded 0, added 97, done
+Done in 621ms using pnpm v11.21.0
+
+bundles after add: @deepseek-ai/dsh-base, @deepseek-ai/dsh-web-app, dsh-mcp-scope
+bundles includes dsh-mcp-scope: true
+
+=== reboot after install
+
+=== plugin-inventory after install
+row: {"entryId":"include:mcp-scope","moduleName":"dsh-mcp-scope","enabled":true,"fiberPhase":"active"}
+
+=== settings describe: mcp-scope namespace
+mcp-scope ns: revision=0 value={"servers":[],"overrides":{}}
+schema kind: {"uid":786,"refs":{"746":{"type":"string","meta":{"required":true}},"749":{"type":"string","meta":{"required":true,"pattern":{"source":"^[A-...
+
+=== credentials.set MCP_SCOPE_TEST_TOKEN
+describe: {"MCP_SCOPE_TEST_TOKEN":{"configured":true,"source":"file","writable":true}}
+value never rides the wire: true
+
+=== settings.mutate: add stdio server (fixture)
+after mutate: revision=1 servers=[{"serverName":"fixture","transport":"stdio","command":"/root/.nvm/versions/node/v22.22.3/bin/node","args":["/root/projects/dsh-mcp-scope/.smoke/fixture-mcp/echo-server.mjs"],"cwd":"","envKeys":["MCP_SCOPE_TEST_TOKEN"]}]
+
+=== stale-revision write refused
+settings-conflict observed: true
+
+=== wait for supervisor connect + sync (boot-log evidence)
+
+=== override ws-b OFF for server fixture
+done
+
+=== create session in ws-a (expected: tools applied)
+session-a session-1b3fc120-6791-4807-82b3-f64619275f5f
+
+=== create session in ws-b (expected: no tools)
+session-b session-74c13017-608d-4c5e-8322-47c3f4224bae
+
+=== flip ws-b ON (expected: apply push to live session-b agent)
+
+=== flip ws-b OFF again (expected: revoke)
+
+=== sessions/wait evidence; stop instance

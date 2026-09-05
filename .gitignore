@@ -1,0 +1,19 @@
+# deps & builds
+node_modules/
+lib/
+dist/
+*.tsbuildinfo
+.pnpm-store/
+.tools/
+
+# scratch / smoke
+.smoke/
+smoke/
+*.tgz
+
+# editors
+.DS_Store
+.idea/
+.vscode/
+# recon evidence artifacts
+.recon/
