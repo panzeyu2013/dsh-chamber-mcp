@@ -24,6 +24,7 @@ Source: the locked MVP requirements (message #1). Each row: requirement → how 
 
 ## Data model
 
-- `servers: ServerDef[]`, `overrides: Record<WorkspaceId, ServerId[]>` (recorded = explicitly off), `revision`.
-- `enabled(w, s) = !overrides[w]?.includes(s.id)` — new server/workspace default-on.
+- `servers: ServerDef[]`, `overrides: Record<WorkspaceId, Record<ServerName, true>>` (recorded = explicitly off; dict-of-dicts so a toggle is one atomic path op — same semantics as the plan's array shorthand).
+- `enabled(w, s) = overrides[w]?.[s] === undefined` — new server/workspace default-on.
+- Round-2 (review) decisions recorded in docs/review/*: subagent/delegation children are not adopted (preset-governed), workspace membership is re-derived per push/reconcile, credentials values with CR/LF/NUL are rejected at the transport.
 - Storage: dsh settings domain (plugin namespace) + credentials domain (write-only values); per-instance isolation via DSH_HOME.

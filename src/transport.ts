@@ -10,7 +10,9 @@
  * Stdio children never inherit credential-shaped or `DSH_*` ambient env:
  * `buildChildEnv` = `{ ...scrubbedParentEnv(), ...explicitEnv }`, spawn is
  * `shell:false` via the SDK. Streamable HTTP carries resolved headers on
- * every request (`requestInit.headers`).
+ * every request (`requestInit.headers`). Resolved values containing CR/LF/NUL
+ * are rejected per key/header (warn names the ref only) so they can neither
+ * reach `Headers`/env nor leak into error text in host logs (SEC-02).
  *
  * @module
  */
@@ -26,6 +28,19 @@ export type CredentialResolver = (ref: string) => Promise<{ value: string; sourc
 
 /** Diagnostic sink for resolution warnings (logger.warn-compatible). */
 export type WarnSink = (message: string) => void
+
+/**
+ * Credential values that can corrupt a child env or HTTP header set and echo
+ * verbatim into host logs via Node/SDK error strings: CR/LF (header/env
+ * injection + log-line forgery) and NUL (invalid env values). Values
+ * containing any of these are rejected at the transport boundary (SEC-02).
+ */
+const INVALID_VALUE_PATTERN = /[\r\n\0]/
+
+/** Whether a resolved credential value must not reach env/headers. */
+function invalidCredentialValue(value: string): boolean {
+  return INVALID_VALUE_PATTERN.test(value)
+}
 
 /**
  * The subprocess seam's scrubbed parent env (credential-shaped and stale
@@ -57,6 +72,12 @@ export async function resolveServerEnv(
       if (warn) warn(`mcp-scope(${server.serverName}): credential ref "${key}" is not configured — omitting env key`)
       continue
     }
+    // Reject values that would corrupt the child env or leak into log text;
+    // the warning names the key only, never the value.
+    if (invalidCredentialValue(credential.value)) {
+      if (warn) warn(`mcp-scope(${server.serverName}): credential ref "${key}" resolved to an invalid value (contains CR/LF/NUL) — omitting env key`)
+      continue
+    }
     extra[key] = credential.value
   }
   return extra
@@ -78,6 +99,13 @@ export async function resolveServerHeaders(
     const credential = await resolve(header.ref)
     if (credential === undefined || credential.value === '') {
       if (warn) warn(`mcp-scope(${server.serverName}): credential ref "${header.ref}" is not configured — omitting header "${header.name}"`)
+      continue
+    }
+    // Reject values that would throw inside `new Headers(...)` with the raw
+    // value embedded in the error text (SEC-02); the warning names the ref
+    // and header only, never the value.
+    if (invalidCredentialValue(credential.value)) {
+      if (warn) warn(`mcp-scope(${server.serverName}): credential ref "${header.ref}" resolved to an invalid value (contains CR/LF/NUL) — omitting header "${header.name}"`)
       continue
     }
     headers[header.name] = credential.value

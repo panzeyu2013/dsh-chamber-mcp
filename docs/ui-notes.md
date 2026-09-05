@@ -32,7 +32,7 @@ Also edited (build-gate fixes, see §4): `tsconfig.json` (added `DOM` lib),
   (add server / edit env keys / remove cascade refs / remove cascade override
   pruning / unchanged rows, 6), `toggleOp` (no-op, off→set, on→unset+row prune,
   row kept, 4), shared-semantics alignment (2), `classifySaveError` (1).
-- Component rendering tests skipped (slots-framework typing friction is
+- Component rendering tests initially skipped (slots-framework typing friction was
   high; pure-logic coverage is the required bar).
 
 `npm run typecheck` → green for the whole repo (client + host halves).

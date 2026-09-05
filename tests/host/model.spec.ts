@@ -9,11 +9,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   EMPTY_DOC,
+  RESERVED_OVERRIDE_KEYS,
   credentialRefsOf,
   isEnabled,
   removeServerOverrides,
   validateDoc,
   type McpScopeDoc,
+  type WorkspaceOverrides,
 } from '../../src/shared/model.js'
 import { canonicalCwd, workspaceIdOf } from '../../src/workspace.js'
 
@@ -28,24 +30,6 @@ describe('isEnabled', () => {
     expect(isEnabled({ 'ws-a': { files: true } }, 'ws-a', 'files')).toBe(false)
     // Another server in the same workspace stays on.
     expect(isEnabled({ 'ws-a': { files: true } }, 'ws-a', 'git')).toBe(true)
-  })
-})
-
-describe('removeServerOverrides', () => {
-  it('removes the server from every workspace row and prunes empty rows', () => {
-    const overrides: Record<string, Record<string, true>> = {
-      'ws-a': { files: true, git: true },
-      'ws-b': { files: true },
-      'ws-c': { git: true },
-    }
-    const next = removeServerOverrides(overrides, 'files')
-    expect(next).toEqual({ 'ws-a': { git: true }, 'ws-c': { git: true } })
-    expect(next).not.toBe(overrides)
-  })
-
-  it('returns the same object when nothing changed', () => {
-    const overrides: Record<string, Record<string, true>> = { 'ws-a': { git: true } }
-    expect(removeServerOverrides(overrides, 'files')).toBe(overrides)
   })
 })
 
@@ -131,6 +115,34 @@ describe('validateDoc', () => {
   })
 })
 
+describe('removeServerOverrides', () => {
+  it('removes the server from every row and prunes rows that become empty', () => {
+    const overrides: WorkspaceOverrides = {
+      'ws-a': { files: true, git: true },
+      'ws-b': { files: true },
+      'ws-c': { other: true },
+    }
+    const next = removeServerOverrides(overrides, 'files')
+    expect(next).toEqual({
+      'ws-a': { git: true },
+      'ws-c': { other: true },
+    })
+    // Never mutates the input; rows for untouched servers survive.
+    expect(overrides).toEqual({
+      'ws-a': { files: true, git: true },
+      'ws-b': { files: true },
+      'ws-c': { other: true },
+    })
+  })
+
+  it('returns the same object when nothing changed', () => {
+    const overrides: WorkspaceOverrides = { 'ws-a': { git: true } }
+    expect(removeServerOverrides(overrides, 'files')).toBe(overrides)
+    const empty: WorkspaceOverrides = {}
+    expect(removeServerOverrides(empty, 'files')).toBe(empty)
+  })
+})
+
 describe('credentialRefsOf', () => {
   it('collects envKeys for stdio and header refs for http', () => {
     expect(credentialRefsOf({ serverName: 'a', transport: 'stdio', command: 'x', envKeys: ['A', 'B'] }))
@@ -148,6 +160,17 @@ describe('workspace helpers', () => {
   it('EMPTY_DOC is a frozen empty document', () => {
     expect(EMPTY_DOC.servers).toEqual([])
     expect(EMPTY_DOC.overrides).toEqual({})
+    expect(Object.isFrozen(EMPTY_DOC)).toBe(true)
+    expect(Object.isFrozen(EMPTY_DOC.servers)).toBe(true)
+    expect(Object.isFrozen(EMPTY_DOC.overrides)).toBe(true)
+  })
+
+  it('validateDoc refuses reserved override-key serverNames', () => {
+    for (const name of RESERVED_OVERRIDE_KEYS) {
+      const doc: McpScopeDoc = { servers: [{ serverName: name, transport: 'stdio', command: 'x' }], overrides: {} }
+      const errors = validateDoc(doc)
+      expect(errors.join('\n')).toContain('reserved')
+    }
   })
 
   it('canonicalCwd tolerates missing/empty cwd and unreadable paths', () => {

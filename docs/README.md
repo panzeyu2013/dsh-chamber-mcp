@@ -10,3 +10,4 @@
 | milestones/M0-plan.md | How the smoke evidence is produced (scripts/smoke) |
 | host-notes.md | Host-half API findings & deviations (written during implementation) |
 | ui-notes.md | Client-half API findings & deviations (written during implementation) |
+| review/ | Round-2 six-axis review reports (architecture, implementation, security, performance, interaction, frontend) + consolidated summary |

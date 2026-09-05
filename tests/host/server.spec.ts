@@ -185,7 +185,10 @@ describe('server supervisor with a real stdio MCP server', () => {
 
   it('exhausts the reconnect budget and unregisters with an empty commit', async () => {
     // A server that can never spawn (missing executable) exhausts the budget:
-    // startup attempt + 3 retries → give-up commits an empty defs map.
+    // startup attempt + 3 retries → give-up pushes an empty defs map so the
+    // manager revokes live agents. The unregister commit must NOT read as a
+    // sync: no "synced 0 tools" info line and no generation/syncId inflation
+    // for a server that never listed (IMPL-4).
     const { log, lines } = makeLogger()
     const commits: { serverName: string; syncId: number; size: number }[] = []
     const handle = startServerSupervisor({
@@ -200,7 +203,11 @@ describe('server supervisor with a real stdio MCP server', () => {
     await waitFor(() => commits.some((c) => c.size === 0), 'give-up empty commit')
     expect(handle.state.defs).toBe(EMPTY_DEFS)
     expect(handle.state.connected).toBe(false)
-    expect(commits.filter((c) => c.size === 0).length).toBe(1)
+    // A never-synced server must not report a successful-looking generation.
+    expect(handle.state.generation).toBe(0)
+    expect(handle.state.syncId).toBe(0)
+    expect(commits).toEqual([{ serverName: 'ghost', syncId: 0, size: 0 }])
+    expect(lines.some((l) => l.level === 'info' && l.message.includes('synced 0 tools'))).toBe(false)
     expect(lines.some((l) => l.level === 'error' && l.message.includes('giving up after 3 consecutive failed reconnect attempts'))).toBe(true)
     // No further activity after the give-up commit.
     await new Promise((resolve) => setTimeout(resolve, 150))

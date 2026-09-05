@@ -109,7 +109,9 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
  * Commit notification: called with the new master defs after every committed
  * swap (initial sync, notification re-sync, reconnect re-sync) and with an
  * empty map when the server is unregistered after budget exhaustion.
- * `syncId` is the supervisor's monotonic swap counter.
+ * `syncId` is the supervisor's real-commit counter: it advances only when a
+ * tool listing succeeded, so an unregister push reuses the previous value
+ * (IMPL-4).
  */
 export type DefsChangedListener = (
   serverName: string,
@@ -123,9 +125,13 @@ export interface ServerState {
   readonly serverName: string
   /** Current committed definitions (empty while down/never-synced/given-up). */
   readonly defs: ReadonlyMap<string, ToolDefinition>
-  /** Number of committed generation swaps so far (0 = never synced). */
+  /** Number of committed real tool-generation swaps so far (0 = never synced). */
   readonly generation: number
-  /** Number of committed swaps including unregister swaps; monotonic. */
+  /**
+   * Monotonic counter of committed real tool-generation swaps; give-up
+   * unregister commits push an empty map WITHOUT advancing it (they are not
+   * listings — IMPL-4).
+   */
   readonly syncId: number
   /** Whether a live connected generation currently exists. */
   readonly connected: boolean
@@ -199,14 +205,27 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
   const isCurrent = (generationClient: Client): boolean => !disposed && client === generationClient
 
   /**
-   * Commit a full next generation: swap master state, bump counters, notify
-   * the manager (which pushes into live agent scopes).
+   * Commit a real tool-generation swap: a listing succeeded for this
+   * generation, so the "synced N tools" info line and both counters are
+   * warranted.
    */
   function commit(next: ReadonlyMap<string, ToolDefinition>): void {
     master = next
     generation += 1
     syncId += 1
     log.info(`${label}: synced ${next.size} tool${next.size === 1 ? '' : 's'} (generation ${generation})`)
+    options.onDefsChanged(serverName, syncId, master)
+  }
+
+  /**
+   * Unregister after reconnect-budget exhaustion: push an empty defs map to
+   * the manager (so live agents revoke) WITHOUT reporting a sync or
+   * advancing generation/syncId — no listing ever succeeded for this commit,
+   * so it must not read as one (IMPL-4). The give-up error line is the only
+   * line this path emits.
+   */
+  function unregister(): void {
+    master = EMPTY_DEFS
     options.onDefsChanged(serverName, syncId, master)
   }
 
@@ -271,7 +290,7 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
       syncChain = syncChain.then(() => {
         if (disposed) return
         log.error(`${label}: giving up after ${policy.maxAttempts} consecutive failed reconnect attempts — tools unregistered; reload the plugin or restart the Host to reconnect`)
-        commit(EMPTY_DEFS)
+        unregister()
       })
       return
     }

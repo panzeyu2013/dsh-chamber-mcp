@@ -7,6 +7,18 @@
  * sessions and cwd outside every registered workspace never receive MCP
  * tools.
  *
+ * Workspace membership is NOT frozen at adoption: every push/reconcile
+ * re-resolves each entry's workspace against one live workspace-registry
+ * snapshot, so deleting a workspace (or its directory) while an agent lives
+ * revokes that agent's tools on the next event, and registering a workspace
+ * after an agent was adopted applies them.
+ *
+ * Documented deviation (adoption policy): delegation children
+ * (`session.header.origin === 'subagent'`) are never adopted — neither by
+ * the `agent/created` listener nor by the boot `agents.roots()` scan. They
+ * are governed by their preset scopes and never receive MCP tools from this
+ * plugin; their `toolFilter`/persona narrowing cannot be bypassed here.
+ *
  * Registration goes through `agent.ctx.tools.register(def)` — the ToolRuntime
  * layer of the agent's own scope (register-through-agent.ctx semantics, same
  * as the official schedule plugin) — so entries are owned by the agent scope
@@ -50,7 +62,15 @@ export interface WorkspaceRegistryLike {
 
 /** Latest committed state of one server, as pushed by the manager. */
 export interface ServerPushState {
-  /** Monotonic supervisor swap counter; re-pushes of the same syncId are no-ops. */
+  /**
+   * Manager-owned per-server epoch, bumped on every `startServer` of that
+   * serverName. A restarted supervisor is a fresh handle whose syncId starts
+   * over at 1, so the idempotence guard below keys on (epoch, syncId): the
+   * restart's first commit can never be absorbed by the previous handle's
+   * last push (PERF-2).
+   */
+  epoch: number
+  /** Monotonic supervisor swap counter; re-pushes of the same (epoch, syncId) are no-ops. */
   syncId: number
   /** Committed master defs (empty map = server currently has no tools). */
   defs: ReadonlyMap<string, ToolDefinition>
@@ -58,6 +78,8 @@ export interface ServerPushState {
 
 /** One agent's applied registrations for one server. */
 interface AppliedServer {
+  /** The server epoch this generation was registered under (see {@link ServerPushState}). */
+  epoch: number
   syncId: number
   /** publicName → exact register disposer. */
   disposers: Map<string, () => void>
@@ -66,7 +88,12 @@ interface AppliedServer {
 /** Per-agent bookkeeping; dropped (never disposed) on agent/disposed. */
 interface AgentEntry {
   agent: Agent
-  /** Resolved once at adopt: canonical-cwd match, immutable afterwards. */
+  /**
+   * Live workspace membership (canonical-cwd match). Resolved at adopt, then
+   * re-resolved at the start of every push/reconcile from one fresh registry
+   * snapshot — never treated as immutable (workspaces can be deleted or
+   * created while the agent lives).
+   */
   workspaceId: string | undefined
   /** serverName → applied registrations (absent = nothing applied). */
   applied: Map<string, AppliedServer>
@@ -126,8 +153,25 @@ export function createAgentApplier(options: AgentApplierOptions): AgentApplier {
   const resolveWorkspace = (agent: Agent): string | undefined =>
     workspaceIdOf(agent.session.header.cwd, workspaceRegistry.list())
 
+  /**
+   * Re-resolve every live entry's workspace from ONE fresh registry snapshot.
+   * Runs at the start of each push/reconcile so membership is never judged
+   * off a stale adopt-time id (IMPL-1/ARCH-2).
+   */
+  function refreshEntryWorkspaces(): void {
+    const workspaces = workspaceRegistry.list()
+    for (const entry of entries.values()) {
+      entry.workspaceId = workspaceIdOf(entry.agent.session.header.cwd, workspaces)
+    }
+  }
+
   function adopt(agent: Agent): void {
     if (disposed || entries.has(agent)) return
+    // Delegation children are governed by their preset scopes and never
+    // receive MCP tools from this plugin. Skipping here covers BOTH
+    // adoption paths (the agent/created listener and the boot roots() scan,
+    // which both funnel through adopt), keeping them symmetric.
+    if (agent.session.header.origin === 'subagent') return
     const entry: AgentEntry = {
       agent,
       workspaceId: resolveWorkspace(agent),
@@ -135,7 +179,8 @@ export function createAgentApplier(options: AgentApplierOptions): AgentApplier {
     }
     entries.set(agent, entry)
     logger.info(`${label}: tracking agent ${agent.id}${entry.workspaceId === undefined ? ' (no workspace — MCP tools withheld)' : ` workspace=${entry.workspaceId}`}`)
-    for (const serverName of serverState.keys()) applyToEntry(entry, serverName, false)
+    const docOverrides = overrides()
+    for (const serverName of serverState.keys()) applyToEntry(entry, serverName, docOverrides)
   }
 
   /** Revoke one applied server generation; disposers run only while the agent is alive. */
@@ -161,11 +206,12 @@ export function createAgentApplier(options: AgentApplierOptions): AgentApplier {
    * mid-swap rolls the partial generation back (zero tools from this server
    * for that agent) and logs.
    *
-   * Enablement is judged LIVE (per call) from the current overrides source.
-   * `force` bypasses the same-syncId idempotence guard so a reconcile can
-   * re-judge enablement even when the generation did not change.
+   * Enablement is judged LIVE (per call) from the caller's doc snapshot;
+   * the (epoch, syncId) guard turns an unchanged (state, enablement) pair
+   * into a no-op. `docOverrides` is one snapshot per event so reconcile
+   * loops never re-read the settings doc per (entry × server) pair.
    */
-  function applyToEntry(entry: AgentEntry, serverName: string, force: boolean): void {
+  function applyToEntry(entry: AgentEntry, serverName: string, docOverrides: WorkspaceOverrides): void {
     const state = serverState.get(serverName)
     const applied = entry.applied.get(serverName)
     if (state === undefined) {
@@ -173,19 +219,23 @@ export function createAgentApplier(options: AgentApplierOptions): AgentApplier {
       return
     }
     const { workspaceId } = entry
-    const enabled = workspaceId !== undefined && isEnabled(overrides(), workspaceId, serverName) && state.defs.size > 0
+    const enabled = workspaceId !== undefined && isEnabled(docOverrides, workspaceId, serverName) && state.defs.size > 0
     if (!enabled) {
       if (applied !== undefined) {
         const reason = workspaceId === undefined
           ? 'agent has no workspace'
-          : !isEnabled(overrides(), workspaceId, serverName)
+          : !isEnabled(docOverrides, workspaceId, serverName)
             ? 'disabled for this workspace'
             : 'server has no tools'
         revokeApplied(entry, serverName, reason)
       }
       return
     }
-    if (!force && applied !== undefined && applied.syncId === state.syncId) return // idempotent push
+    // Idempotent (epoch, syncId) push: the generation and the enablement
+    // answer are both unchanged — nothing to do. The epoch half makes a
+    // restarted handle's first commit (syncId restarts at 1) re-apply even
+    // when the previous handle pushed the same syncId (PERF-2).
+    if (applied !== undefined && applied.epoch === state.epoch && applied.syncId === state.syncId) return
     // Swap: dispose the previous generation only after the new one is decided.
     if (applied !== undefined) revokeApplied(entry, serverName, 'generation swap')
     const disposers = new Map<string, () => void>()
@@ -203,7 +253,7 @@ export function createAgentApplier(options: AgentApplierOptions): AgentApplier {
       logger.error(`${label}: tool registration failed for agent ${entry.agent.id} server "${serverName}", no tools registered: ${String(error)}`)
       return
     }
-    entry.applied.set(serverName, { syncId: state.syncId, disposers })
+    entry.applied.set(serverName, { epoch: state.epoch, syncId: state.syncId, disposers })
     logger.info(`${label}: applied ${disposers.size} tool${disposers.size === 1 ? '' : 's'} of server "${serverName}" to agent ${entry.agent.id} (sync ${state.syncId})`)
   }
 
@@ -211,7 +261,11 @@ export function createAgentApplier(options: AgentApplierOptions): AgentApplier {
     pushServerState(serverName, state) {
       if (disposed) return
       serverState.set(serverName, state)
-      for (const entry of entries.values()) applyToEntry(entry, serverName, false)
+      // Workspace membership can change between events (create/delete while
+      // agents live) — refresh every entry before judging this push.
+      refreshEntryWorkspaces()
+      const docOverrides = overrides()
+      for (const entry of entries.values()) applyToEntry(entry, serverName, docOverrides)
     },
     revokeServer(serverName) {
       if (disposed) return
@@ -222,11 +276,15 @@ export function createAgentApplier(options: AgentApplierOptions): AgentApplier {
     },
     reconcile() {
       if (disposed) return
-      // Re-judge enablement for every tracked server × live agent from the
-      // LIVE overrides source; force bypasses the same-syncId idempotence so
-      // a flip OFF (or ON) always lands.
+      // Re-judge enablement for every tracked server × live agent from ONE
+      // fresh workspace snapshot and ONE doc snapshot. There is deliberately
+      // no blanket force pass: applyToEntry computes `enabled` live (and
+      // revokes when disabled), so real OFF⇄ON flips land while unchanged
+      // (epoch, syncId, enablement) pairs stay no-ops (PERF-1/IMPL-2).
+      refreshEntryWorkspaces()
+      const docOverrides = overrides()
       for (const entry of entries.values()) {
-        for (const serverName of serverState.keys()) applyToEntry(entry, serverName, true)
+        for (const serverName of serverState.keys()) applyToEntry(entry, serverName, docOverrides)
       }
     },
     dispose() {

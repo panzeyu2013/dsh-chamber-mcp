@@ -2,9 +2,18 @@
  * Browser half of dsh-mcp-scope: registers the `mcp-scope` settings section
  * (locale + section registration + controller wiring).
  *
- * Required cordis services (fiber inject): slots, locale, connection, remote
+ * Required cordis services (fiber inject): slots, locale, remote
  * (settings/credentials wire events + the credentials namespace), the
  * settings scope binder, and the workspaces list feed used by the section.
+ *
+ * FE-3 note on the inject list: rows are activation/prefetch edges for the
+ * services this plugin actually CALLS. `ctx.remote.credentials.*` is called
+ * (wrapped below), so `remote.credentials` is listed like official plugins
+ * do. `connection` is NOT listed: grep of src/client shows no runtime access
+ * to `ctx.connection` anywhere (only comments named it), and the
+ * settings/credentials transport needs no handle from us — official
+ * settings-general keeps `connection` because it consumes it, which we do
+ * not.
  */
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
@@ -45,8 +54,26 @@ interface McpRemoteWire {
   }
 }
 
+// Type-only re-exports (FE-10): the entry is the one exported subpath, so the
+// useful component/controller types are re-exported here for typed consumers.
 export type { SettingsKey } from './locales.js'
 export type { McpScopeDoc, ServerDef } from '../shared/model.js'
+export type {
+  McpScopeFace,
+  McpStoreSnapshot,
+  McpStoreSource,
+  SaveOutcome,
+  SaveFailure,
+  ServerSaveInput,
+  SecretWrite,
+  SettingsScopePort,
+  CredentialsGateway,
+  RemoteResultLike,
+} from './controller.js'
+export type { McpScopeSectionProps, SectionT, SnapshotHook } from './section.js'
+export type { ServerCardProps } from './server-card.js'
+export type { AddServerFormProps, AddDraft, AddProblems } from './add-form.js'
+export type { WorkspaceItem, WorkspaceListHook, WorkspaceListStatus } from './workspaces.js'
 
 /**
  * cordis fiber typing note: the package augments its own `Context` with
@@ -85,8 +112,11 @@ function remoteCredentials(wire: McpRemoteWire): CredentialsGateway {
   }
 }
 
-/** Required services (cordis fiber inject names). */
-export const inject = ['slots', 'locale', 'connection', 'remote', 'settingsScope', 'workspaces']
+/**
+ * Required services (cordis fiber inject names). `remote.credentials` is the
+ * dotted service this plugin actually calls; see the FE-3 note at the top.
+ */
+export const inject = ['slots', 'locale', 'remote', 'remote.credentials', 'settingsScope', 'workspaces']
 
 export function apply(ctxInput: ClientContext): void {
   const ctx = ctxInput as FiberAwareContext
@@ -96,9 +126,7 @@ export function apply(ctxInput: ClientContext): void {
 
   // (b/c) controller over the bound namespace scope + the credentials wire.
   // The credentials domain is reached through `ctx.remote.credentials` in
-  // rc.1 (there is no `connection.api` on this runtime); 'connection' stays
-  // in the inject list because the settings/credentials transport lives on
-  // the connection generation.
+  // rc.1 (there is no `connection.api` on this runtime).
   const scope = ctx.settingsScope.bind<McpScopeDoc>({
     namespace: MCP_SCOPE_NAMESPACE,
     decode: decodeDoc,

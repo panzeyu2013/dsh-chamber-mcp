@@ -88,8 +88,10 @@ credential refs within one server → reject the write.
 
 - Browser plugin exports `inject = ['slots','locale','connection','remote','settingsScope','workspaces']` + `apply(ctx)`; registers locale ns `mcp-scope.settings` ({en, zh}) then
   `ctx.slots.inject('settings.section', () => ctx.slots.register({ name:'settings.section',
-  id:'mcp-scope', order: 25, label: t-thunk, locale: NS, children: {
-  'mcp-scope.settings.row': { kind:'list', scope:'root' } } }, McpScopeSection))`.
+  id:'mcp-scope', order: 25, label: t-thunk, locale: NS,
+  inject: () => controller.face() }, McpScopeSection))` — no child slots (the
+  framework's InjectFace maps `face.hooks.doc` → the `useDoc` prop; actions
+  pass through verbatim; verified against the shipped renderer).
 - Data: `ctx.settingsScope.bind<Doc>({ namespace:'mcp-scope' })` → snapshot
   {status, value, revision, writable}; workspaces via global `useWorkspaces`.
 - Views: server cards (name, transport, "off in N workspaces", remove, per-workspace

@@ -10,7 +10,9 @@
  *
  * All handle mutations (reconcile diffs, credential restarts) serialize on
  * one mutation chain so a settings commit can never race a credential
- * restart into overlapping server processes.
+ * restart into overlapping server processes. Per-serverName epochs
+ * (incremented on every start) keep the applier able to tell restarted
+ * handles apart, and same-tick restart requests are coalesced per serverName.
  *
  * @module
  */
@@ -76,6 +78,21 @@ export function createManager(options: ManagerOptions): ManagerHandle {
   const tracked = new Map<string, TrackedServer>()
   /** Serialized mutation chain: reconcile diffs and credential restarts. */
   let mutations: Promise<void> = Promise.resolve()
+  /**
+   * Per-serverName epoch, bumped on every `startServer`. The applier keys its
+   * idempotence guard on (epoch, syncId), so a restarted handle's first
+   * commit — syncId restarts at 1 — can never be absorbed by the previous
+   * handle's last push (PERF-2).
+   */
+  const epochs = new Map<string, number>()
+  /** serverNames with a queued `restartServer` mutation (restart coalescing, IMPL-3). */
+  const pendingRestarts = new Set<string>()
+
+  const nextEpoch = (serverName: string): number => {
+    const epoch = (epochs.get(serverName) ?? 0) + 1
+    epochs.set(serverName, epoch)
+    return epoch
+  }
 
   /** Adapter narrowing the live services to the applier's needs. */
   const applier: AgentApplier = createAgentApplier({
@@ -105,22 +122,20 @@ export function createManager(options: ManagerOptions): ManagerHandle {
   async function startServer(server: ServerDef): Promise<void> {
     if (disposed) return
     const { serverName } = server
+    // Capture this start's epoch so every commit of THIS handle (including a
+    // give-up empty commit) pushes under the new generation token.
+    const epoch = nextEpoch(serverName)
     const handle = startServerSupervisor({
       serverName,
       buildTransport: () => createTransport(server, resolveCredential, (message) => logger.warn(message)),
       logger,
       onDefsChanged: (name, syncId, defs) => {
         if (disposed) return
-        applier.pushServerState(name, { syncId, defs })
+        applier.pushServerState(name, { epoch, syncId, defs })
       },
     })
     tracked.set(serverName, { handle, defFingerprint: fingerprint(server) })
     logger.info(`mcp-scope(${serverName}): server started (${server.transport === 'stdio' ? 'stdio' : 'streamable-http'})`)
-    void handle.ready.then(() => {
-      if (!disposed && tracked.get(serverName)?.handle === handle) {
-        // The supervisor already logs connect failures per attempt; nothing to add.
-      }
-    })
   }
 
   /** Stop one tracked server (caller holds the mutation chain). */
@@ -136,9 +151,22 @@ export function createManager(options: ManagerOptions): ManagerHandle {
     }
   }
 
-  /** Restart one server (document change or credential update). */
-  function restartServer(serverName: string, next?: ServerDef): void {
+  /**
+   * Restart one server (document change or credential update). Returns true
+   * when the restart was queued; false when one for the same serverName is
+   * already pending and this request was absorbed (IMPL-3).
+   */
+  function restartServer(serverName: string, next?: ServerDef): boolean {
+    // Coalesce same-tick restart requests per serverName: while a restart is
+    // queued, further requests for the same name (e.g. a burst of
+    // credential events) are absorbed — the running restart's next connect
+    // attempt resolves credentials per attempt anyway. The queued mutation
+    // clears the marker when it runs, so a later, genuinely new request
+    // still restarts.
+    if (pendingRestarts.has(serverName)) return false
+    pendingRestarts.add(serverName)
     enqueue(async () => {
+      pendingRestarts.delete(serverName)
       if (disposed) return
       const current = tracked.get(serverName)
       if (current === undefined) {
@@ -154,6 +182,7 @@ export function createManager(options: ManagerOptions): ManagerHandle {
         await startServer(next)
       }
     })
+    return true
   }
 
   /** Refs currently referenced by the document (for credential filtering). */
@@ -173,8 +202,11 @@ export function createManager(options: ManagerOptions): ManagerHandle {
       if (!refsInUse().has(ref)) return
       const affected = options.getDoc().servers.filter((server) => credentialRefsOf(server).includes(ref))
       for (const server of affected) {
-        logger.info(`mcp-scope(${server.serverName}): credential ref "${ref}" updated — reconnecting`)
-        restartServer(server.serverName, server)
+        // Log only when the restart is actually queued (a same-tick second
+        // event for this server is absorbed by the coalescing gate).
+        if (restartServer(server.serverName, server)) {
+          logger.info(`mcp-scope(${server.serverName}): credential ref "${ref}" updated — reconnecting`)
+        }
       }
     })
     return () => off()

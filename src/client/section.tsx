@@ -1,19 +1,25 @@
 /**
  * `settings.section` page of the mcp-scope feature: server cards + staged
- * add form, driven entirely through the injected controller face (useDoc
+ * add/edit form, driven entirely through the injected controller face (useDoc
  * store hook + actions) and the global `useWorkspaces` hook. No text is
  * hardcoded: every string arrives through the `t` locale seat of the
  * `mcp-scope.settings` namespace.
+ *
+ * Outcome feedback is per surface: cards own their toggle/remove/clear
+ * failures (transient role="alert" banners), the staged form owns its own
+ * save failures, and a successful add/edit is announced by the section as a
+ * role="status" note near the list while focus moves to the affected card
+ * header. There is no single top-level error banner anymore (UX-01/UX-03).
  */
 
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import type { McpStoreSnapshot, McpScopeFace, SaveOutcome, SecretWrite } from './controller.js'
+import type { McpStoreSnapshot, McpScopeFace, SaveOutcome, ServerSaveInput } from './controller.js'
 import type { ServerDef } from '../shared/model.js'
 import { NS } from './locales.js'
-import { AddServerForm } from './add-form.js'
+import { AddServerForm, EMPTY_DRAFT, draftFromServer } from './add-form.js'
 import { ServerCard } from './server-card.js'
-import { workspaceItemsOf, type WorkspaceListHook } from './workspaces.js'
+import { workspaceItemsOf, workspaceListStatusOf, type WorkspaceListHook } from './workspaces.js'
 
 /** Locale seat type of this section's namespace. */
 export type SectionT = TranslateNS<typeof NS>
@@ -42,44 +48,57 @@ export interface McpScopeSectionProps {
   useDoc: DocHook
   useWorkspaces: WorkspaceListHook
   addServer: McpScopeFace['addServer']
+  replaceServer: McpScopeFace['replaceServer']
   removeServer: McpScopeFace['removeServer']
   toggleWorkspace: McpScopeFace['toggleWorkspace']
   unsetCredential: McpScopeFace['unsetCredential']
 }
 
-const noticeStyle: React.CSSProperties = {
+const statusStyle: React.CSSProperties = {
   margin: '0 0 8px',
   padding: '6px 10px',
   borderRadius: 6,
-  background: 'rgba(192,57,43,0.1)',
-  border: '1px solid rgba(192,57,43,0.4)',
+  background: 'rgba(39,174,96,0.1)',
+  border: '1px solid rgba(39,174,96,0.4)',
   fontSize: 13,
 }
 
-/** Map a failed SaveOutcome onto localized banner text. */
-function outcomeText(t: SectionT, outcome: SaveOutcome & { ok: false }): string {
-  switch (outcome.reason) {
-    case 'conflict':
-      return t('error.conflict')
-    case 'secret-write-failed':
-      return t('error.secretWriteFailed', { refs: (outcome.refs ?? []).join(', ') })
-    case 'save-failed':
-      return t('error.saveFailed')
-    case 'invalid':
-      return t('error.unexpected')
-  }
-}
+/** One staged-form session: add mode, or edit mode replacing `original`. */
+type StagedForm =
+  | { mode: 'add' }
+  | { mode: 'edit'; original: ServerDef }
 
 export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
   const { t } = props
   const snapshot = props.useDoc((state) => state)
-  const items = workspaceItemsOf(props.useWorkspaces((state) => state))
-  const [adding, setAdding] = useState(false)
-  const [notice, setNotice] = useState<(SaveOutcome & { ok: false }) | null>(null)
+  const wsState = props.useWorkspaces((state) => state)
+  const items = workspaceItemsOf(wsState)
+  const workspaceStatus = workspaceListStatusOf(wsState)
+  const [staged, setStaged] = useState<StagedForm | null>(null)
+  /** Name of the server whose add/edit just succeeded (role="status" note). */
+  const [justSaved, setJustSaved] = useState<{ name: string; kind: 'added' | 'updated' } | null>(null)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
-  function report(outcome: SaveOutcome): void {
-    setNotice(outcome.ok ? null : outcome)
-  }
+  // The success note is transient; the timer is cleaned up on unmount.
+  useEffect(() => {
+    if (justSaved === null) return
+    const timer = window.setTimeout(() => setJustSaved(null), 6000)
+    return () => window.clearTimeout(timer)
+  }, [justSaved])
+
+  // Refocus sensibly after a successful add/edit: move focus to the affected
+  // card header (browsers scroll it into view). Only runs when the card
+  // actually exists in the committed tree.
+  useEffect(() => {
+    if (justSaved === null) return
+    document.getElementById(`mcp-scope-card-${justSaved.name}`)?.focus()
+  }, [justSaved])
 
   if (snapshot.status === 'loading') {
     return <p style={{ opacity: 0.7 }}>{t('state.loading')}</p>
@@ -89,30 +108,26 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
   }
 
   const { doc, credentials, writable } = snapshot
-  const existingNames = doc.servers.map((server) => server.serverName)
-  const disabled = !writable || adding
+  const formOpen = staged !== null
+  const existingNames = doc.servers
+    .filter((server) => staged?.mode !== 'edit' || server.serverName !== staged.original.serverName)
+    .map((server) => server.serverName)
 
-  async function handleAdd(input: { server: ServerDef; secrets: readonly SecretWrite[] }): Promise<SaveOutcome> {
+  async function handleAdd(input: ServerSaveInput): Promise<SaveOutcome> {
     const outcome = await props.addServer(input)
-    report(outcome)
+    if (!mounted.current || !outcome.ok) return outcome // form reports failures itself
+    setStaged(null)
+    setJustSaved({ name: input.server.serverName, kind: 'added' })
     return outcome
   }
 
-  async function handleRemove(serverName: string): Promise<SaveOutcome> {
-    const outcome = await props.removeServer(serverName)
-    report(outcome)
-    return outcome
-  }
-
-  async function handleToggle(workspaceId: string, serverName: string, off: boolean): Promise<SaveOutcome> {
-    const outcome = await props.toggleWorkspace(workspaceId, serverName, off)
-    report(outcome)
-    return outcome
-  }
-
-  async function handleUnsetCredential(ref: string): Promise<SaveOutcome> {
-    const outcome = await props.unsetCredential(ref)
-    report(outcome)
+  async function handleEdit(input: ServerSaveInput): Promise<SaveOutcome> {
+    if (staged?.mode !== 'edit') return { ok: false, reason: 'save-failed' }
+    const originalName = staged.original.serverName
+    const outcome = await props.replaceServer(originalName, input)
+    if (!mounted.current || !outcome.ok) return outcome // form reports failures itself
+    setStaged(null)
+    setJustSaved({ name: input.server.serverName, kind: 'updated' })
     return outcome
   }
 
@@ -122,30 +137,54 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
         <h2 style={{ margin: 0, fontSize: 17 }}>{t('nav')}</h2>
         <span style={{ flex: 1 }} />
         {writable && (
-          <button type="button" onClick={() => setAdding((open) => !open)}>
-            {adding ? t('action.cancel') : t('add.add')}
+          <button
+            type="button"
+            onClick={() => {
+              setJustSaved(null)
+              setStaged((open) => (open === null ? { mode: 'add' } : null))
+            }}
+          >
+            {formOpen ? t('action.cancel') : t('add.add')}
           </button>
         )}
       </header>
 
       {!writable && <p style={{ opacity: 0.7 }}>{t('state.readonly')}</p>}
-      {notice !== null && (
-        <p role="alert" style={noticeStyle}>
-          {outcomeText(t, notice)}
-        </p>
-      )}
 
-      {adding && (
+      {staged?.mode === 'add' && (
         <AddServerForm
+          key="add"
           t={t}
+          titleKey="add.title"
+          initial={EMPTY_DRAFT}
           existingNames={existingNames}
           writable={writable}
-          onAdd={handleAdd}
-          onClose={() => setAdding(false)}
+          onSave={handleAdd}
+          onClose={() => setStaged(null)}
+        />
+      )}
+      {staged?.mode === 'edit' && (
+        <AddServerForm
+          key={`edit-${staged.original.serverName}`}
+          t={t}
+          titleKey="edit.title"
+          initial={draftFromServer(staged.original)}
+          existingNames={existingNames}
+          writable={writable}
+          onSave={handleEdit}
+          onClose={() => setStaged(null)}
         />
       )}
 
-      {doc.servers.length === 0 && !adding ? (
+      {justSaved !== null && (
+        <p role="status" style={statusStyle}>
+          {justSaved.kind === 'added'
+            ? t('add.added', { name: justSaved.name })
+            : t('edit.saved', { name: justSaved.name })}
+        </p>
+      )}
+
+      {doc.servers.length === 0 && staged === null ? (
         <p style={{ opacity: 0.75 }}>{t('empty.servers')}</p>
       ) : (
         doc.servers.map((server) => (
@@ -156,10 +195,15 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
             doc={doc}
             credentials={credentials}
             writable={writable}
+            workspaceStatus={workspaceStatus}
             workspaces={items}
-            onRemove={handleRemove}
-            onToggle={handleToggle}
-            onUnsetCredential={handleUnsetCredential}
+            onEdit={() => {
+              setJustSaved(null)
+              setStaged({ mode: 'edit', original: server })
+            }}
+            onRemove={props.removeServer}
+            onToggle={props.toggleWorkspace}
+            onUnsetCredential={props.unsetCredential}
           />
         ))
       )}

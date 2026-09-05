@@ -161,4 +161,45 @@ describe('bridge manager lifecycle', () => {
       await dispose()
     }
   })
+
+  it('coalesces same-tick credential restarts per serverName (IMPL-3)', async () => {
+    const { ctx, manager, lines, setDoc, dispose } = await boot()
+    try {
+      setDoc({ servers: [stdioServer('fix', { envKeys: ['FIX_TOKEN'] })], overrides: {} })
+      manager.reconcile()
+      await waitFor(() => started(lines, 'fix') === 1, 'server started log')
+      await waitFor(
+        () => lines.some((l) => l.level === 'info' && l.message.includes('mcp-scope(fix): synced 8 tools')),
+        'initial sync log',
+      )
+      const reconnecting = () => lines.filter((l) => l.level === 'info' && l.message.includes('credential ref "FIX_TOKEN" updated — reconnecting')).length
+
+      // Two credential events for the same in-use ref in the same tick: the
+      // second restart request must be absorbed — one stop, one start, one
+      // "reconnecting" line.
+      ctx.emit('credentials/reference-updated', credentialRef('FIX_TOKEN'))
+      ctx.emit('credentials/reference-updated', credentialRef('FIX_TOKEN'))
+      await waitFor(() => stopped(lines, 'fix') === 1 && started(lines, 'fix') === 2, 'coalesced restart')
+      await waitFor(
+        () => lines.filter((l) => l.message.includes('mcp-scope(fix): synced 8 tools')).length === 2,
+        'post-restart sync',
+      )
+      expect(reconnecting()).toBe(1)
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      expect(stopped(lines, 'fix')).toBe(1)
+      expect(started(lines, 'fix')).toBe(2)
+
+      // The marker is cleared when the queued mutation runs, so a later,
+      // genuinely new event still restarts.
+      ctx.emit('credentials/reference-updated', credentialRef('FIX_TOKEN'))
+      await waitFor(() => stopped(lines, 'fix') === 2 && started(lines, 'fix') === 3, 'later restart after marker cleared')
+      await waitFor(
+        () => lines.filter((l) => l.message.includes('mcp-scope(fix): synced 8 tools')).length === 3,
+        'post-second-restart sync',
+      )
+      expect(reconnecting()).toBe(2)
+    } finally {
+      await dispose()
+    }
+  })
 })

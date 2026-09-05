@@ -3,12 +3,18 @@
  *
  * Deliberately imports no React and no client UI package: components and the
  * cordis wiring (`apply`) consume this controller, and the pure write-plan
- * helpers (`buildSaveOps`, `toggleOp`, `decodeDoc`, …) are unit-tested
- * directly (tests/client/controller.spec.ts).
+ * helpers (`buildSaveOps`, `toggleOp`, `decodeDoc`, `docsEqual`, …) are
+ * unit-tested directly (tests/client/controller.spec.ts).
  *
  * Runtime-write layout (shared with `src/shared/model.ts`):
  *   servers:   ServerDef[]            — whole-array replace is ONE atomic op
  *   overrides: { [workspaceId]: { [serverName]: true } }  — presence = OFF
+ *
+ * Write-verification contract: this runtime's scope.mutate RESOLVES even when
+ * the Host refuses the write (the refusal triggers an internal mirror reload
+ * and a silent return), so a resolved promise alone never reports success —
+ * `applyOps` re-reads the scope after the mutation and compares the landed
+ * document against the intended one (FE-1).
  */
 
 import type { CredentialInfo } from '@deepseek-ai/dsh-credentials/types'
@@ -25,6 +31,7 @@ import {
   type ServerDef,
   type WorkspaceOverrides,
 } from '../shared/model.js'
+import type { SettingsKey } from './locales.js'
 
 export { MCP_SCOPE_NAMESPACE }
 export type { CredentialInfo }
@@ -72,6 +79,67 @@ export function serversEqual(left: readonly ServerDef[], right: readonly ServerD
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
+function arrayEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+/**
+ * Field-wise structural equality of two server definitions, ignoring object
+ * key order and treating absent arrays as empty (wire decoders may drop or
+ * add empty containers without changing semantics). Used by the landed-write
+ * comparison, which must never trip on representation noise.
+ */
+export function serverDefEqual(left: ServerDef, right: ServerDef): boolean {
+  if (left.serverName !== right.serverName || left.transport !== right.transport) return false
+  if (left.transport === 'stdio' && right.transport === 'stdio') {
+    if (left.command !== right.command) return false
+    if ((left.cwd ?? '') !== (right.cwd ?? '')) return false
+    if (!arrayEqual(left.args ?? [], right.args ?? [])) return false
+    return arrayEqual(left.envKeys ?? [], right.envKeys ?? [])
+  }
+  if (left.transport === 'streamable-http' && right.transport === 'streamable-http') {
+    if (left.url !== right.url) return false
+    const leftHeaders = left.headers ?? []
+    const rightHeaders = right.headers ?? []
+    return (
+      leftHeaders.length === rightHeaders.length &&
+      leftHeaders.every((header, index) => {
+        const other = rightHeaders[index]
+        return other !== undefined && header.name === other.name && header.ref === other.ref
+      })
+    )
+  }
+  return false
+}
+
+/**
+ * Whole-document structural equality over both sides normalized (empty
+ * override rows pruned). Servers must match in order, element-wise; override
+ * rows are compared as key sets. This is the re-read check that decides
+ * whether a mutation actually LANDED (FE-1).
+ */
+export function docsEqual(left: McpScopeDoc, right: McpScopeDoc): boolean {
+  const a = normalizeDoc(left)
+  const b = normalizeDoc(right)
+  if (a.servers.length !== b.servers.length) return false
+  for (let index = 0; index < a.servers.length; index += 1) {
+    const server = a.servers[index]
+    const other = b.servers[index]
+    if (server === undefined || other === undefined || !serverDefEqual(server, other)) return false
+  }
+  const aKeys = Object.keys(a.overrides)
+  const bKeys = Object.keys(b.overrides)
+  if (aKeys.length !== bKeys.length) return false
+  return aKeys.every((workspaceId) => {
+    const aRow = a.overrides[workspaceId]
+    const bRow = b.overrides[workspaceId]
+    if (aRow === undefined || bRow === undefined) return false
+    const aNames = Object.keys(aRow)
+    const bNames = Object.keys(bRow)
+    return aNames.length === bNames.length && aNames.every((name) => name in bRow)
+  })
+}
+
 /** All credential refs a whole document references, deduplicated, in doc order. */
 export function credentialRefsOfDoc(doc: McpScopeDoc): string[] {
   const seen = new Set<string>()
@@ -106,6 +174,34 @@ export function overrideDoc(
     if (Object.keys(row).length === 0) delete overrides[workspaceId]
   }
   return { servers: doc.servers, overrides }
+}
+
+/**
+ * Rename the off-switch keys of one server across every workspace row
+ * (edit-with-rename). Presence semantics are preserved per workspace; rows
+ * that did not switch the old name off are returned untouched.
+ */
+export function renameOverrideKey(
+  overrides: WorkspaceOverrides,
+  from: string,
+  to: string,
+): WorkspaceOverrides {
+  if (from === to) return overrides
+  const next: WorkspaceOverrides = {}
+  let changed = false
+  for (const [workspaceId, row] of Object.entries(overrides)) {
+    const rest: Record<string, true> = {}
+    for (const name of Object.keys(row)) {
+      if (name === from) {
+        rest[to] = true
+        changed = true
+      } else {
+        rest[name] = true
+      }
+    }
+    if (Object.keys(rest).length > 0) next[workspaceId] = rest
+  }
+  return changed ? next : overrides
 }
 
 /** Path ops turning `prev`'s overrides into `next`'s (both canonical). */
@@ -183,8 +279,25 @@ export function docErrors(doc: McpScopeDoc): string[] {
   return validateDoc(doc)
 }
 
-/** Classify a rejected settings write (revision fence or other). */
+/**
+ * Classify a rejected settings write (revision fence or other).
+ *
+ * Platform rule: failures are discriminated by their typed surface — a
+ * RemoteError carries `code` plus the `isDSHRemoteError` marker, and the
+ * host's own conflict error carries `code: 'SETTINGS_CONFLICT'` — never by
+ * message text. Check the typed surface first; the message scan is only a
+ * backstop for non-platform errors (FE-2).
+ */
 export function classifySaveError(error: unknown): 'conflict' | 'save-failed' {
+  if (error !== null && typeof error === 'object') {
+    const typed = error as { code?: unknown; isDSHRemoteError?: unknown }
+    if (typeof typed.code === 'string') {
+      return typed.code === 'settings/conflict' || typed.code === 'SETTINGS_CONFLICT'
+        ? 'conflict'
+        : 'save-failed'
+    }
+    if (typed.isDSHRemoteError === true) return 'save-failed'
+  }
   const candidate =
     error !== null && typeof error === 'object' && 'message' in error
       ? String((error as { message: unknown }).message)
@@ -197,6 +310,38 @@ export function classifySaveError(error: unknown): 'conflict' | 'save-failed' {
 export type SaveOutcome =
   | { ok: true }
   | { ok: false; reason: 'invalid' | 'conflict' | 'save-failed' | 'secret-write-failed'; refs?: string[] }
+
+export type SaveFailure = SaveOutcome & { ok: false }
+
+/** Locale key of one failed outcome's message (components call `t(key)`). */
+export function failureKey(failure: SaveFailure): SettingsKey {
+  switch (failure.reason) {
+    case 'conflict':
+      return 'error.conflict'
+    case 'secret-write-failed':
+      return 'error.secretWriteFailed'
+    case 'save-failed':
+      return 'error.saveFailed'
+    case 'invalid':
+      return 'error.unexpected'
+  }
+}
+
+/** Interpolation params for the failed-outcome message, when it has any. */
+export function failureParams(failure: SaveFailure): Record<string, string> | undefined {
+  return failure.reason === 'secret-write-failed' ? { refs: (failure.refs ?? []).join(', ') } : undefined
+}
+
+/** Minimal structural translate seat (compatible with the injected `t`). */
+export interface TextSeat {
+  (key: SettingsKey, params?: Record<string, string | number>): string
+}
+
+/** Localized text of a failed outcome through the caller's translate seat. */
+export function failureText(t: TextSeat, failure: SaveFailure): string {
+  const params = failureParams(failure)
+  return params === undefined ? t(failureKey(failure)) : t(failureKey(failure), params)
+}
 
 export interface SecretWrite {
   ref: string
@@ -252,12 +397,20 @@ export interface McpStoreSource {
   subscribe(listener: () => void): () => void
 }
 
+/** One staged server save (add or whole-array replace). */
+export interface ServerSaveInput {
+  server: ServerDef
+  secrets: readonly SecretWrite[]
+}
+
 /** Face the section registration injects (hooks → `useDoc` + actions). */
 export interface McpScopeFace {
   hooks: {
     doc: McpStoreSource
   }
-  addServer(input: { server: ServerDef; secrets: readonly SecretWrite[] }): Promise<SaveOutcome>
+  addServer(input: ServerSaveInput): Promise<SaveOutcome>
+  /** Replace an existing server (edit): whole-array save under its old name. */
+  replaceServer(oldServerName: string, input: ServerSaveInput): Promise<SaveOutcome>
   removeServer(serverName: string): Promise<SaveOutcome>
   toggleWorkspace(workspaceId: string, serverName: string, off: boolean): Promise<SaveOutcome>
   /** Clear one stored credential literal (badge "Clear" affordance). */
@@ -278,6 +431,8 @@ export class McpScopeController {
   private readonly listeners = new Set<() => void>()
   private disposed = false
   private unsubscribeScope: (() => void) | undefined
+  /** Bumped at every describe start; stale runs must not publish (FE-6). */
+  private credentialsGeneration = 0
 
   constructor(scope: SettingsScopePort, credentials: CredentialsGateway) {
     this.scope = scope
@@ -296,6 +451,7 @@ export class McpScopeController {
     return {
       hooks: { doc: this.store },
       addServer: (input) => self.addServer(input),
+      replaceServer: (oldServerName, input) => self.replaceServer(oldServerName, input),
       removeServer: (serverName) => self.removeServer(serverName),
       toggleWorkspace: (workspaceId, serverName, off) => self.toggleWorkspace(workspaceId, serverName, off),
       unsetCredential: (ref) => self.unsetCredential(ref),
@@ -322,6 +478,7 @@ export class McpScopeController {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.credentialsGeneration += 1
     this.unsubscribeScope?.()
     this.unsubscribeScope = undefined
     this.listeners.clear()
@@ -335,26 +492,47 @@ export class McpScopeController {
     void this.refreshCredentials()
   }
 
-  /** Badge refresh after a credentials-domain change names one of our refs. */
+  /**
+   * Badge refresh after a credentials-domain change names one of our refs.
+   * The gate is the CURRENT DOC's ref set, not badge-map membership: a
+   * previous describe may have failed (ref absent from the map) and this
+   * event is the quiet retry that must still refresh (UX-08).
+   */
   onCredentialRefUpdated(ref: string): void {
     if (this.disposed) return
-    if (ref in this.snapshot.credentials) void this.refreshCredentials()
+    if (credentialRefsOfDoc(this.snapshot.doc).includes(ref)) void this.refreshCredentials()
   }
 
-  /** Re-describe every ref the current document names. */
+  /**
+   * Re-describe every ref the current document names.
+   *
+   * FE-6: out-of-order-publish guard. Overlapping runs (a doc change or a
+   * reference event while a describe is in flight) may settle out of order;
+   * a run may publish only while it is still the newest run AND the doc's
+   * ref set is still exactly the set it described. Stale results are
+   * discarded instead of rolling back fresher views.
+   */
   async refreshCredentials(): Promise<void> {
     if (this.disposed) return
     const refs = credentialRefsOfDoc(this.snapshot.doc)
     if (refs.length === 0) {
+      this.credentialsGeneration += 1 // invalidate any in-flight describe
       if (Object.keys(this.snapshot.credentials).length > 0) {
         this.snapshot = { ...this.snapshot, credentials: EMPTY_CREDENTIALS, credentialsAt: this.snapshot.credentialsAt + 1 }
         this.publish()
       }
       return
     }
+    const generation = ++this.credentialsGeneration
+    const refsAtStart = refs
     try {
       const views = await this.credentials.describe(refs)
       if (this.disposed) return
+      if (generation !== this.credentialsGeneration) return // superseded by a newer run
+      const refsNow = credentialRefsOfDoc(this.snapshot.doc)
+      if (refsNow.length !== refsAtStart.length || refsNow.some((ref, index) => ref !== refsAtStart[index])) {
+        return // the document moved on while the describe was in flight
+      }
       // Publish only what we asked for; unknown keys are dropped.
       const credentials: Record<string, CredentialInfo> = {}
       for (const ref of refs) {
@@ -364,20 +542,43 @@ export class McpScopeController {
       this.snapshot = { ...this.snapshot, credentials, credentialsAt: this.snapshot.credentialsAt + 1 }
       this.publish()
     } catch {
-      // A describe failure must not break the section; badges stay stale and
-      // the next refresh attempt (event or write) retries.
+      // A describe failure must not break the section; badges stay
+      // last-known/unknown and the next refresh attempt (event or write)
+      // retries.
     }
   }
 
   /** Save one staged server: secrets first, then ONE atomic doc mutation. */
-  async addServer(input: { server: ServerDef; secrets: readonly SecretWrite[] }): Promise<SaveOutcome> {
+  async addServer(input: ServerSaveInput): Promise<SaveOutcome> {
     const base = this.snapshot
     if (base.status === 'loading' || base.status === 'unavailable') {
       return { ok: false, reason: base.status === 'unavailable' ? 'save-failed' : 'invalid' }
     }
     const next: McpScopeDoc = { servers: [...base.doc.servers, input.server], overrides: base.doc.overrides }
-    const outcome = await this.submitPlan(base, next, input.secrets)
-    return outcome
+    return this.submitPlan(base, next, input.secrets)
+  }
+
+  /**
+   * Replace one server in place (edit flow). The staged definition replaces
+   * the original at its index through the same whole-array save pipeline;
+   * per-workspace off-switches follow a rename (overrides are keyed by
+   * serverName). A missing original means the list moved on — surface that
+   * as a conflict instead of silently appending.
+   */
+  async replaceServer(oldServerName: string, input: ServerSaveInput): Promise<SaveOutcome> {
+    const base = this.snapshot
+    if (base.status === 'loading' || base.status === 'unavailable') {
+      return { ok: false, reason: base.status === 'unavailable' ? 'save-failed' : 'invalid' }
+    }
+    if (!base.doc.servers.some((server) => server.serverName === oldServerName)) {
+      return { ok: false, reason: 'conflict' }
+    }
+    const renamed = input.server.serverName !== oldServerName
+    const servers = base.doc.servers.map((server) => (server.serverName === oldServerName ? input.server : server))
+    const overrides = renamed
+      ? renameOverrideKey(base.doc.overrides, oldServerName, input.server.serverName)
+      : base.doc.overrides
+    return this.submitPlan(base, { servers, overrides }, input.secrets)
   }
 
   /** Remove one server; credentials orphaned by the removal are cleared. */
@@ -389,8 +590,7 @@ export class McpScopeController {
       servers: base.doc.servers.filter((server) => server.serverName !== serverName),
       overrides: base.doc.overrides,
     }
-    const outcome = await this.submitPlan(base, next, [])
-    return outcome
+    return this.submitPlan(base, next, [])
   }
 
   /** Toggle one workspace switch (atomic single-purpose mutation). */
@@ -401,7 +601,8 @@ export class McpScopeController {
     }
     const ops = toggleOp(base.doc, workspaceId, serverName, off)
     if (ops.length === 0) return { ok: true }
-    return this.applyOps(ops, base.revision)
+    const next = overrideDoc(base.doc, workspaceId, serverName, off)
+    return this.applyOps(ops, base.revision, next)
   }
 
   /** Clear one stored credential literal (write-only domain, no doc write). */
@@ -416,10 +617,22 @@ export class McpScopeController {
     return { ok: true }
   }
 
+  /** Whether the snapshot's badge map proves a stored value for `ref`. */
+  private wasConfigured(base: McpStoreSnapshot, ref: string): boolean {
+    const view = base.credentials[ref]
+    return view !== undefined && view.configured === true
+  }
+
   /**
    * Shared pipeline: (1) doc pre-validation, (2) sequential credential writes
-   * for dirty secrets — any failure aborts BEFORE the document write,
-   * (3) one revision-fenced mutation carrying the whole plan.
+   * for dirty secrets — any failure aborts BEFORE the document write with
+   * auto-cleanup of the values this attempt newly stored, (3) one
+   * revision-fenced mutation carrying the whole plan, whose landing is
+   * verified by re-read. When the document write is refused or conflicts,
+   * the credentials this attempt stored that had NO stored value before are
+   * auto-unset: a cancelled/failed add must never leave an untraceable
+   * literal behind (FE-1 / UX-02). Refs that carried a stored value before
+   * the save are never unset — the old value cannot be restored.
    */
   private async submitPlan(
     base: McpStoreSnapshot,
@@ -431,27 +644,45 @@ export class McpScopeController {
     for (const secret of dirty) {
       if (!CREDENTIAL_REF_PATTERN.test(secret.ref)) return { ok: false, reason: 'invalid' }
     }
+    const preconfigured = new Set(dirty.filter((s) => this.wasConfigured(base, s.ref)).map((s) => s.ref))
     const failedRefs: string[] = []
+    const newlyStored: string[] = []
     for (const secret of dirty) {
       try {
         await this.credentials.set(secret.ref, secret.value)
+        newlyStored.push(secret.ref)
       } catch {
         failedRefs.push(secret.ref)
       }
     }
     if (failedRefs.length > 0) {
-      // Partial writes may have landed; the doc itself is untouched.
+      // Abort-on-secret-failure: partial writes of THIS attempt are undone
+      // (new values only); the doc itself is untouched.
+      await this.cleanupNewlyStored(newlyStored, preconfigured)
       return { ok: false, reason: 'secret-write-failed', refs: failedRefs }
     }
     const plan = buildSaveOps(base.doc, next)
     if (plan.ops.length > 0) {
-      const written = await this.applyOps(plan.ops, base.revision)
-      if (!written.ok) return written
+      const written = await this.applyOps(plan.ops, base.revision, next)
+      if (!written.ok) {
+        // Doc write refused/conflicted: undo the secrets this attempt wrote.
+        await this.cleanupNewlyStored(newlyStored, preconfigured)
+        return written
+      }
     }
     if (plan.unsetRefs.length > 0) {
       await this.unsetQuietly(plan.unsetRefs)
     }
     return { ok: true }
+  }
+
+  /** Best-effort cleanup of refs this attempt stored that had no value before. */
+  private async cleanupNewlyStored(
+    newlyStored: readonly string[],
+    preconfigured: ReadonlySet<string>,
+  ): Promise<void> {
+    const cleanup = newlyStored.filter((ref) => !preconfigured.has(ref))
+    if (cleanup.length > 0) await this.unsetQuietly(cleanup)
   }
 
   /** Best-effort credential cleanup after a successful document write. */
@@ -467,19 +698,34 @@ export class McpScopeController {
     if (refs.length > 0) void this.refreshCredentials()
   }
 
+  /**
+   * One atomic, revision-fenced scope mutation with LANDED verification.
+   *
+   * This runtime's scope.mutate RESOLVES even when the Host refuses the
+   * write (the refusal triggers an internal mirror reload and a silent
+   * return), so a resolved promise alone cannot report success. After the
+   * mutation settles we re-read the scope snapshot and compare the doc
+   * against the intended one (both normalized); anything but an exact match
+   * means the write did not land and must surface as a conflict — never as
+   * ok (FE-1). The catch branch covers local/transport faults only.
+   */
   private async applyOps(
     ops: readonly SettingsPathOpView[],
     expectedRevision: number | undefined,
+    expectedDoc: McpScopeDoc,
   ): Promise<SaveOutcome> {
+    let thrown: unknown
     try {
       await this.scope.mutate(ops, expectedRevision)
     } catch (error) {
-      const reason = classifySaveError(error)
-      this.refresh()
-      return { ok: false, reason }
+      thrown = error
     }
+    if (this.disposed) return { ok: false, reason: 'save-failed' }
     this.refresh()
-    return { ok: true }
+    if (thrown !== undefined) {
+      return { ok: false, reason: classifySaveError(thrown) }
+    }
+    return docsEqual(this.snapshot.doc, expectedDoc) ? { ok: true } : { ok: false, reason: 'conflict' }
   }
 
   private derive(): McpStoreSnapshot {

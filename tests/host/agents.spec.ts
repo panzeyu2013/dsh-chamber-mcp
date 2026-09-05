@@ -55,6 +55,8 @@ const SERVER = 'files'
 const TOOL_A = 'mcp__files__read_file'
 const TOOL_B = 'mcp__files__write_file'
 
+interface LoggedLine { level: 'info' | 'warn' | 'error'; message: string }
+
 /** Live fake agents + workspace registry backed by real temp directories. */
 class Harness {
   readonly ctx = new Context()
@@ -66,6 +68,8 @@ class Harness {
   workspaces: WorkspaceLike[] = []
   overrides: WorkspaceOverrides = {}
   applier!: AgentApplier
+  /** Captured applier log lines (apply/revoke/tracking evidence). */
+  readonly lines: LoggedLine[] = []
   private readonly agentsScope = new Map<Agent, Scope>()
   private readonly tempRoots: string[] = []
 
@@ -86,12 +90,16 @@ class Harness {
     return realpathSync(dir)
   }
 
-  /** Spawn a fake agent whose session cwd is `cwd`; returns the agent. */
-  spawnAgent(id: string, cwd: string | undefined): Agent {
+  /**
+   * Spawn a fake agent whose session cwd is `cwd`. `origin` mirrors
+   * `session.header.origin` ('subagent' on delegation children; absent on
+   * top-level agents).
+   */
+  spawnAgent(id: string, cwd: string | undefined, origin?: 'subagent'): Agent {
     // The agent object itself is the scope key (production: createScope(loopCtx, agent)).
     const agent = {
       id,
-      session: { header: { cwd } },
+      session: { header: { cwd, origin: origin ?? undefined } },
     } as unknown as Agent
     const scope = createScope(this.factoryCtx, agent as never)
     ;(agent as unknown as { ctx: Context }).ctx = scope.ctx
@@ -116,9 +124,23 @@ class Harness {
     if (scope !== undefined) await scope.dispose()
   }
 
+  /** Push one server state through the harness applier (epoch defaults to 1). */
+  push(serverName: string, syncId: number, defs: Map<string, ToolDefinition>, epoch = 1): void {
+    this.applier.pushServerState(serverName, { epoch, syncId, defs })
+  }
+
   cleanup(): void {
     for (const root of this.tempRoots) rmSync(root, { recursive: true, force: true })
   }
+}
+
+/** A minimal live-session run context for executor probes. */
+function execContext(): Parameters<NonNullable<ToolDefinition['execute']>>[1] {
+  return {
+    signal: new AbortController().signal,
+    deferContext: () => {},
+    concludeTurn: () => {},
+  } as never
 }
 
 /** Mount real ToolRuntime + applier on a fresh root Context. */
@@ -126,8 +148,6 @@ async function mount(): Promise<Harness> {
   const h = new Harness()
   await h.ctx.plugin(SystemPrompt)
   await h.ctx.plugin(ToolRuntime)
-  const agentViews: Agent[] = []
-  void agentViews
 
   // The applier's own fiber ctx.
   await h.ctx.plugin(function applierHost(c: Context) {
@@ -145,7 +165,11 @@ async function mount(): Promise<Harness> {
   await h.hostCtx.plugin(function installApplier(c: Context) {
     h.applier = createAgentApplier({
       ctx: c,
-      logger: c.logger,
+      logger: {
+        info: (message) => void h.lines.push({ level: 'info', message }),
+        warn: (message) => void h.lines.push({ level: 'warn', message }),
+        error: (message) => void h.lines.push({ level: 'error', message }),
+      },
       agents: {
         roots: () => [...h.live.values()],
         get: (id: string) => h.live.get(id),
@@ -178,7 +202,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
         [TOOL_A, def(TOOL_A)],
         [TOOL_B, def(TOOL_B)],
       ])
-      h.applier.pushServerState(SERVER, { syncId: 1, defs })
+      h.push(SERVER, 1, defs)
 
       // Enabled workspace agent (default on).
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
@@ -208,7 +232,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       h.createAgent(agentA)
 
       const defs = new Map([[TOOL_A, def(TOOL_A)]])
-      h.applier.pushServerState(SERVER, { syncId: 1, defs })
+      h.push(SERVER, 1, defs)
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
 
       // Settings reconcile disables the workspace → revoked everywhere.
@@ -222,7 +246,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
 
       // Sync-driven revocation: a committed empty generation removes the tools.
-      h.applier.pushServerState(SERVER, { syncId: 2, defs: new Map() })
+      h.push(SERVER, 2, new Map())
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeUndefined()
       expect(h.ctx.tools.get(TOOL_A)).toBeUndefined()
     } finally {
@@ -237,19 +261,16 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       const agentA = h.spawnAgent('agent-a', wsA.path)
       h.createAgent(agentA)
 
-      h.applier.pushServerState(SERVER, { syncId: 1, defs: new Map([[TOOL_A, def(TOOL_A, 'v1')]]) })
+      h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A, 'v1')]]))
       const first = h.ctx.tools.get(TOOL_A, agentA)!
       expect(first).toBeDefined()
 
-      // Same syncId re-push (e.g. a redundant reconcile) must be a no-op.
-      h.applier.pushServerState(SERVER, { syncId: 1, defs: new Map([[TOOL_A, def(TOOL_A, 'v1-dup')]]) })
+      // Same (epoch, syncId) re-push (e.g. a redundant reconcile) must be a no-op.
+      h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A, 'v1-dup')]]))
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBe(first)
 
       // New syncId with a changed tool list: old tool gone, new tool visible.
-      h.applier.pushServerState(SERVER, {
-        syncId: 2,
-        defs: new Map([[TOOL_B, def(TOOL_B, 'v2')]]),
-      })
+      h.push(SERVER, 2, new Map([[TOOL_B, def(TOOL_B, 'v2')]]))
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeUndefined()
       expect(h.ctx.tools.get(TOOL_B, agentA)).toBeDefined()
     } finally {
@@ -273,7 +294,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
         overrides: () => h.overrides,
       })
       try {
-        second.pushServerState(SERVER, { syncId: 1, defs: new Map([[TOOL_A, def(TOOL_A)]]) })
+        second.pushServerState(SERVER, { epoch: 1, syncId: 1, defs: new Map([[TOOL_A, def(TOOL_A)]]) })
         expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
       } finally {
         second.dispose()
@@ -289,14 +310,14 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       const wsA = await h.addWorkspace('a')
       const agentA = h.spawnAgent('agent-a', wsA.path)
       h.createAgent(agentA)
-      h.applier.pushServerState(SERVER, { syncId: 1, defs: new Map([[TOOL_A, def(TOOL_A)]]) })
+      h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A)]]))
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
 
       // agent/disposed → bookkeeping drop only: the scope-layer registrations
       // are owned by the agent ctx's fiber and survive until it tears down
       // (we never call disposers after disposal).
       h.disposeAgent(agentA)
-      h.applier.pushServerState(SERVER, { syncId: 2, defs: new Map([[TOOL_B, def(TOOL_B)]]) })
+      h.push(SERVER, 2, new Map([[TOOL_B, def(TOOL_B)]]))
       h.applier.revokeServer(SERVER)
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
 
@@ -317,10 +338,179 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       const agentA = h.spawnAgent('agent-a', wsA.path)
       h.createAgent(agentA)
       const defs = new Map([[TOOL_A, def(TOOL_A)]])
-      h.applier.pushServerState(SERVER, { syncId: 1, defs })
+      h.push(SERVER, 1, defs)
       // The scoped view resolves the tool for this agent scope.
       const tools = agentA.ctx.get('tools') as ToolRuntime
       expect(tools.get(TOOL_A, agentA)).toBeDefined()
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('re-registers a restarted server whose fresh handle reuses syncId 1 (epoch guard, PERF-2)', async () => {
+    const h = await mount()
+    try {
+      const wsA = await h.addWorkspace('a')
+      const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.createAgent(agentA)
+
+      // Pre-restart handle committed its first generation (epoch 1, syncId 1).
+      const oldGen = def(TOOL_A, 'old-gen')
+      const newGen = def(TOOL_A, 'new-gen')
+      const newTool = def(TOOL_B, 'new-tool')
+      h.push(SERVER, 1, new Map([[TOOL_A, oldGen]]))
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBe(oldGen)
+
+      // A restart disposes the old handle and starts a FRESH one, whose first
+      // commit is again syncId 1 (a fresh supervisor restarts its counter).
+      // The epoch half of the idempotence guard must defeat the old same-
+      // syncId absorption: the new defs land in the agent scope and the stale
+      // pre-restart defs are revoked — otherwise executors bound to the
+      // closed client would keep serving.
+      h.push(SERVER, 1, new Map([[TOOL_A, newGen], [TOOL_B, newTool]]), 2)
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBe(newGen)
+      expect(h.ctx.tools.get(TOOL_A, agentA)).not.toBe(oldGen)
+      expect(h.ctx.tools.get(TOOL_B, agentA)).toBe(newTool)
+
+      // The registered generation executes through the NEW definition.
+      const registered = h.ctx.tools.get(TOOL_A, agentA)!
+      const value = await registered.execute({}, execContext())
+      expect(value).toEqual({ content: [{ type: 'text', text: 'new-gen' }] })
+
+      // Re-pushing the same (epoch, syncId) stays a no-op.
+      const current = h.ctx.tools.get(TOOL_A, agentA)
+      h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A, 'dup')]]), 2)
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBe(current)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('reconcile is a no-op for unchanged pairs and still applies real flips (PERF-1/IMPL-2)', async () => {
+    const h = await mount()
+    try {
+      const wsA = await h.addWorkspace('a')
+      const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.createAgent(agentA)
+
+      const defs = new Map([[TOOL_A, def(TOOL_A)], [TOOL_B, def(TOOL_B)]])
+      h.push(SERVER, 1, defs)
+      const registered = h.ctx.tools.get(TOOL_A, agentA)!
+      expect(registered).toBeDefined()
+
+      // A no-op reconcile (same doc, same overrides, same workspace list)
+      // must perform ZERO re-registrations: no apply and no revoke lines
+      // from the applier, and the registered definition identity is intact.
+      const before = h.lines.length
+      h.applier.reconcile()
+      expect(h.lines.length).toBe(before)
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBe(registered)
+
+      // A real OFF flip still revokes…
+      h.overrides = { [wsA.id]: { files: true } }
+      h.applier.reconcile()
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeUndefined()
+      expect(h.ctx.tools.get(TOOL_B, agentA)).toBeUndefined()
+      expect(h.lines.at(-1)?.message).toContain('revoked server "files" from agent agent-a (disabled for this workspace)')
+
+      // …and a real ON flip still re-registers from the retained state.
+      h.overrides = {}
+      h.applier.reconcile()
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
+      expect(h.ctx.tools.get(TOOL_B, agentA)).toBeDefined()
+      expect(h.lines.at(-1)?.message).toContain('applied 2 tools of server "files" to agent agent-a')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it("revokes tools when the entry's workspace disappears from the registry (IMPL-1/ARCH-2)", async () => {
+    const h = await mount()
+    try {
+      const wsA = await h.addWorkspace('a')
+      const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.createAgent(agentA)
+      const defs = new Map([[TOOL_A, def(TOOL_A)]])
+      h.push(SERVER, 1, defs)
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
+
+      // Workspace deleted from the registry while its agent lives: the next
+      // reconcile must revoke — the entry is workspace-less again.
+      h.workspaces = []
+      h.applier.reconcile()
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeUndefined()
+      expect(h.lines.at(-1)?.message).toContain('revoked server "files" from agent agent-a (agent has no workspace)')
+
+      // A fresh push of another generation must not resurrect the tools.
+      h.push(SERVER, 2, new Map([[TOOL_B, def(TOOL_B)]]), 2)
+      expect(h.ctx.tools.get(TOOL_B, agentA)).toBeUndefined()
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('applies tools once a workspace appears for a previously workspace-less agent (IMPL-1/ARCH-2)', async () => {
+    const h = await mount()
+    try {
+      const dir = h.makeOutsideDir()
+      const agentA = h.spawnAgent('agent-a', dir)
+      h.createAgent(agentA)
+      const defs = new Map([[TOOL_A, def(TOOL_A)]])
+      h.push(SERVER, 1, defs)
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeUndefined()
+
+      // The session's directory becomes a registered workspace AFTER
+      // adoption: the next reconcile resolves the entry into it.
+      h.workspaces.push({ id: 'ws-late', path: dir })
+      h.applier.reconcile()
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it("never adopts delegation children (header.origin === 'subagent') — listener and boot scan (ARCH-3/IMPL-6)", async () => {
+    const h = await mount()
+    try {
+      const wsA = await h.addWorkspace('a')
+      const root = h.spawnAgent('agent-root', wsA.path)
+      const child = h.spawnAgent('agent-child', wsA.path, 'subagent')
+      // Listener path: both agents are published AFTER activation. The child
+      // must not be adopted even though its cwd is in an enabled workspace.
+      h.createAgent(root)
+      h.createAgent(child)
+      const defs = new Map([[TOOL_A, def(TOOL_A)]])
+      h.push(SERVER, 1, defs)
+      expect(h.ctx.tools.get(TOOL_A, root)).toBeDefined()
+      expect(h.ctx.tools.get(TOOL_A, child)).toBeUndefined()
+      expect(h.lines.some((l) => l.message.includes('tracking agent agent-child'))).toBe(false)
+      expect(h.lines.some((l) => l.message.includes('tracking agent agent-root'))).toBe(true)
+
+      // Boot path: a fresh applier (plugin reload) scans agents.roots(); the
+      // already-live child must still be skipped, keeping the scan symmetric
+      // with the agent/created listener.
+      const bootLines: LoggedLine[] = []
+      const second = createAgentApplier({
+        ctx: h.hostCtx,
+        logger: {
+          info: (message) => void bootLines.push({ level: 'info', message }),
+          warn: (message) => void bootLines.push({ level: 'warn', message }),
+          error: (message) => void bootLines.push({ level: 'error', message }),
+        },
+        agents: { roots: () => [...h.live.values()], get: (id: string) => h.live.get(id) },
+        workspaceRegistry: { list: () => [...h.workspaces] },
+        overrides: () => h.overrides,
+      })
+      try {
+        expect(bootLines.some((l) => l.message.includes('tracking agent agent-root'))).toBe(true)
+        expect(bootLines.some((l) => l.message.includes('tracking agent agent-child'))).toBe(false)
+        // The child never receives tools from any applier, and its disposal
+        // is a bookkeeping no-op.
+        h.disposeAgent(child)
+        expect(h.ctx.tools.get(TOOL_A, child)).toBeUndefined()
+      } finally {
+        second.dispose()
+      }
     } finally {
       h.cleanup()
     }

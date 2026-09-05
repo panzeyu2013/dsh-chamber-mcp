@@ -40,6 +40,14 @@ function resolver(table: Record<string, string | undefined>): CredentialResolver
   }
 }
 
+/** Resolver that returns stored values verbatim (used for invalid-value tests). */
+function rawResolver(table: Record<string, string | undefined>): CredentialResolver {
+  return async (ref) => {
+    const value = table[ref]
+    return value === undefined ? undefined : { value, source: 'test' }
+  }
+}
+
 describe('buildChildEnv', () => {
   const SENSITIVE = ['MCP_SECRET_TOKEN', 'API_KEY', 'PASSWORD_1']
   const DSHISH = ['DSH_HOME', 'dsh_token', 'Dsh_Whatever']
@@ -103,6 +111,47 @@ describe('resolveServerEnv / resolveServerHeaders', () => {
   it('returns empty maps for the wrong transport shape', async () => {
     expect(await resolveServerEnv({ serverName: 'srv', transport: 'streamable-http', url: 'https://x' }, resolver({}))).toEqual({})
     expect(await resolveServerHeaders(stdioDef(), resolver({}))).toEqual({})
+  })
+
+  it('rejects env values containing CR/LF/NUL and warns by key only (SEC-02)', async () => {
+    const warnings: string[] = []
+    const env = await resolveServerEnv(
+      stdioDef({ envKeys: ['CRLF', 'NUL', 'OK'] }),
+      rawResolver({ CRLF: 'a\r\nb', NUL: 'x\0y', OK: 'fine' }),
+      (m) => void warnings.push(m),
+    )
+    expect(env).toEqual({ OK: 'fine' })
+    expect(warnings.length).toBe(2)
+    // Each warning names the key and never the value.
+    for (const warning of warnings) {
+      expect(warning).toMatch(/^mcp-scope\(srv\): credential ref "/)
+      expect(warning).toMatch(/omitting env key/)
+      // A leaked value would embed a raw newline or NUL.
+      expect(warning).not.toContain('\r')
+      expect(warning).not.toContain('\n')
+      expect(warning).not.toContain('\0')
+    }
+    expect(warnings[0]).toContain('CRLF')
+    expect(warnings[1]).toContain('NUL')
+    expect(warnings.join('')).not.toContain('a\r\nb')
+    expect(warnings.join('')).not.toContain('x\0y')
+  })
+
+  it('rejects header values containing CR/LF/NUL and warns by ref/name only (SEC-02)', async () => {
+    const warnings: string[] = []
+    const headers = await resolveServerHeaders(
+      { serverName: 'srv', transport: 'streamable-http', url: 'https://x', headers: [{ name: 'X-Auth', ref: 'BAD' }, { name: 'X-Other', ref: 'OK2' }] },
+      rawResolver({ BAD: 'line1\nline2', OK2: 'ok-value' }),
+      (m) => void warnings.push(m),
+    )
+    expect(headers).toEqual({ 'X-Other': 'ok-value' })
+    expect(warnings.length).toBe(1)
+    expect(warnings[0]).toMatch(/^mcp-scope\(srv\): credential ref "BAD"/)
+    expect(warnings[0]).toContain('omitting header "X-Auth"')
+    expect(warnings[0]).not.toContain('\r')
+    expect(warnings[0]).not.toContain('\n')
+    expect(warnings[0]).not.toContain('\0')
+    expect(warnings[0]).not.toContain('line1')
   })
 })
 

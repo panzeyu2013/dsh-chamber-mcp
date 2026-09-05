@@ -93,6 +93,7 @@ npm run pack:tgz       # build + .smoke/dsh-mcp-scope-<ver>.tgz
 
 Docs: `docs/design.md` (architecture), `docs/recon/` (evidence reports),
 `docs/milestones/M0.md` + `M1.md` (smoke evidence), `docs/host-notes.md` /
-`docs/ui-notes.md` (API findings & deviations). Smoke drivers under
-`scripts/smoke/` boot scratch 0.1.2-rc.1 instances and drive the real RPC
-surface.
+`docs/ui-notes.md` (API findings & deviations), `docs/review/` (round-2
+six-axis review reports + `SUMMARY.md` disposition matrix). Smoke drivers
+under `scripts/smoke/` boot scratch 0.1.2-rc.1 instances and drive the real
+RPC surface.

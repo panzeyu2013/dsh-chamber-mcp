@@ -49,7 +49,15 @@ export interface McpScopeDoc {
   overrides: WorkspaceOverrides
 }
 
-export const EMPTY_DOC: McpScopeDoc = { servers: [], overrides: {} }
+/**
+ * Frozen empty document. Runtime-frozen (strict-mode writes throw); typed as
+ * the mutable shape because it is consumed as a schema/installSection entry
+ * and every writer copies before mutating.
+ */
+export const EMPTY_DOC: McpScopeDoc = Object.freeze({
+  servers: Object.freeze([]),
+  overrides: Object.freeze({}),
+}) as unknown as McpScopeDoc
 
 /** Default-on evaluation: no record ⇒ enabled (new servers & workspaces on). */
 export function isEnabled(overrides: WorkspaceOverrides, workspaceId: string, serverName: string): boolean {
@@ -57,7 +65,11 @@ export function isEnabled(overrides: WorkspaceOverrides, workspaceId: string, se
   return row === undefined || row[serverName] === undefined
 }
 
-/** Remove a server from every workspace row; prune empty rows. */
+/**
+ * Remove a server from every workspace's off-switch rows, pruning rows that
+ * become empty. Used by removal flows so a removed server cannot resurrect
+ * as "off" through an orphaned row when it is later re-added.
+ */
 export function removeServerOverrides(overrides: WorkspaceOverrides, serverName: string): WorkspaceOverrides {
   let changed = false
   const next: WorkspaceOverrides = {}
@@ -71,6 +83,14 @@ export function removeServerOverrides(overrides: WorkspaceOverrides, serverName:
   }
   return changed ? next : overrides
 }
+
+/**
+ * Object-key names that must never be used as serverNames: overrides rows are
+ * plain objects keyed by serverName with own-key presence semantics, and
+ * these names would break the off-switch lookup (`in`/bracket reads on
+ * `__proto__` etc. resolve inherited members).
+ */
+export const RESERVED_OVERRIDE_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype'])
 
 /** All credential refs a server definition references. */
 export function credentialRefsOf(server: ServerDef): string[] {
@@ -86,6 +106,9 @@ export function validateDoc(doc: McpScopeDoc): string[] {
   for (const server of doc.servers) {
     if (!SERVER_NAME_PATTERN.test(server.serverName)) {
       errors.push(`server "${server.serverName}": name must match ${SERVER_NAME_PATTERN}`)
+    }
+    if (RESERVED_OVERRIDE_KEYS.has(server.serverName)) {
+      errors.push(`server "${server.serverName}": reserved name (would break the per-workspace off-switch)`)
     }
     if (seen.has(server.serverName)) errors.push(`server "${server.serverName}": duplicate serverName`)
     seen.add(server.serverName)

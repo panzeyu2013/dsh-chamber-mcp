@@ -1,0 +1,10 @@
+dsh plugin add exit=undefined
+bundles: @deepseek-ai/dsh-base, @deepseek-ai/dsh-web-app, dsh-mcp-scope
+on-workspace=c74a284e-179b-459d-993b-fc6d1d675397 off-workspace=0b8363c4-374b-4859-a778-e5740483230e
+servers: ["fixture"]
+session-on=session-b2ddec49-9ce8-4ec2-9382-995c73aa79b5 session-off=session-90a94122-55cb-460d-a6d1-b643a3f15878
+prompted on-workspace
+prompted off-workspace
+note: mock received NO chat requests (known rc.1 headless limitation: cold sessions never start a turn without a UI surface claim)
+mock received 0 chat requests
+R3-live-capture: not-captured (known limitation — see docs/milestones/M1.md)
