@@ -18,6 +18,7 @@
 import z from '@deepseek-ai/schemastery'
 import {
   CREDENTIAL_REF_PATTERN,
+  HEADER_NAME_PATTERN,
   SERVER_NAME_PATTERN,
   type McpScopeDoc,
   type ServerDef,
@@ -25,7 +26,7 @@ import {
 
 /** One credential-ref row of an HTTP header. */
 export const HeaderSchema = z.object({
-  name: z.string().required(),
+  name: z.string().required().pattern(HEADER_NAME_PATTERN),
   ref: z.string().required().pattern(CREDENTIAL_REF_PATTERN),
 })
 
@@ -37,7 +38,7 @@ export const ServerSchema: z<ServerDef> = z.union([
     command: z.string().required(),
     args: z.array(String).default([]),
     cwd: z.string().default(''),
-    envKeys: z.array(String).default([]),
+    envKeys: z.array(z.string().pattern(CREDENTIAL_REF_PATTERN)).default([]),
   }),
   z.object({
     serverName: z.string().required().pattern(SERVER_NAME_PATTERN),

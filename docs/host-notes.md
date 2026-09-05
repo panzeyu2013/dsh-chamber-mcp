@@ -147,9 +147,15 @@ flags and the full config is green at the time of writing.
 6. **Enablement is read LIVE per push/reconcile** (never cached in the
    applier): the first implementation snapshotted `overrides` at attach and
    only refreshed on `reconcile()`, which made defs pushes judge stale
-   settings (caught by the gating tests). `reconcile()` re-judges every
-   tracked server × live agent with `force` (bypasses the same-`syncId`
-   idempotence) while pushes stay idempotent per `syncId`.
+   settings (caught by the gating tests). Round-2 semantics: workspace
+   membership is re-derived per event (one `workspaceRegistry.list()`
+   snapshot per push/reconcile, one `realpathSync` per tracked agent);
+   `reconcile()` is a plain diffed pass (no blanket force — the
+   (epoch, syncId) idempotence guard plus live enablement make unchanged
+   pairs no-ops and flips land); the dedupe key is (epoch, syncId) where the
+   manager-owned per-server epoch bumps on every `startServer`, so a
+   restarted handle's first commit (syncId restarts at 1) is never absorbed
+   by the previous handle's last push.
 7. **`mcp-scope(…):` log prefix** is used for every structured line
    (`server started/stopped`, `synced N tools (generation G)`, connection
    attempts, `agent … apply/revoke`, credential reconnects) so smoke logs can

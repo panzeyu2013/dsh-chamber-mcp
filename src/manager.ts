@@ -168,19 +168,26 @@ export function createManager(options: ManagerOptions): ManagerHandle {
     enqueue(async () => {
       pendingRestarts.delete(serverName)
       if (disposed) return
+      // Presence is judged LIVE at run time (never from the stale snapshot the
+      // caller captured): a server removed from the document while this
+      // restart was queued must be stopped with revocation, or its tools
+      // would outlive it (the queued removal reconcile finds nothing tracked).
+      const present = next !== undefined && options.getDoc().servers.some((s) => s.serverName === next.serverName)
       const current = tracked.get(serverName)
       if (current === undefined) {
-        if (next !== undefined) await startServer(next)
+        if (present) await startServer(next as ServerDef)
+        return
+      }
+      if (!present) {
+        await stopServer(serverName, true)
         return
       }
       // Stop first (its defs stay committed and visible — same semantics as a
       // crash: tools keep failing calls until the fresh generation re-syncs),
-      // then start the replacement definition when one is supplied.
+      // then start the replacement definition.
       await stopServer(serverName, false)
       if (disposed) return
-      if (next !== undefined && options.getDoc().servers.some((s) => s.serverName === next.serverName)) {
-        await startServer(next)
-      }
+      await startServer(next as ServerDef)
     })
     return true
   }
@@ -219,8 +226,15 @@ export function createManager(options: ManagerOptions): ManagerHandle {
         const doc = options.getDoc()
         const nextNames = new Set(doc.servers.map((server) => server.serverName))
         // Vanished servers: revoke their tools everywhere, then stop.
+        // Note: `doc` is a snapshot taken before any await below; a commit
+        // landing mid-reconcile is served by the NEXT reconcile queued after
+        // this one (mutations serialize), so a transient stale pass can only
+        // briefly start/keep a server that a later pass removes.
         for (const serverName of [...tracked.keys()]) {
-          if (!nextNames.has(serverName)) await stopServer(serverName, true)
+          if (!nextNames.has(serverName)) {
+            await stopServer(serverName, true)
+            epochs.delete(serverName)
+          }
         }
         // Appeared or changed servers: start or dispose+start.
         for (const server of doc.servers) {
@@ -239,12 +253,15 @@ export function createManager(options: ManagerOptions): ManagerHandle {
     async dispose() {
       disposed = true
       await mutations.catch(() => {})
+      // stopServer deletes the tracked entry itself — deleting first here
+      // would make the lookup no-op and leak every live supervisor + its
+      // per-agent tool registrations (R2P-1).
       const pending: Promise<void>[] = []
       for (const serverName of [...tracked.keys()]) {
-        tracked.delete(serverName)
         pending.push(stopServer(serverName, true).catch(() => {}))
       }
       await Promise.allSettled(pending)
+      epochs.clear()
       await mutations.catch(() => {})
     },
   }

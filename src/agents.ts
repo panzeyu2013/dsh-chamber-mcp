@@ -143,6 +143,11 @@ export function createAgentApplier(options: AgentApplierOptions): AgentApplier {
   let disposed = false
 
   const label = 'mcp-scope(agents)'
+/** Log-safe error text: control characters stripped, capped. Remote-reflected
+ * payloads (e.g. an HTTP error body echoing a credential value) must never
+ * reach the log verbatim. */
+const fmtError = (error: unknown): string =>
+  String(error).replace(/[\u0000-\u001f\u007f]/g, '?').slice(0, 300)
 
   /** Liveness: the agent is still the live registry entry for its id. */
   const isAlive = (agent: Agent): boolean => agents.get(agent.id) === agent
@@ -194,7 +199,7 @@ export function createAgentApplier(options: AgentApplierOptions): AgentApplier {
         dispose()
       } catch (error) {
         // A disposer must be idempotent; a throw here must not wedge revocation.
-        logger.warn(`${label}: disposer for ${serverName} on ${entry.agent.id} threw: ${String(error)}`)
+        logger.warn(`${label}: disposer for ${serverName} on ${entry.agent.id} threw: ${fmtError(error)}`)
       }
     }
     logger.info(`${label}: revoked server "${serverName}" from agent ${entry.agent.id} (${reason})`)
@@ -250,7 +255,7 @@ export function createAgentApplier(options: AgentApplierOptions): AgentApplier {
       for (const dispose of disposers.values()) {
         try { dispose() } catch { /* partial rollback best effort */ }
       }
-      logger.error(`${label}: tool registration failed for agent ${entry.agent.id} server "${serverName}", no tools registered: ${String(error)}`)
+      logger.error(`${label}: tool registration failed for agent ${entry.agent.id} server "${serverName}", no tools registered: ${fmtError(error)}`)
       return
     }
     entry.applied.set(serverName, { epoch: state.epoch, syncId: state.syncId, disposers })

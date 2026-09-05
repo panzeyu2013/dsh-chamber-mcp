@@ -66,7 +66,12 @@ credential refs within one server → reject the write.
   reconnect policy (fixed defaults 500ms→30s, max 10 per outage, 5s close discipline,
   `tools/list_changed` → serialized re-sync). Master state per server:
   `{ generation, defs: Map<publicName, ToolDefinition>, ready }`.
-- **Registration is per-agent-scope, never global** (the injection gate):
+- **Registration is per-agent-scope, never global** (the injection gate): only agents
+  whose session is not a delegation child (`header.origin !== 'subagent'`) are adopted —
+  children are governed by their preset scopes and never receive MCP tools (round-2
+  decision, ARCH-3); workspace membership is re-derived on every push/reconcile, so a
+  workspace deletion revokes on the next event (rc.1 exposes no workspace lifecycle
+  events — the quiescent window is documented).
   - `agent/created` (root listener) → workspaceOf(session) = canonical-cwd match against
     `workspaceRegistry.list()`; if a workspace W exists and `enabled(W, s)` → apply server's
     defs into `agent.ctx.tools` (each `register()` returns disposer; tracked per agent/server).
@@ -75,7 +80,9 @@ credential refs within one server → reject the write.
     revoke stale defs, register current defs for enabled servers only.
   - `agent/disposed` → entry dropped (ctx-scoped effects die with the agent ctx).
   - Bookkeeping map keyed by Agent; all listeners/disposers effect-wrapped (HMR-safe).
-- **Tool semantics identical to official mcp-client** (pinned contract): public name
+- **Tool semantics mirror official mcp-client** (pinned contract, rc.5-style content
+  rendering: image/audio/resource payloads degrade to placeholders — the rc.1
+  attachments-based image bridge is a documented scope cut): public name
   `mcp__<serverName>__<rawName>` ≤64 chars `[A-Za-z0-9_-]` + 12-hex sha256 suffix on lossy
   normalization; raw MCP inputSchema passthrough; `output {schema, render}` shape; executor
   = raw SDK request `tools/call` + `RawCallToolResultSchema` with `{signal: exec.signal,
@@ -86,7 +93,7 @@ credential refs within one server → reject the write.
 
 ## 5. Client UI (settings section)
 
-- Browser plugin exports `inject = ['slots','locale','connection','remote','settingsScope','workspaces']` + `apply(ctx)`; registers locale ns `mcp-scope.settings` ({en, zh}) then
+- Browser plugin exports `inject = ['slots','locale','remote','remote.credentials','settingsScope','workspaces']` + `apply(ctx)`; registers locale ns `mcp-scope.settings` ({en, zh}) then
   `ctx.slots.inject('settings.section', () => ctx.slots.register({ name:'settings.section',
   id:'mcp-scope', order: 25, label: t-thunk, locale: NS,
   inject: () => controller.face() }, McpScopeSection))` — no child slots (the
@@ -105,9 +112,10 @@ credential refs within one server → reject the write.
 
 ## 6. Build & test tooling
 
-- Deps: runtime `@modelcontextprotocol/sdk@^1.30.0`, `@deepseek-ai/schemastery@^3.18.2`;
-  peers/devDeps `@deepseek-ai/dsh-{tools,settings,credentials,workspace,session,agent,
-  subprocess,scope,llm,brand,util-values}@0.1.2-rc.1`, `@deepseek-ai/cordis@4.0.2`;
+- Deps: runtime `@modelcontextprotocol/sdk@^1.30.0`, `@deepseek-ai/schemastery@^3.18.2`,
+  `zod@^4.4.3`; peers `@deepseek-ai/cordis@4.0.2` + `dsh-timeout` and the dsh-* type
+  surfaces `@deepseek-ai/dsh-{tools,settings,credentials,workspace,session,agent,
+  subprocess,scope,llm,brand,util-values}@0.1.2-rc.1`;
   client externals react 18.3.x etc. All pinned from installed anchor versions.
 - Host half emitted by tsc (NodeNext ESM, explicit `.js` relative imports); client half
   bundled by esbuild (CJS; externals = official platform table + cordis) wrapped in the

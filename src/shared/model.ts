@@ -16,6 +16,9 @@ export const SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
 /** CredentialRef (env-var name) contract: /^[A-Za-z_][A-Za-z0-9_]*$/. */
 export const CREDENTIAL_REF_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
+/** HTTP field-name (token) contract per RFC 9110 tchar. */
+export const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+
 export interface StdioServerDef {
   serverName: string
   transport: 'stdio'
@@ -131,7 +134,9 @@ export function validateDoc(doc: McpScopeDoc): string[] {
       }
       const names = new Set<string>()
       for (const header of server.headers ?? []) {
-        if (header.name === '') errors.push(`server "${server.serverName}": header name must not be empty`)
+        if (!HEADER_NAME_PATTERN.test(header.name)) {
+          errors.push(`server "${server.serverName}": header name "${header.name}" is not a valid HTTP field name`)
+        }
         if (names.has(header.name)) errors.push(`server "${server.serverName}": header "${header.name}" listed twice`)
         names.add(header.name)
         if (!CREDENTIAL_REF_PATTERN.test(header.ref)) {

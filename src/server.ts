@@ -180,6 +180,11 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
   const { serverName } = options
   const policy = resolveReconnectPolicy(options.reconnect, `mcp-scope(${serverName}): reconnect`)
   const label = `mcp-scope(${serverName})`
+/** Log-safe error text: control characters stripped, capped. Remote-reflected
+ * payloads (e.g. an HTTP error body echoing a credential value) must never
+ * reach the log verbatim. */
+const fmtError = (error: unknown): string =>
+  String(error).replace(/[\u0000-\u001f\u007f]/g, '?').slice(0, 300)
   const log = options.logger
   const toolCallTimeoutMs = options.toolCallTimeoutMs ?? DEFAULT_TOOL_CALL_TIMEOUT_MS
 
@@ -299,7 +304,7 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
     log.warn(`${label}: ${action} in ${delayMs}ms (attempt ${failedAttempts}/${policy.maxAttempts})`)
     reconnectTimer = setTimeout(() => {
       reconnectTimer = undefined
-      settling = connectGeneration(false)
+      settling = connectGeneration()
     }, delayMs)
     // An armed reconnect timer must never hold the process open on its own.
     reconnectTimer.unref()
@@ -311,7 +316,7 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
    * sync. Every failure funnels through {@link generationDown}; success arms
    * the onclose-driven disconnect path. Never rejects.
    */
-  async function connectGeneration(startup: boolean): Promise<void> {
+  async function connectGeneration(): Promise<void> {
     const generationClient = new Client(
       { name: 'dsh-mcp-scope', version: '0.0.1' },
       { capabilities: {} },
@@ -341,7 +346,7 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
         } catch (error) {
           // Fetch-phase failure: the previous generation is still committed
           // — keep serving the last good list.
-          if (!disposed) log.error(`${label}: tool re-sync failed: ${String(error)}`)
+          if (!disposed) log.error(`${label}: tool re-sync failed: ${fmtError(error)}`)
         }
       },
     )
@@ -358,7 +363,7 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
       if (firstAttemptError === undefined) firstAttemptError = error
       // Disposal clears current ownership before it closes the generation, so
       // only a live supervisor reports an attempt failure.
-      if (isCurrent(generationClient)) log.warn(`${label}: connection attempt failed: ${String(error)}`)
+      if (isCurrent(generationClient)) log.warn(`${label}: connection attempt failed: ${fmtError(error)}`)
       try { await generationClient.close() } catch { /* transport already gone */ }
       const quiesced = hasClosed() || await waitForClose(closed.promise)
       attemptSettled = true
@@ -384,13 +389,13 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
   }
 
   /** The in-flight (or last settled) connection attempt; dispose awaits it for quiescence. */
-  let settling = connectGeneration(true)
+  let settling = connectGeneration()
 
   const ready: Promise<void> = settling.then(() => {
     if (connected) return
     /* v8 ignore next -- defensive: firstAttemptError is always set when connect/sync fails */
     const error = firstAttemptError ?? new Error(`${label}: initial connection failed`)
-    log.warn(`${label}: initial connection or tool synchronization failed: ${String(error)}`)
+    log.warn(`${label}: initial connection or tool synchronization failed: ${fmtError(error)}`)
   })
 
   const state: ServerState = {

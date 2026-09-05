@@ -17,6 +17,7 @@ export const en = {
   // lifecycle / page-level state
   'state.loading': 'Loading…',
   'state.saving': 'Saving…',
+  'state.clearing': 'Clearing…',
   'state.unavailable': 'MCP server settings are unavailable here (namespace not served to this client or connection is read-only).',
   'state.readonly': 'This document is read-only here; changes cannot be saved.',
 
@@ -53,6 +54,7 @@ export const en = {
   'secret.configured': 'Configured',
   'secret.unset': 'Not configured',
   'secret.unknown': 'Status unknown',
+  'secret.clearing': 'Clearing…',
   'secret.clear': 'Clear',
   'secret.clearHint': 'Removes the stored value; the reference stays on the server.',
 
@@ -60,6 +62,7 @@ export const en = {
   'action.save': 'Save',
   'action.cancel': 'Cancel',
   'action.confirm': 'Confirm',
+  'action.dismiss': 'Dismiss',
 
   // add/edit-server form
   'add.add': 'Add server',
@@ -102,9 +105,12 @@ export const en = {
   'validation.headerNameEmpty': 'Header name must not be empty',
   'validation.envKeyDuplicate': 'Duplicate env key',
   'validation.headerNameDuplicate': 'Duplicate header name',
+  'validation.nameReserved': 'This name is reserved and cannot be used.',
+  'validation.headerNameToken': 'Not a valid HTTP field name.',
 
   // save errors / failures
-  'error.conflict': 'The settings were changed elsewhere; review them and try again.',
+  'error.conflict': 'Not saved: your change was not applied (the settings document changed elsewhere; the latest version was reloaded).',
+  'error.conflictKeptRefs': 'Credential value(s) for {refs} were already updated and stay stored.',
   'error.saveFailed': 'Save failed, please retry.',
   'error.secretWriteFailed': 'Failed to write credential(s): {refs}',
   'error.unexpected': 'Unexpected error.',
@@ -134,6 +140,7 @@ export const zh: Record<SettingsKey, string> = {
   // lifecycle / page-level state
   'state.loading': '加载中…',
   'state.saving': '保存中…',
+  'state.clearing': '清除中…',
   'state.unavailable': 'MCP 服务器设置当前不可用（命名空间未注册到本客户端，或连接为只读）。',
   'state.readonly': '当前文档为只读，无法保存修改。',
 
@@ -170,12 +177,14 @@ export const zh: Record<SettingsKey, string> = {
   'secret.configured': '已配置',
   'secret.unset': '未配置',
   'secret.unknown': '状态未知',
+  'secret.clearing': '清除中…',
   'secret.clear': '清除',
   'secret.clearHint': '清除已存值；服务器上的引用保持不变。',
 
   // actions
   'action.save': '保存',
   'action.cancel': '取消',
+  'action.dismiss': '关闭',
   'action.confirm': '确认',
 
   // add/edit-server form
@@ -203,7 +212,7 @@ export const zh: Record<SettingsKey, string> = {
   'add.secretPlaceholder': '值',
   'add.headerNamePlaceholder': 'Authorization',
   'add.credentialRefPlaceholder': 'AUTH_TOKEN',
-  'add.ellipsis': '……',
+  'add.ellipsis': '…',
   'add.envSectionHint': '以下条目将以环境变量的形式注入该服务器进程。',
   'add.headerSectionHint': '请求头随每次 MCP 请求发送；值仅写入——留空输入框即保留已存值。',
   'add.commandUserHint': '该命令将以此 dsh 实例的用户身份直接执行。',
@@ -219,9 +228,12 @@ export const zh: Record<SettingsKey, string> = {
   'validation.headerNameEmpty': '请求头名称不能为空',
   'validation.envKeyDuplicate': '环境变量键重复',
   'validation.headerNameDuplicate': '请求头名称重复',
+  'validation.nameReserved': '该名称被保留，无法使用。',
+  'validation.headerNameToken': '不是合法的 HTTP 请求头名称。',
 
   // save errors / failures
-  'error.conflict': '设置已在别处修改，请复查后重试',
+  'error.conflict': '未保存：你的修改未生效（设置文档已在别处变化，已重新载入最新版本）。',
+  'error.conflictKeptRefs': '凭据 {refs} 的值已被覆盖更新并继续保留。',
   'error.saveFailed': '保存失败，请重试',
   'error.secretWriteFailed': '凭据写入失败：{refs}',
   'error.unexpected': '发生未知错误',

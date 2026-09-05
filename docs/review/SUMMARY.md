@@ -68,3 +68,64 @@ re-verified after the fix round).
 ## Post-fix verification
 - `tsc` (src + tests) clean; vitest **126/126** (11 files); build deterministic; client bundle requires only `react`/`react/jsx-runtime`; consumer d.ts check compiles.
 - Live smoke re-run (scratch 0.1.2-rc.1): install → inventory active → namespace R/W + revision → server add → sessions/overrides all healthy; mock-LLM capture gap recorded as `not-captured`.
+
+---
+
+# Round-2 addendum (second full review)
+
+Round-2 reports: `docs/review/round2/{architecture,implementation,security,
+performance,interaction,frontend,fix-verification}.md`.
+
+## Corrections to the round-1 matrix (from the fix-verification audit)
+
+- **SEC-06 row overstated**: no per-element schema patterns existed at round-1
+  close (header names were non-empty-only). Now addressed (round-2): schema +
+  shared `validateDoc` + UI enforce `HEADER_NAME_PATTERN` (RFC 9110 tchar) and
+  env-key element patterns.
+- **"FE-7/UX-17" mislabeled**: doc-drift fix was FE-7 only (UX-17 = visual
+  chrome, untouched/ACCEPTED).
+- **SEC-05** (unbounded tools/list pagination): never addressed; tracked as
+  backlog below.
+- **Unlisted round-1 ids** now dispositioned: IMPL-5 (runtime prune gap — see
+  fixes), IMPL-8/PERF-7/SEC-07/SEC-09/PERF-3 folded into listed fixes, IMPL-9
+  documented, IMPL-10 partial (5 s close discipline still untested —
+  backlog), ARCH-6/13 partial (design wording caveat added), ARCH-7 ACCEPTED
+  (give-up revival matches official reload/restart semantics; user commits
+  that change the def DO revive via restart), ARCH-9/11 ACCEPTED (ordering
+  invariants; integration test backlog), ARCH-12/14 accepted/documented.
+- Test-count docs refreshed (README/host-notes/ui-notes now 130/11).
+
+## Round-2 fixes applied in code
+
+| Finding | Fix |
+|---|---|
+| R2P-1 (High, teardown leak) | `manager.dispose()` stops tracked servers via `stopServer` (stop-then-delete; pre-fix delete-first no-oped every stop) + regression test |
+| R2I-1 (restart × removal race) | `restartServer` judges doc presence LIVE before stopping; an absent server is stopped with revocation (never stranded, never resurrected) + regression test |
+| IMPL-5 / R2F-1 (removal prune) | `controller.removeServer` prunes the removed server from every workspace override row via `removeServerOverrides` + controller-path tests |
+| R2S-1 (cleanup vs concurrent winner) | refusal cleanup never unsets a ref the post-refresh live doc still references + test |
+| R2U-02 / FE-1 tail (truthful copy) | conflict copy states the change was NOT applied; overwritten pre-configured refs are surfaced (`keptSecretRefs`) + test pinned |
+| R2F-2 (cancel mid-save) | section header button disabled while a form save is in flight |
+| R2U-01 (invalid-draft dead-end) | draft problems with real content reveal live (Save stays disabled while invalid) |
+| R2F-3 / SEC-03 tail (reserved names) | UI validation rejects `RESERVED_OVERRIDE_KEYS` names with a localized message |
+| R2S-2 / IMPL-11 (sinks & patterns) | log sinks sanitize control chars/cap; schema + validateDoc + UI enforce header-name token and env-key patterns |
+| R2U-03/04/05 | banner dismiss button; Esc closes remove-confirm + focus restore; card actions disabled while a form is open; dedicated "Clearing…" copy; zh ellipsis aligned |
+| R2P-3 | epoch map pruned on server removal; dead `startup` param removed |
+
+Final state: **130 tests / 11 files green**, both typechecks clean, build
+deterministic, client bundle purity re-verified, locales at 82 keys × 2 with
+parity.
+
+## Round-2 residuals (documented/backlog)
+
+- Mock-LLM model-request capture still impossible headless (rc.1 cold
+  sessions); registry-level gate proof + host suite stand in (ARCH-4).
+- Workspace deletion revokes on the next push/reconcile event; rc.1 exposes no
+  workspace lifecycle events, so a quiescent window exists (ARCH-2 tail).
+- Delegation children never receive MCP tools by design (preset-governed;
+  ARCH-3); real-delegation E2E is backlog.
+- `tools/list` pagination is unbounded (official mirror; SEC-05 backlog);
+  reconcile+credential same-tick double-cycle remains theoretically possible
+  (convergent; IMPL-3 tail).
+- UX polish backlog (R2U-06/07/08 items: badge retry cue, a11y/focus extras,
+  test hardening); 5 s close-discipline mock-transport test (IMPL-10);
+  real-browser render + real `apply()` composition E2E.

@@ -202,4 +202,54 @@ describe('bridge manager lifecycle', () => {
       await dispose()
     }
   })
+
+  it('dispose() stops live supervisors and their children (R2P-1)', async () => {
+    const { manager, lines, setDoc, dispose } = await boot()
+    try {
+      setDoc({ servers: [stdioServer('fix')], overrides: {} })
+      manager.reconcile()
+      await waitFor(() => started(lines, 'fix') === 1, 'server started log')
+      await waitFor(
+        () => lines.some((l) => l.message.includes('mcp-scope(fix): synced 8 tools')),
+        'initial sync log',
+      )
+      await dispose()
+      // stopServer ran for the live handle: exactly one stop line and no
+      // further supervisor activity afterwards (pre-fix, dispose deleted the
+      // tracked entry first and never stopped anything).
+      expect(stopped(lines, 'fix')).toBe(1)
+      const before = lines.length
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(lines.length).toBe(before)
+      expect(started(lines, 'fix')).toBe(1)
+    } finally {
+      await dispose()
+    }
+  })
+
+  it('a queued credential restart of a concurrently removed server never resurrects it (R2I-1)', async () => {
+    const { ctx, manager, lines, setDoc, dispose } = await boot()
+    try {
+      setDoc({ servers: [stdioServer('fix', { envKeys: ['FIX_TOKEN'] })], overrides: {} })
+      manager.reconcile()
+      await waitFor(() => started(lines, 'fix') === 1, 'server started log')
+      await waitFor(
+        () => lines.some((l) => l.message.includes('mcp-scope(fix): synced 8 tools')),
+        'initial sync log',
+      )
+      // Credential restart queued first…
+      ctx.emit('credentials/reference-updated', credentialRef('FIX_TOKEN'))
+      // …then the server leaves the document before the queued mutation runs.
+      setDoc({ servers: [], overrides: {} })
+      manager.reconcile()
+      await waitFor(() => stopped(lines, 'fix') === 1, 'stop log')
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      // Stopped exactly once, never restarted, no further supervisor activity.
+      expect(stopped(lines, 'fix')).toBe(1)
+      expect(started(lines, 'fix')).toBe(1)
+      expect(lines.filter((l) => l.message.includes('mcp-scope(fix): synced')).length).toBe(1)
+    } finally {
+      await dispose()
+    }
+  })
 })

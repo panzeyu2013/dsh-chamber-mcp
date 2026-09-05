@@ -24,16 +24,19 @@ Also edited (build-gate fixes, see §4): `tsconfig.json` (added `DOM` lib),
 
 ## 2. Test results
 
-`node node_modules/vitest/vitest.mjs run` → **3 files / 39 tests passed**
-(repo now also carries the host agent's `tests/tools.spec.ts`):
+`node node_modules/vitest/vitest.mjs run` → **client suites: locales (4),
+controller (43) + jsdom section-render flows (10)** (the repo-wide suite is
+130 tests / 11 files — see README):
 - `locales.spec.ts`: same key set in en/zh; no empty/blank values;
   interpolation-placeholder parity per key; semantic spot checks (4 tests).
 - `controller.spec.ts`: `decodeDoc` malformed-snapshot hardening (4), `buildSaveOps`
   (add server / edit env keys / remove cascade refs / remove cascade override
   pruning / unchanged rows, 6), `toggleOp` (no-op, off→set, on→unset+row prune,
   row kept, 4), shared-semantics alignment (2), `classifySaveError` (1).
-- Component rendering tests initially skipped (slots-framework typing friction was
-  high; pure-logic coverage is the required bar).
+- Component rendering tests: jsdom `section-render.spec.tsx` drives real user
+  flows (form submit, per-card banners, role=alert/status, pluralized copy,
+  tri-state badges) against the components with framework props faked
+  (the real renderer wiring is verified separately — see docs/review/frontend.md §5).
 
 `npm run typecheck` → green for the whole repo (client + host halves).
 
@@ -155,11 +158,13 @@ indexes plain strings).
   rollback exists in the credentials domain). On document success, refs
   orphaned by the removal diff are `credentials.unset` best-effort (refusals
   — e.g. inherited-env shadowing — do not fail the committed removal).
-- Removal and toggle/`add` failures classify conflict vs generic failure by
-  message scan (`/conflict|revision|stale|expected/i`); the real conflict
-  error surfaces as a settings remote failure carrying its own code — if the
-  shipped runtime's code text differs, `classifySaveError` may need an
-  explicit code allowlist. Cheap to extend in `controller.ts`.
+- Round-2 (resolved): failures are classified by the typed `code`
+  (`settings/conflict` / `SETTINGS_CONFLICT`) and the `isDSHRemoteError`
+  marker first, with the message scan demoted to a non-platform fallback
+  (`classifySaveError`, controller.ts). Business refusals on this runtime do
+  not throw at all: the scope client recovers and RESOLVES, so the pipeline
+  verifies the write LANDED by re-reading and comparing the document
+  (`docsEqual`) — a refused write surfaces as `conflict`, never as success.
 - `addServer` guards `validateDoc(next)` again before writing (belt against
   UI-only validation drift); UI also validates name pattern/duplicates,
   required command/url, URL format (http(s) parse), env-key/header-name

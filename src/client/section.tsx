@@ -75,6 +75,10 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
   const items = workspaceItemsOf(wsState)
   const workspaceStatus = workspaceListStatusOf(wsState)
   const [staged, setStaged] = useState<StagedForm | null>(null)
+  // A form save in flight: the section's Add/Cancel button must not tear the
+  // form down mid-save (R2F-2) — secrets and/or the document write could
+  // still land with no surface reporting them.
+  const [busy, setBusy] = useState(false)
   /** Name of the server whose add/edit just succeeded (role="status" note). */
   const [justSaved, setJustSaved] = useState<{ name: string; kind: 'added' | 'updated' } | null>(null)
   const mounted = useRef(true)
@@ -114,7 +118,9 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
     .map((server) => server.serverName)
 
   async function handleAdd(input: ServerSaveInput): Promise<SaveOutcome> {
+    setBusy(true)
     const outcome = await props.addServer(input)
+    if (mounted.current) setBusy(false)
     if (!mounted.current || !outcome.ok) return outcome // form reports failures itself
     setStaged(null)
     setJustSaved({ name: input.server.serverName, kind: 'added' })
@@ -124,7 +130,9 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
   async function handleEdit(input: ServerSaveInput): Promise<SaveOutcome> {
     if (staged?.mode !== 'edit') return { ok: false, reason: 'save-failed' }
     const originalName = staged.original.serverName
+    setBusy(true)
     const outcome = await props.replaceServer(originalName, input)
+    if (mounted.current) setBusy(false)
     if (!mounted.current || !outcome.ok) return outcome // form reports failures itself
     setStaged(null)
     setJustSaved({ name: input.server.serverName, kind: 'updated' })
@@ -139,6 +147,7 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
         {writable && (
           <button
             type="button"
+            disabled={busy}
             onClick={() => {
               setJustSaved(null)
               setStaged((open) => (open === null ? { mode: 'add' } : null))
@@ -197,6 +206,7 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
             writable={writable}
             workspaceStatus={workspaceStatus}
             workspaces={items}
+            actionsDisabled={staged !== null}
             onEdit={() => {
               setJustSaved(null)
               setStaged({ mode: 'edit', original: server })

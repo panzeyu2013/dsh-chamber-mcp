@@ -16,6 +16,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   CREDENTIAL_REF_PATTERN,
+  HEADER_NAME_PATTERN,
+  RESERVED_OVERRIDE_KEYS,
   SERVER_NAME_PATTERN,
   type ServerDef,
 } from '../shared/model.js'
@@ -76,8 +78,8 @@ export function draftFromServer(server: ServerDef): AddDraft {
 }
 
 export interface AddProblems {
-  /** Server-name field problem (pattern / duplicate). */
-  name?: 'pattern' | 'duplicate'
+  /** Server-name field problem (pattern / duplicate / reserved). */
+  name?: 'pattern' | 'duplicate' | 'reserved'
   command?: 'required'
   url?: 'required' | 'invalid'
   /** Per-row problem key (locales.validation.*), undefined = row fine. */
@@ -94,12 +96,16 @@ function looksLikeHttpUrl(value: string): boolean {
   }
 }
 
-/** Pure staged-draft validation; UI renders problems only after first Save. */
+/** Pure staged-draft validation. Problems with real content are revealed live
+ * (an invalid draft always explains itself — the Save button is disabled while
+ * invalid, so gating on a submit attempt would be a dead end). */
 export function evaluateDraft(draft: AddDraft, existingNames: readonly string[]): AddProblems {
   const problems: AddProblems = { env: [], headers: [] }
   const name = draft.name.trim()
   if (name === '' || !SERVER_NAME_PATTERN.test(name)) {
     problems.name = 'pattern'
+  } else if (RESERVED_OVERRIDE_KEYS.has(name)) {
+    problems.name = 'reserved'
   } else if (existingNames.includes(name)) {
     problems.name = 'duplicate'
   }
@@ -142,6 +148,8 @@ export function evaluateDraft(draft: AddDraft, existingNames: readonly string[])
       let problem: SettingsKey | undefined
       if (name === '') {
         problem = 'validation.headerNameEmpty' as const
+      } else if (!HEADER_NAME_PATTERN.test(name)) {
+        problem = 'validation.headerNameToken' as const
       } else if (seenNames.has(name)) {
         problem = 'validation.headerNameDuplicate' as const
       } else if (!CREDENTIAL_REF_PATTERN.test(ref)) {
@@ -284,6 +292,15 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
 
   const problems = evaluateDraft(draft, props.existingNames)
   const invalid = hasProblems(problems)
+  // Reveal problems that have real content immediately; pristine empty-field
+  // 'required' hints only appear after the first Save attempt.
+  const reveal =
+    attempted ||
+    (problems.name !== undefined && draft.name.trim() !== '') ||
+    (problems.command !== undefined && draft.command.trim() !== '') ||
+    (problems.url !== undefined && draft.url.trim() !== '') ||
+    problems.env.some((problem) => problem !== undefined) ||
+    problems.headers.some((problem) => problem !== undefined)
 
   function patch(patch: Partial<AddDraft>): void {
     setDraft((prev) => ({ ...prev, ...patch }))
@@ -336,11 +353,11 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
     setSaving(false)
   }
 
-  const nameProblem = attempted ? problems.name : undefined
-  const showCommand = attempted && draft.transport === 'stdio' ? problems.command : undefined
-  const showUrl = attempted && draft.transport === 'streamable-http' ? problems.url : undefined
-  const envProblems = attempted ? problems.env : problems.env.map(() => undefined)
-  const headerProblems = attempted ? problems.headers : problems.headers.map(() => undefined)
+  const nameProblem = reveal ? problems.name : undefined
+  const showCommand = reveal && draft.transport === 'stdio' ? problems.command : undefined
+  const showUrl = reveal && draft.transport === 'streamable-http' ? problems.url : undefined
+  const envProblems = reveal ? problems.env : problems.env.map(() => undefined)
+  const headerProblems = reveal ? problems.headers : problems.headers.map(() => undefined)
 
   return (
     <form
@@ -363,7 +380,7 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
         disabled={disabled}
         autoFocus
         hint={t('add.toolPrefixHint', { name: draft.name.trim() || t('add.ellipsis') })}
-        problem={nameProblem !== undefined ? t(nameProblem === 'pattern' ? 'validation.namePattern' : 'validation.duplicateName') : undefined}
+        problem={nameProblem !== undefined ? t(nameProblem === 'pattern' ? 'validation.namePattern' : nameProblem === 'reserved' ? 'validation.nameReserved' : 'validation.duplicateName') : undefined}
         onChange={(name) => patch({ name })}
       />
 

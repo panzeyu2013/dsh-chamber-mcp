@@ -26,6 +26,7 @@ import {
   MCP_SCOPE_NAMESPACE,
   credentialRefsOf,
   isEnabled,
+  removeServerOverrides,
   validateDoc,
   type McpScopeDoc,
   type ServerDef,
@@ -309,7 +310,15 @@ export function classifySaveError(error: unknown): 'conflict' | 'save-failed' {
 /** Outcome of a full save pipeline, keyed for localized display. */
 export type SaveOutcome =
   | { ok: true }
-  | { ok: false; reason: 'invalid' | 'conflict' | 'save-failed' | 'secret-write-failed'; refs?: string[] }
+  | {
+      ok: false
+      reason: 'invalid' | 'conflict' | 'save-failed' | 'secret-write-failed'
+      refs?: string[]
+      /** Refs this attempt overwrote (had a stored value before) whose new
+       * literal remains stored although the document write was refused —
+       * surfaced so the UI can tell the user the truth (R2U-02). */
+      keptSecretRefs?: string[]
+    }
 
 export type SaveFailure = SaveOutcome & { ok: false }
 
@@ -340,7 +349,10 @@ export interface TextSeat {
 /** Localized text of a failed outcome through the caller's translate seat. */
 export function failureText(t: TextSeat, failure: SaveFailure): string {
   const params = failureParams(failure)
-  return params === undefined ? t(failureKey(failure)) : t(failureKey(failure), params)
+  const base = params === undefined ? t(failureKey(failure)) : t(failureKey(failure), params)
+  const kept = failure.keptSecretRefs
+  if (kept === undefined || kept.length === 0) return base
+  return `${base} ${t('error.conflictKeptRefs', { refs: kept.join(', ') })}`
 }
 
 export interface SecretWrite {
@@ -588,7 +600,9 @@ export class McpScopeController {
     if (!target) return { ok: true }
     const next: McpScopeDoc = {
       servers: base.doc.servers.filter((server) => server.serverName !== serverName),
-      overrides: base.doc.overrides,
+      // Prune the removed server from every workspace's off-switch rows so a
+      // later re-add cannot resurrect as OFF through an orphaned row.
+      overrides: removeServerOverrides(base.doc.overrides, serverName),
     }
     return this.submitPlan(base, next, [])
   }
@@ -665,9 +679,13 @@ export class McpScopeController {
     if (plan.ops.length > 0) {
       const written = await this.applyOps(plan.ops, base.revision, next)
       if (!written.ok) {
-        // Doc write refused/conflicted: undo the secrets this attempt wrote.
+        // Doc write refused/conflicted: undo the secrets this attempt wrote
+        // (new refs only), then report. Refs that already held a value keep
+        // the newly typed literal — the old value cannot be restored — and
+        // that fact is surfaced for honest copy.
         await this.cleanupNewlyStored(newlyStored, preconfigured)
-        return written
+        const kept = dirty.filter((secret) => preconfigured.has(secret.ref)).map((secret) => secret.ref)
+        return kept.length > 0 ? { ...written, keptSecretRefs: kept } : written
       }
     }
     if (plan.unsetRefs.length > 0) {
@@ -676,12 +694,19 @@ export class McpScopeController {
     return { ok: true }
   }
 
-  /** Best-effort cleanup of refs this attempt stored that had no value before. */
+  /**
+   * Best-effort cleanup of refs this attempt stored that had no value before.
+   * A ref the CURRENT (post-refresh) document still references is never
+   * unset: the refusal path is exactly when another writer may have just
+   * committed that ref into a document that won — deleting it would destroy
+   * the winner's fresh value (R2S-1).
+   */
   private async cleanupNewlyStored(
     newlyStored: readonly string[],
     preconfigured: ReadonlySet<string>,
   ): Promise<void> {
-    const cleanup = newlyStored.filter((ref) => !preconfigured.has(ref))
+    const referenced = new Set(credentialRefsOfDoc(this.snapshot.doc))
+    const cleanup = newlyStored.filter((ref) => !preconfigured.has(ref) && !referenced.has(ref))
     if (cleanup.length > 0) await this.unsetQuietly(cleanup)
   }
 

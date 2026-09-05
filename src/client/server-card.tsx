@@ -21,6 +21,8 @@ import type { SectionT } from './section.js'
 import type { WorkspaceItem, WorkspaceListStatus } from './workspaces.js'
 
 export interface ServerCardProps {
+  /** Parent surface has an open add/edit form: destructive card actions are disabled. */
+  actionsDisabled?: boolean
   t: SectionT
   server: ServerDef
   doc: McpScopeDoc
@@ -45,6 +47,8 @@ const alertStyle: CSSProperties = {
   background: 'rgba(192,57,43,0.1)',
   border: '1px solid rgba(192,57,43,0.4)',
   fontSize: 13,
+  display: 'flex',
+  alignItems: 'center',
 }
 
 const codeLineStyle: CSSProperties = {
@@ -92,13 +96,28 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
       mounted.current = false
     }
   }, [])
-  // The failure banner is transient: it retires on its own after a moment
-  // and never outlives the card.
+  // The failure banner is transient (auto-retires) and has a dismiss button;
+  // it never outlives the card.
   useEffect(() => {
     if (failure === null) return
     const timer = window.setTimeout(() => setFailure(null), 8000)
     return () => window.clearTimeout(timer)
   }, [failure])
+  // Esc cancels the inline remove confirmation; focus returns to the Remove
+  // button afterwards (the card stays mounted on cancel).
+  const removeButtonRef = useRef<HTMLButtonElement | null>(null)
+  useEffect(() => {
+    if (!confirmingRemove) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setFailure(null)
+        setConfirmingRemove(false)
+        removeButtonRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [confirmingRemove])
 
   const refs = credentialRefsOf(server)
   const rowsReady = workspaceStatus === 'ready'
@@ -106,7 +125,7 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
     ? workspaces.filter((ws) => !isEnabled(doc.overrides, ws.workspaceId, server.serverName)).length
     : 0
   const busy = removing || pendingWs !== undefined || clearingRef !== null
-  const disabled = !writable || busy
+  const disabled = !writable || busy || props.actionsDisabled === true
 
   const summaryBits: string[] = []
   if (server.transport === 'stdio' && (server.envKeys?.length ?? 0) > 0) {
@@ -189,7 +208,13 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
         <span style={{ flex: 1 }} />
         {writable && !confirmingRemove && (
           <>
-            <button type="button" onClick={() => setConfirmingRemove(true)} disabled={disabled} style={{ marginRight: 0 }}>
+            <button
+              ref={removeButtonRef}
+              type="button"
+              onClick={() => setConfirmingRemove(true)}
+              disabled={disabled}
+              style={{ marginRight: 0 }}
+            >
               {t('server.remove')}
             </button>
             <button type="button" onClick={props.onEdit} disabled={disabled}>
@@ -200,9 +225,17 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
       </header>
 
       {failure !== null && (
-        <p role="alert" style={alertStyle}>
-          {failureText(t, failure)}
-        </p>
+        <div role="alert" style={alertStyle}>
+          <span style={{ flex: 1 }}>{failureText(t, failure)}</span>
+          <button
+            type="button"
+            aria-label={t('action.dismiss')}
+            onClick={() => setFailure(null)}
+            style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+          >
+            ×
+          </button>
+        </div>
       )}
 
       {confirmingRemove && (
@@ -219,6 +252,7 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
               onClick={() => {
                 setFailure(null)
                 setConfirmingRemove(false)
+                removeButtonRef.current?.focus()
               }}
               disabled={removing}
             >
@@ -273,7 +307,7 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
                     disabled={disabled}
                     onClick={() => void handleClear(row.ref)}
                   >
-                    {clearPending ? t('state.saving') : t('secret.clear')}
+                    {clearPending ? t('secret.clearing') : t('secret.clear')}
                   </button>
                 )}
               </li>

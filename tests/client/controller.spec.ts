@@ -540,9 +540,10 @@ describe('McpScopeController save pipeline (FE-4)', () => {
         server: stdioServer('git', ['OLD']),
         secrets: [{ ref: 'OLD', value: 'v2' }], // overwrites the stored value
       })
-      expect(outcome).toEqual({ ok: false, reason: 'conflict' })
+      expect(outcome).toEqual({ ok: false, reason: 'conflict', keptSecretRefs: ['OLD'] })
       // OLD had a stored value before the save: it must NOT be unset (the old
-      // value cannot be restored).
+      // value cannot be restored) and the kept literal is SURFACED so the UI
+      // can tell the user the truth about what stayed stored.
       expect(creds.unsetCalls).toEqual([])
       expect(creds.values.get('OLD')).toBe('v2')
     } finally {
@@ -562,6 +563,48 @@ describe('McpScopeController save pipeline (FE-4)', () => {
       expect(scope.mirror.servers).toEqual([])
       expect(creds.unsetCalls).toEqual(['X'])
       expect(log.indexOf('mutate:1')).toBeLessThan(log.indexOf('unset:X'))
+    } finally {
+      stop()
+    }
+  })
+
+  it('a removal prunes the removed server from every workspace override row', async () => {
+    const removed = stdioServer('gone', ['X'])
+    const keep = stdioServer('keep')
+    const { scope, creds, controller, stop } = makePipeline(
+      doc([removed, keep], { ws1: { gone: true, keep: true }, ws2: { gone: true } }),
+    )
+    try {
+      await flush()
+      const outcome = await controller.removeServer('gone')
+      expect(outcome).toEqual({ ok: true })
+      // ws1 keeps its 'keep' row; ws2's row was emptied by the prune and dropped.
+      expect(scope.mirror.overrides).toEqual({ ws1: { keep: true } })
+      // X leaves the document with the removal: the cascade attempts its unset
+      // (idempotent when nothing was stored).
+      expect(creds.unsetCalls).toEqual(['X'])
+    } finally {
+      stop()
+    }
+  })
+
+  it('a refused write never unsets a ref the live document still references', async () => {
+    // 'SHARED' is referenced by an EXISTING server but has no stored value yet.
+    const existing = stdioServer('existing', ['SHARED'])
+    const { scope, creds, controller, stop } = makePipeline(doc([existing]))
+    try {
+      await flush()
+      scope.refuseNext = true
+      const outcome = await controller.addServer({
+        server: stdioServer('git'),
+        secrets: [{ ref: 'SHARED', value: 'v' }],
+      })
+      expect(outcome).toEqual({ ok: false, reason: 'conflict' })
+      // The live doc references SHARED: unsetting it could destroy a value a
+      // concurrent winning writer just committed for that ref — cleanup must
+      // skip it (R2S-1).
+      expect(creds.unsetCalls).toEqual([])
+      expect(creds.values.get('SHARED')).toBe('v')
     } finally {
       stop()
     }
