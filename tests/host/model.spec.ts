@@ -156,6 +156,24 @@ describe('credentialRefsOf', () => {
   })
 })
 
+describe('own-property override semantics (pre-release F1)', () => {
+  const row = (...names: string[]): Record<string, true> => {
+    const out: Record<string, true> = {}
+    for (const name of names) out[name] = true
+    return out
+  }
+  it('a serverName colliding with an Object.prototype member stays default-on until its own row exists', () => {
+    expect(isEnabled({}, 'ws-a', 'toString')).toBe(true)
+    expect(isEnabled({ 'ws-other': row('toString') }, 'ws-a', 'toString')).toBe(true)
+    // Own record present => off; another member of the same row is unaffected.
+    expect(isEnabled({ 'ws-a': row('toString') }, 'ws-a', 'toString')).toBe(false)
+    expect(isEnabled({ 'ws-a': row('toString') }, 'ws-a', 'valueOf')).toBe(true)
+    // valueOf must not read the inherited member either.
+    expect(isEnabled({ 'ws-a': row('valueOf') }, 'ws-a', 'valueOf')).toBe(false)
+    expect(isEnabled({ 'ws-a': row() }, 'ws-a', 'toString')).toBe(true)
+  })
+})
+
 describe('workspace helpers', () => {
   it('EMPTY_DOC is a frozen empty document', () => {
     expect(EMPTY_DOC.servers).toEqual([])

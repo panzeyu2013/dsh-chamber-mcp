@@ -21,13 +21,23 @@ special-cases this plugin** — it is an ordinary `dsh plugin` install.
 
 ## Install
 
-Prereqs: Node ≥ 24, pnpm on PATH (the dsh CLI drives pnpm itself).
+Prereqs: a dsh instance (0.1.2-rc.1 generation); Node ≥ 24 and pnpm on
+PATH are toolchain requirements for building this repo and for the dsh CLI
+driving pnpm — not requirements of the installed plugin itself.
+
+Releases ship as a GitHub Release whose asset is the packed tarball
+(`npm publish` is temporarily disabled). Install per instance:
 
 ```sh
 # into the web profile of a specific dsh instance (per-instance management)
-dsh plugin --profile web add dsh-mcp-scope     # or: add file:./dsh-mcp-scope-0.1.0.tgz
+dsh plugin --profile web add \
+  https://github.com/<owner>/dsh-mcp-scope/releases/download/v0.0.1/dsh-mcp-scope-0.0.1.tgz
+# or, after building locally:  add file:./dsh-mcp-scope-0.0.1.tgz
 # restart the instance (the profile bundle list changed)
 ```
+
+(Once npm publishing is re-enabled, `dsh plugin --profile web add dsh-mcp-scope`
+installs the same content from the registry.)
 
 - The package's `dsh.bundle` patch inserts one loader row (`mcp-scope`); the
   browser half is discovered via the package's `dsh.client` declaration.
@@ -76,7 +86,8 @@ UI cannot read them back).
 - Requirement model: every configured server defaults on for all of this dsh's
   workspaces; only explicit per-workspace records turn one off.
 - Sessions outside any registered workspace (plain cwd sessions) never receive
-  MCP tools.
+  MCP tools; delegation/subagent children are preset-governed and never
+  receive MCP tools from this plugin (workspace root sessions do).
 - Out of scope by design (no file/CLI management surface, no toolPolicy
   allow/ask/deny, no pause key, no custom naming, no status visualization, no
   on-demand connect toggles).

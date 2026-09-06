@@ -62,10 +62,16 @@ export const EMPTY_DOC: McpScopeDoc = Object.freeze({
   overrides: Object.freeze({}),
 }) as unknown as McpScopeDoc
 
-/** Default-on evaluation: no record ⇒ enabled (new servers & workspaces on). */
+/**
+ * Default-on evaluation: no record ⇒ enabled (new servers & workspaces on).
+ * Presence is OWN-property presence: rows are plain objects and a serverName
+ * that collides with an Object.prototype member (e.g. `toString`) must never
+ * read as an inherited "off" record (pre-release F1).
+ */
 export function isEnabled(overrides: WorkspaceOverrides, workspaceId: string, serverName: string): boolean {
+  if (!Object.hasOwn(overrides, workspaceId)) return true
   const row = overrides[workspaceId]
-  return row === undefined || row[serverName] === undefined
+  return row === null || typeof row !== 'object' || !Object.hasOwn(row, serverName)
 }
 
 /**

@@ -2,7 +2,7 @@
 
 ## CI (push / PR)
 
-`.github/workflows/ci.yml` runs on every push/PR against Node **22 and 24**:
+`.github/workflows/ci.yml` runs on every push/PR against **Node 24**:
 
 1. `npm ci`
 2. `npm run typecheck` — src + tests, two tsconfigs
@@ -39,21 +39,21 @@ Changelog-first flow (Keep a Changelog — see CHANGELOG.md):
 
 ```sh
 # 1. move the notes you accumulated under "## [Unreleased]" into a dated
-#    section, e.g. "## [0.2.0] - 2026-09-20", grouped by
+#    section, e.g. "## [0.0.1] - 2026-09-06", grouped by
 #    Added / Changed / Deprecated / Removed / Fixed / Security
-# 2. bump package.json#version to the same 0.2.0
+# 2. bump package.json#version to the same 0.0.1
 
 # 3. local release gate (same as CI)
-npm ci && npm run check
+npm ci --no-audit --no-fund --legacy-peer-deps && npm run check
 
 # 4. optional but recommended: live smoke on the smoke machine
 npm run test:smoke          # M1 (R3 capture) + M0 evidence
 
 # 5. commit + tag + push
-git add -A && git commit -m "release: v0.2.0"
-git tag v0.2.0
+git add -A && git commit -m "release: v0.0.1"
+git tag v0.0.1
 git push origin main
-git push origin v0.2.0     # triggers .github/workflows/release.yml
+git push origin v0.0.1     # triggers .github/workflows/release.yml
 ```
 
 The workflow then:

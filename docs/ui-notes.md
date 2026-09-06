@@ -26,7 +26,7 @@ Also edited (build-gate fixes, see §4): `tsconfig.json` (added `DOM` lib),
 
 `node node_modules/vitest/vitest.mjs run` → **client suites: locales (4),
 controller (43) + jsdom section-render flows (10)** (the repo-wide suite is
-130 tests / 11 files — see README):
+133 tests / 11 files — see README):
 - `locales.spec.ts`: same key set in en/zh; no empty/blank values;
   interpolation-placeholder parity per key; semantic spot checks (4 tests).
 - `controller.spec.ts`: `decodeDoc` malformed-snapshot hardening (4), `buildSaveOps`
@@ -66,9 +66,10 @@ controller (43) + jsdom section-render flows (10)** (the repo-wide suite is
   `useDoc` (renderer converts `name` → `use<Capitalized>`). Our source is a
   plain `{ getSnapshot, subscribe }` observable (uSES-safe stable snapshot
   between publishes) — no `dsh-client-store` value dependency.
-- `inject = ['slots','locale','connection','remote','settingsScope','workspaces']`
-  exactly as assigned; `connection` is required at runtime by the transport
-  generation but we make **no call into it** (see 3.3).
+- `inject = ['slots','locale','remote','remote.credentials','settingsScope',
+  'workspaces']` exactly as assigned (round-2 FE-3: `connection` was dropped —
+  grep-proven unused; `remote.credentials` is the real credentials gateway,
+  see 3.3).
 
 ### 3.2 Forwarded remote events (verified)
 `dsh-api-remotes/lib/types/remote-events.d.ts` (installed 0.1.2-rc.1) is the

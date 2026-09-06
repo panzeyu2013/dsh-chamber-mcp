@@ -170,7 +170,7 @@ export function overrideDoc(
   const row = overrides[workspaceId]
   if (off) {
     overrides[workspaceId] = { ...(row ?? {}), [serverName]: true }
-  } else if (row && serverName in row) {
+  } else if (row !== undefined && row !== null && Object.hasOwn(row, serverName)) {
     delete row[serverName]
     if (Object.keys(row).length === 0) delete overrides[workspaceId]
   }
@@ -214,8 +214,10 @@ function diffOverrides(prev: McpScopeDoc, next: McpScopeDoc): SettingsPathOpView
     const nextRow = next.overrides[ws] ?? {}
     const names = new Set([...Object.keys(prevRow), ...Object.keys(nextRow)])
     for (const name of names) {
-      const had = name in prevRow
-      const want = name in nextRow
+      // Own-property semantics (F1): `in` would read Object.prototype
+      // members as phantom off-switches for names like `toString`.
+      const had = Object.hasOwn(prevRow, name)
+      const want = Object.hasOwn(nextRow, name)
       if (had === want) continue
       ops.push(
         want

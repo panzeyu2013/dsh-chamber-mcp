@@ -1,9 +1,9 @@
 [mock] mock-llm listening on 39001
-[m1:out] dsh web: http://127.0.0.1:32132/?token=6fkFa4jiAtrfaKrxHWFreI8KkQck9Jj329m1Vn0PKh4
+[m1:out] dsh web: http://127.0.0.1:32132/?[redacted]6fkFa4jiAtrfaKrxHWFreI8KkQck9Jj329m1Vn0PKh4
 01:06:21 instance m1 up at http://127.0.0.1:32132
 01:06:22 dsh plugin add exit=undefined
 01:06:22 bundles: @deepseek-ai/dsh-base, @deepseek-ai/dsh-web-app, dsh-mcp-scope
-[m1:out] dsh web: http://127.0.0.1:32132/?token=mXAnWXNlE6g0osm-MA9C-CebkaYXbyC-GrCuHephCJk
+[m1:out] dsh web: http://127.0.0.1:32132/?[redacted]mXAnWXNlE6g0osm-MA9C-CebkaYXbyC-GrCuHephCJk
 01:06:24 instance m1 up at http://127.0.0.1:32132
 01:06:24 on-workspace=5b14c95a-2213-4846-ba40-83e11ff81502 off-workspace=c2962764-75d1-4050-a495-51a37c99c1f9
 01:06:24 servers: ["fixture"]

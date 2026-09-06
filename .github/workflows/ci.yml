@@ -9,20 +9,20 @@ jobs:
   check:
     name: typecheck + tests + build + package verify (Node 24)
     runs-on: ubuntu-latest
+    env:
+      npm_config_cache: "${{ runner.temp }}/npm-cache"
     strategy:
       fail-fast: false
       matrix:
         node: ['24']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Node ${{ matrix.node }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-        env:
-          npm_config_cache: "${{ runner.temp }}/npm-cache"
 
       - name: Install dependencies
         # --legacy-peer-deps: the dsh devDep matrix spans version lines whose
@@ -44,7 +44,7 @@ jobs:
         run: npm run verify:package
 
       - name: Upload packed tarball
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dsh-mcp-scope-${{ matrix.node }}-${{ github.sha }}
           path: .smoke/verify/dist/*.tgz
@@ -52,16 +52,16 @@ jobs:
 
   # Optional live smoke against a real dsh instance (manual dispatch only).
   # Requires a SELF-HOSTED runner tagged `dsh-smoke` that has the
-  # chamber-anchored dsh 0.1.2-rc.1 CLI at /root/.dsh-chamber/gateway/
+  # chamber-anchored dsh 0.1.2-rc.1 CLI at <dsh-anchor-install>/
   # dsh-anchor (see scripts/smoke + docs/milestones + docs/RELEASE.md §smoke).
   smoke:
     name: live smoke (self-hosted, manual)
     runs-on: [self-hosted, dsh-smoke]
     if: github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Setup Node 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm

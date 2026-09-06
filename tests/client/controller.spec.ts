@@ -568,6 +568,25 @@ describe('McpScopeController save pipeline (FE-4)', () => {
     }
   })
 
+  it('toggle works for a serverName colliding with an Object.prototype member (F1)', async () => {
+    const { scope, controller, stop } = makePipeline(doc([stdioServer('toString')]))
+    try {
+      await flush()
+      // Turning OFF writes an OWN row and flips the read.
+      const off = await controller.toggleWorkspace('ws1', 'toString', true)
+      expect(off).toEqual({ ok: true })
+      expect(scope.mirror.overrides.ws1).toEqual({ toString: true })
+      // Turning ON again removes the own row (no phantom inherited reads).
+      const on = await controller.toggleWorkspace('ws1', 'toString', false)
+      expect(on).toEqual({ ok: true })
+      expect(scope.mirror.overrides.ws1).toBeUndefined()
+      // isEnabled agrees with the mirror at both ends.
+      expect(isEnabled(scope.mirror.overrides, 'ws1', 'toString')).toBe(true)
+    } finally {
+      stop()
+    }
+  })
+
   it('a removal prunes the removed server from every workspace override row', async () => {
     const removed = stdioServer('gone', ['X'])
     const keep = stdioServer('keep')

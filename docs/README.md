@@ -10,5 +10,6 @@
 | milestones/M0-plan.md | How the smoke evidence is produced (scripts/smoke) |
 | host-notes.md | Host-half API findings & deviations (written during implementation) |
 | ui-notes.md | Client-half API findings & deviations (written during implementation) |
-| review/ | Six-axis review reports (round 1 + round 2 under `review/round2/`) + consolidated summary with disposition matrix |
+| review/ | Six-axis review reports (round 1 + round 2 under `review/round2/` + final pre-release under `review/prerelease/`) + consolidated summary |
+| milestones/M1-live-capture.log | Raw live R3 tool-capture evidence (tokens redacted) |
 | RELEASE.md | CI + release mechanics: workflows, tag flow, smoke runner, rollback |

@@ -47,7 +47,12 @@ for (const line of lines) {
       continue // skip the header line itself
     }
   }
-  if (capture) collected.push(line)
+  if (capture) {
+    // Trailing HTML comments (e.g. the comparison-link footer) are file
+    // scaffolding, not release notes.
+    if (line.trimStart().startsWith('<!--')) break
+    collected.push(line)
+  }
 }
 
 if (!capture) {

@@ -1,6 +1,6 @@
 {
   "name": "dsh-mcp-scope",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Third-party dsh plugin: manage MCP servers per workspace from the Settings UI; tools are injected into the tool scopes of enabled workspaces only (mcp__ naming, official semantics).",
   "license": "MIT",
   "type": "module",
@@ -33,7 +33,7 @@
     "test:watch": "vitest",
     "check": "npm run typecheck && npm test && npm run build && npm run verify:package",
     "verify:package": "node scripts/verify-package.mjs",
-    "pack:tgz": "npm pack --pack-destination .smoke/",
+    "pack:tgz": "mkdir -p .smoke && npm pack --pack-destination .smoke/",
     "test:smoke": "node scripts/smoke/m1.mjs && node scripts/smoke/m0.mjs"
   },
   "dsh": {

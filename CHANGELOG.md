@@ -7,13 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- GitHub Release publishing: the tag workflow attaches the packed
-  `dsh-mcp-scope-*.tgz` as the release asset and composes release notes from
-  this changelog (`scripts/release-notes.mjs`). npm publishing is temporarily
-  disabled — see `.github/workflows/release.yml`.
-
-## [0.1.0] - 2026-09-06
+## [0.0.1] - 2026-09-06
 
 First functional release of the third-party dsh plugin: MCP servers managed per
 workspace from the dsh Settings UI, with tools injected into the tool scopes of
@@ -21,6 +15,10 @@ enabled workspaces only.
 
 ### Added
 
+- **Release mechanics**: tag-driven GitHub Release shipping the packed
+  `dsh-mcp-scope-<version>.tgz` as its asset, release notes composed from this
+  changelog (`scripts/release-notes.mjs`); npm publishing temporarily disabled
+  — `dsh plugin add <asset-url>` is the install path.
 - **Package & installation**: one npm package (`dsh-mcp-scope`) as a dsh
   bundle + dual-face plugin — `dsh plugin --profile web add dsh-mcp-scope`
   (or `file:<tgz>`); single loader row `mcp-scope`; zh/en locales; MIT with
