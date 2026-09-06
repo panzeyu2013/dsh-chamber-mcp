@@ -64,7 +64,7 @@ jobs:
         run: node scripts/verify-workflow-action-pins.mjs
 
       - name: Setup Node 24
-        uses: actions/setup-node@v5 # TODO: pin 40-hex SHA once the repo is public
+        uses: actions/setup-node@v7 # TODO: pin 40-hex SHA once the repo is public
         with:
           node-version: 24
           cache: npm
