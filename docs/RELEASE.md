@@ -35,28 +35,38 @@ Preconditions (first release only):
 - Provenance (`--provenance`) requires OIDC; if unsupported, drop it from
   `.github/workflows/release.yml` (see comments there).
 
-Steps:
+Changelog-first flow (Keep a Changelog — see CHANGELOG.md):
 
 ```sh
-# 1. version + changelog
-#    bump package.json#version (semver; pre-1.0: 0.x.y)
-#    record user-visible changes (docs/CHANGELOG.md)
+# 1. move the notes you accumulated under "## [Unreleased]" into a dated
+#    section, e.g. "## [0.2.0] - 2026-09-20", grouped by
+#    Added / Changed / Deprecated / Removed / Fixed / Security
+# 2. bump package.json#version to the same 0.2.0
 
-# 2. local release gate (same as CI)
+# 3. local release gate (same as CI)
 npm ci && npm run check
 
-# 3. optional but recommended: live smoke on the smoke machine
+# 4. optional but recommended: live smoke on the smoke machine
 npm run test:smoke          # M1 (R3 capture) + M0 evidence
 
-# 4. commit + tag + push
+# 5. commit + tag + push
 git add -A && git commit -m "release: v0.2.0"
 git tag v0.2.0
 git push origin main
 git push origin v0.2.0     # triggers .github/workflows/release.yml
 ```
 
-The workflow re-runs the full gate, verifies `package.json#version === tag`,
-then `npm publish --provenance` and uploads the tarball artifact.
+The workflow then:
+
+1. re-runs the full gate and verifies `package.json#version === tag`;
+2. composes the release notes from the changelog section of the released
+   version (`node scripts/release-notes.mjs "$PKG_VERSION"` — fails the run
+   if the section is missing or empty or undated, so a release can never ship
+   without notes);
+3. `npm publish --provenance`;
+4. creates the **GitHub Release** for the tag with those notes as the body
+   and the packed `dsh-mcp-scope-<version>.tgz` attached as the release
+   asset (plus the workflow artifact upload).
 
 Compatibility notes for consumers:
 

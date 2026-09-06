@@ -17,7 +17,7 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: read
+  contents: write # create the GitHub Release + attach assets
   id-token: write # npm provenance
 
 jobs:
@@ -53,13 +53,25 @@ jobs:
             exit 1
           }
           echo "Releasing dsh-mcp-scope@$pkg_ver"
+          echo "PKG_VERSION=$pkg_ver" >> "$GITHUB_ENV"
+
+      - name: Compose release notes from CHANGELOG
+        run: node scripts/release-notes.mjs "$PKG_VERSION" --out .smoke/release-notes.md
 
       - name: Publish to npm
         run: npm publish --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Attach packed tarball
+      - name: Create GitHub Release with tgz asset
+        uses: softprops/action-gh-release@v2
+        with:
+          name: dsh-mcp-scope v${{ env.PKG_VERSION }}
+          body_path: .smoke/release-notes.md
+          files: .smoke/verify/dist/*.tgz
+          fail_on_unmatched_files: true
+
+      - name: Attach packed tarball artifact
         uses: actions/upload-artifact@v4
         with:
           name: dsh-mcp-scope-tgz

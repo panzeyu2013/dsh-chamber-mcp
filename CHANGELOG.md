@@ -1,12 +1,94 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+All notable changes to this project are documented in this file.
 
-- First functional release: Settings "MCP servers" section, per-workspace
-  tool-scope injection gate, stdio + streamable-http transports, write-only
-  credential keys, zh/en locales.
-- Two full review rounds applied (docs/review/ + round2/) — 133 tests.
-- Live R3 tool-capture evidence: docs/milestones/M1-live-capture.log.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Release mechanics: tag `v0.x.y` triggers .github/workflows/release.yml
-(gate → `npm publish --provenance`). See docs/RELEASE.md.
+## [Unreleased]
+
+### Added
+- GitHub Release publishing: the tag workflow attaches the packed `dsh-mcp-scope-*.tgz`
+  as a release asset and composes release notes from this changelog
+  (`scripts/release-notes.mjs`).
+
+## [0.1.0] - 2026-09-06
+
+First functional release of the third-party dsh plugin: MCP servers managed per
+workspace from the dsh Settings UI, with tools injected into the tool scopes of
+enabled workspaces only.
+
+### Added
+
+- **Package & installation**: one npm package (`dsh-mcp-scope`) as a dsh
+  bundle + dual-face plugin — `dsh plugin --profile web add dsh-mcp-scope`
+  (or `file:<tgz>`); single loader row `mcp-scope`; zh/en locales; MIT with
+  upstream attribution.
+- **Host half**: settings-namespace document (`mcp-scope`: `servers` +
+  per-workspace `overrides`, default-on semantics, revision-fenced writes);
+  per-server supervisors mirroring the official `dsh-mcp-client` contract
+  (mcp__ naming with collision hash, generation-swap sync, `tools/list_changed`
+  re-sync, scrubbed child env, backoff reconnect, 5 s close discipline);
+  stdio and streamable-http transports; credential refs resolved per connect
+  from the write-only credentials domain.
+- **Per-workspace injection gate**: tools are registered per agent scope
+  (never globally) for live agents whose session cwd belongs to an enabled
+  workspace; new servers and workspaces default to on; delegation children
+  (`origin: 'subagent'`) are excluded by design (preset-governed).
+- **Browser half**: Settings "MCP 服务器 / MCP servers" section (nav order
+  25): server cards with definition details and per-workspace on/off rows,
+  staged add/edit forms with write-only secret rows, removal cascade for
+  orphaned credentials and override rows, tri-state credential badges,
+  workspace-list loading/error phases, role=alert/status outcome feedback.
+- **Operational evidence**: hermetic unit/integration suite (real ToolRuntime +
+  real dsh-scope contexts, real settings-file provider, real stdio MCP
+  fixtures), CI workflows (Node 24 gate + package verification), live M0/M1
+  smoke drivers incl. the remote-mux session activation that captures the
+  assembled model tool list per workspace (R3 PASS).
+
+### Changed
+
+- Toolchain target moved to **Node ≥ 24** (engines, CI matrix, `.nvmrc`).
+- Client entry inject surface aligned with the rc.1 runtime
+  (`remote.credentials`); error classification is typed-code first; document
+  writes are verified by read-back (a refused write is reported as a conflict,
+  never as success).
+- Host entry re-exports the public model types for typed consumers.
+
+### Fixed
+
+- Plugin teardown never stopped live supervisors (dispose deleted bookkeeping
+  before stopping); teardown now stops and revokes everything.
+- A restarted server's first sync could be absorbed by the old handle's
+  idempotence key — dedupe now keys on (epoch, syncId).
+- Reconcile performed a blanket re-registration on every settings change —
+  now a diffed pass (no-op reconciles register nothing).
+- Workspace membership was frozen at agent adoption — now re-derived per
+  push/reconcile and on durable workspace-domain change events, so deleted
+  workspaces/directories revoke promptly.
+- A credential restart queued while the server was removed from the document
+  could strand live tools — restarts judge presence live and revoke.
+- Removing a server left orphaned per-workspace off-switch rows (re-add
+  resurrected as off) — removal now prunes them.
+- Refused saves could silently report success and orphan newly written
+  secrets — landed-write verification + new-ref-only cleanup with a
+  concurrent-writer guard.
+- `__proto__`-style server names could break the off-switch semantics —
+  reserved override keys are rejected everywhere.
+
+### Security
+
+- Header/env credential values containing CR/LF/NUL are rejected at the
+  transport boundary (no header injection, no secret echo in logs); log sinks
+  sanitize error text.
+- HTTP header names and env-key elements are validated at schema, document
+  and UI level (RFC 9110 field-name tokens).
+- `tools/list` pagination is bounded (`MAX_SYNC_TOOLS = 2000`); a server
+  exceeding the cap fails the sync while the previous generation stays.
+
+<!--
+Release notes are composed from the section of the released version, so each
+release must add a dated section here before tagging (scripts/release-notes.mjs).
+Once a public repository URL exists, append comparison links, e.g.:
+[0.1.0]: https://github.com/<owner>/dsh-mcp-scope/compare/v0.0.0...v0.1.0
+-->
