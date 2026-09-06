@@ -25,7 +25,7 @@ jobs:
       matrix:
         node: ['24']
     steps:
-      - uses: actions/checkout@v5 # TODO: pin 40-hex SHA once the repo is public
+      - uses: actions/checkout@v7 # TODO: pin 40-hex SHA once the repo is public
 
       - name: Verify workflow action pins & release structure
         run: node scripts/verify-workflow-action-pins.mjs
@@ -78,7 +78,7 @@ jobs:
     runs-on: [self-hosted, dsh-smoke]
     if: github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v5 # TODO: pin 40-hex SHA once the repo is public
+      - uses: actions/checkout@v7 # TODO: pin 40-hex SHA once the repo is public
 
       - name: Setup Node 24
         uses: actions/setup-node@v5 # TODO: pin 40-hex SHA once the repo is public

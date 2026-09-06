@@ -58,7 +58,7 @@ jobs:
     permissions:
       contents: write # create the GitHub Release + attach assets
     steps:
-      - uses: actions/checkout@v5 # TODO: pin 40-hex SHA once the repo is public
+      - uses: actions/checkout@v7 # TODO: pin 40-hex SHA once the repo is public
 
       - name: Verify workflow action pins & release structure
         run: node scripts/verify-workflow-action-pins.mjs
