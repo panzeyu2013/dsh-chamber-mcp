@@ -1,0 +1,100 @@
+name: CI
+
+# Validation chain. Chamber norm: push main + tags v* + PR all run the SAME
+# chain — a tag can never publish an untested commit, and release.yml keeps
+# its own release-local gate because tag-triggered workflows run in parallel.
+# workflow_dispatch additionally arms the self-hosted live-smoke lane.
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: typecheck + tests + build + package verify (Node 24)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['24']
+    steps:
+      - uses: actions/checkout@v5 # TODO: pin 40-hex SHA once the repo is public
+
+      - name: Verify workflow action pins & release structure
+        run: node scripts/verify-workflow-action-pins.mjs
+
+      - name: Setup Node ${{ matrix.node }}
+        # NOTE: do NOT add a job-level npm_config_cache env — job-level env
+        # cannot reference the `runner` context ("context runner is not
+        # allowed here"), which fails the whole workflow at job creation
+        # ("No jobs were run", zero-job runs, no logs). setup-node's npm
+        # cache already caches the default ~/.npm cache dir, so no override
+        # is needed.
+        uses: actions/setup-node@v5 # TODO: pin 40-hex SHA once the repo is public
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        # --legacy-peer-deps: the dsh devDep matrix spans version lines whose
+        # peer ranges conflict (e.g. dsh-client-runtime 0.1.1 vs dsh-agent
+        # 0.1.2); at runtime those peers resolve from the dsh install, so the
+        # dev-tree install deliberately relaxes peer resolution.
+        run: npm ci --no-audit --no-fund --legacy-peer-deps
+
+      # npm ci is inherently frozen (errors on package.json/lockfile drift and
+      # never writes the lockfile); this assert makes the invariant visible
+      # and catches any future step that slips to bare `npm install`.
+      - name: Assert lockfile not rewritten
+        run: git diff --exit-code -- package-lock.json
+
+      - name: Typecheck (src + tests)
+        run: npm run typecheck
+
+      - name: Unit & integration tests
+        run: npm test
+
+      - name: Full build
+        run: npm run build
+
+      - name: Verify packed artifact + consumer types + determinism
+        run: npm run verify:package
+
+      - name: Upload packed tarball
+        uses: actions/upload-artifact@v6 # TODO: pin 40-hex SHA once the repo is public
+        with:
+          name: dsh-mcp-scope-${{ matrix.node }}-${{ github.sha }}
+          path: .smoke/verify/dist/*.tgz
+          if-no-files-found: error
+        if: always()
+
+  # Optional live smoke against a real dsh instance (manual dispatch only).
+  # Requires a SELF-HOSTED runner tagged `dsh-smoke` that has the
+  # chamber-anchored dsh CLI (see docs/RELEASE.md §smoke); label registered
+  # in .github/actionlint.yaml for local linting.
+  smoke:
+    name: live smoke (self-hosted, manual)
+    runs-on: [self-hosted, dsh-smoke]
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v5 # TODO: pin 40-hex SHA once the repo is public
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v5 # TODO: pin 40-hex SHA once the repo is public
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund --legacy-peer-deps
+
+      - name: Build & pack
+        run: npm run build && mkdir -p .smoke && npm run pack:tgz
+
+      - name: Run M0/M1 live smoke
+        run: npm run test:smoke

@@ -1,0 +1,22 @@
+# deps & builds
+node_modules/
+lib/
+dist/
+*.tsbuildinfo
+.pnpm-store/
+.tools/
+
+# scratch / smoke (scripts/smoke tooling IS tracked; .smoke scratch is not)
+.smoke/
+smoke/
+*.tgz
+!scripts/smoke/
+!scripts/smoke/**
+scripts/smoke/fixture/fixture-events.log
+
+# editors
+.DS_Store
+.idea/
+.vscode/
+# recon evidence artifacts
+.recon/

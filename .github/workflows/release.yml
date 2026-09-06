@@ -1,0 +1,153 @@
+name: Release
+
+# Tag-driven GitHub Release (tgz asset only) or manual dispatch (incl. a
+# dry-run mode for infra changes, chamber norm: any workflow/script/pin
+# change must be validated by one dry run before the formal tag).
+#
+# ⚠ npm publishing is TEMPORARILY DISABLED — releases currently ship the
+# packed `dsh-mcp-scope-<version>.tgz` as the GitHub Release asset; users
+# install it directly, e.g.:
+#   dsh plugin --profile web add \
+#     https://github.com/<owner>/dsh-mcp-scope/releases/download/v0.0.1/dsh-mcp-scope-0.0.1.tgz
+#
+# To re-enable npm publishing later: uncomment the "Publish to npm" step
+# below, add the repository secret NPM_TOKEN, and restore `id-token: write`
+# in `permissions` when using `--provenance`.
+#
+# Release-safety norms (chamber parity):
+# - the FULL validation chain runs inside this workflow BEFORE any Release
+#   mutation (tag-triggered workflows run in parallel with CI, so this gate
+#   must be self-contained);
+# - publication is serialized (concurrency) and never re-publishes over an
+#   existing release: if a *published* release exists for the tag the run
+#   fails closed; only stale DRAFTS are deleted (softprops would otherwise
+#   silently update an existing release and discard the fresh body);
+# - release notes are composed from the CHANGELOG section of the released
+#   version (missing/empty/undated section fails the run);
+# - the packed tgz ships with a .sha256 sidecar; the release asset is exactly
+#   the bytes `verify:package` gated.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release — MUST equal package.json version (X.Y.Z)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run (gate + notes only; do not create/update the GitHub Release)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+# GitHub Releases are shared mutable state: serialize publication and never
+# cancel a run that may already have mutated a release.
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Gate, pack, GitHub Release (tgz)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release + attach assets
+    steps:
+      - uses: actions/checkout@v5 # TODO: pin 40-hex SHA once the repo is public
+
+      - name: Verify workflow action pins & release structure
+        run: node scripts/verify-workflow-action-pins.mjs
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v5 # TODO: pin 40-hex SHA once the repo is public
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        # --legacy-peer-deps: see ci.yml for the rationale (devDep matrix
+        # spans dsh version lines; runtime peers resolve from the dsh install).
+        run: npm ci --no-audit --no-fund --legacy-peer-deps
+
+      - name: Assert lockfile not rewritten
+        run: git diff --exit-code -- package-lock.json
+
+      - name: Full gate (typecheck + tests + build + package verify)
+        run: npm run check
+
+      - name: Tag/version sanity
+        run: |
+          pkg_ver=$(node -p "require('./package.json').version")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag_ver="${{ inputs.version }}"
+          else
+            tag_ver="${GITHUB_REF_NAME#v}"
+          fi
+          test "$pkg_ver" = "$tag_ver" || {
+            echo "::error::package.json version $pkg_ver does not match requested v$tag_ver"
+            exit 1
+          }
+          echo "Releasing dsh-mcp-scope@$pkg_ver"
+          echo "PKG_VERSION=$pkg_ver" >> "$GITHUB_ENV"
+
+      - name: Compose release notes from CHANGELOG
+        run: node scripts/release-notes.mjs "$PKG_VERSION" --out .smoke/release-notes.md
+
+      - name: Write tgz sha256 sidecar
+        run: |
+          cd .smoke/verify/dist
+          sha256sum dsh-mcp-scope-*.tgz > dsh-mcp-scope-${{ env.PKG_VERSION }}.tgz.sha256
+          cat dsh-mcp-scope-${{ env.PKG_VERSION }}.tgz.sha256
+
+      # Chamber postmortem: softprops/action-gh-release finds an existing
+      # release by tag and silently UPDATES it, discarding the fresh body.
+      # A published release for this version is therefore a hard stop; only
+      # stale drafts from an aborted run are deleted first.
+      - name: Refuse re-publishing an existing release
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "v${{ env.PKG_VERSION }}" --json id,draft --jq '{id,draft}' >/tmp/rel.json 2>/dev/null; then
+            draft=$(jq -r '.draft' /tmp/rel.json)
+            if [ "$draft" = "true" ]; then
+              echo "stale draft v${{ env.PKG_VERSION }} exists — deleting before re-release"
+              gh release delete "v${{ env.PKG_VERSION }}" --yes --cleanup-tag=false
+            else
+              echo "::error::release v${{ env.PKG_VERSION }} is already published; refusing to overwrite"
+              exit 1
+            fi
+          fi
+
+      # ------------------------------------------------------------------
+      # Temporarily disabled — npm publish. Re-enable when ready:
+      #
+      # - name: Publish to npm
+      #   run: npm publish --provenance
+      #   env:
+      #     NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # ------------------------------------------------------------------
+
+      - name: Create GitHub Release with tgz asset
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true') }}
+        uses: softprops/action-gh-release@v3 # TODO: pin 40-hex SHA once the repo is public
+        with:
+          name: dsh-mcp-scope v${{ env.PKG_VERSION }}
+          body_path: .smoke/release-notes.md
+          files: |
+            .smoke/verify/dist/*.tgz
+            .smoke/verify/dist/*.tgz.sha256
+          fail_on_unmatched_files: true
+
+      - name: Attach packed tarball artifact
+        uses: actions/upload-artifact@v6 # TODO: pin 40-hex SHA once the repo is public
+        with:
+          name: dsh-mcp-scope-tgz
+          path: .smoke/verify/dist/*.tgz*
+          if-no-files-found: error

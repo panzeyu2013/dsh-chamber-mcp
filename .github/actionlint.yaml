@@ -1,0 +1,5 @@
+# Local actionlint config (actionlint -version >= 1.7): register the custom
+# self-hosted runner label used by ci.yml's smoke job so linting is clean.
+self-hosted-runner:
+  labels:
+    - dsh-smoke
