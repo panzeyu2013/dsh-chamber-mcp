@@ -23,17 +23,17 @@ lives on the smoke machine (`/root/.dsh-chamber/gateway/dsh-anchor`).
 
 Dependabot keeps npm + actions dependencies reviewed (weekly/monthly).
 
-## Releasing to npm (tag-driven)
+## Releasing a tgz GitHub Release (tag-driven)
 
 Preconditions (first release only):
 
-- The npm name **`dsh-mcp-scope`** must be available/owned. If you publish
-  under a scope instead, update `package.json#name` **and** the loader row in
-  `cordis.patch.yml` (`name: dsh-mcp-scope` → the new module name) and re-run
-  `npm run verify:package`.
-- Add the repository secret **`NPM_TOKEN`** (automation token, publish-only).
-- Provenance (`--provenance`) requires OIDC; if unsupported, drop it from
-  `.github/workflows/release.yml` (see comments there).
+- A public GitHub repository (the Release + asset need `push` rights; no
+  secrets are required in the current tgz-only mode).
+- **npm publishing is temporarily disabled**; releases ship the packed
+  `dsh-mcp-scope-<version>.tgz` as the GitHub Release asset, installable via
+  `dsh plugin --profile web add <asset-url>`. Re-enable npm publish later by
+  uncommenting the step in `.github/workflows/release.yml` (requires
+  `NPM_TOKEN`, `id-token: write` for provenance, and the npm name owned).
 
 Changelog-first flow (Keep a Changelog — see CHANGELOG.md):
 
@@ -63,10 +63,10 @@ The workflow then:
    version (`node scripts/release-notes.mjs "$PKG_VERSION"` — fails the run
    if the section is missing or empty or undated, so a release can never ship
    without notes);
-3. `npm publish --provenance`;
-4. creates the **GitHub Release** for the tag with those notes as the body
+3. creates the **GitHub Release** for the tag with those notes as the body
    and the packed `dsh-mcp-scope-<version>.tgz` attached as the release
-   asset (plus the workflow artifact upload).
+   asset (plus the workflow artifact upload). npm publishing is currently
+   commented out — see the workflow header for the re-enable recipe.
 
 Compatibility notes for consumers:
 
@@ -93,7 +93,12 @@ etc.
 
 ## Rollback
 
-- npm: `npm unpublish dsh-mcp-scope@<bad>` (only within 72h) or publish a
-  fixed patch; users reinstall via `dsh plugin --profile web add` (profile
-  bundles reconcile by installed state, so `pnpm update` picks the fix).
+- GitHub Release: edit/delete the Release (or delete just the asset) and push
+  a fixed tag (`v<version>+1`) with the corrected tgz; deleting a tag moves
+  the Release back to `draft` state for reuse.
+- Users reinstall by pointing `dsh plugin --profile web add` at the new
+  asset URL (profile bundles reconcile by installed state).
 - The plugin is per-instance state: uninstall guidance lives in README.
+- (When npm publishing is re-enabled: `npm unpublish` within 72 h or a fixed
+  patch release, and users simply `dsh plugin --profile web add dsh-mcp-scope`
+  again — pnpm update picks the fix.)

@@ -8,9 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- GitHub Release publishing: the tag workflow attaches the packed `dsh-mcp-scope-*.tgz`
-  as a release asset and composes release notes from this changelog
-  (`scripts/release-notes.mjs`).
+- GitHub Release publishing: the tag workflow attaches the packed
+  `dsh-mcp-scope-*.tgz` as the release asset and composes release notes from
+  this changelog (`scripts/release-notes.mjs`). npm publishing is temporarily
+  disabled — see `.github/workflows/release.yml`.
 
 ## [0.1.0] - 2026-09-06
 

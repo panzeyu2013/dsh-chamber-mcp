@@ -1,28 +1,34 @@
 name: Release
 
-# Tag-driven npm release. Usage:
-#   1. bump `version` in package.json (+ CHANGELOG entry; commit);
+# Tag-driven GitHub Release (tgz asset only).
+#
+# ⚠ npm publishing is TEMPORARILY DISABLED — releases currently ship the
+# packed `dsh-mcp-scope-<version>.tgz` as the GitHub Release asset; users
+# install it directly, e.g.:
+#   dsh plugin --profile web add \
+#     https://github.com/<owner>/dsh-mcp-scope/releases/download/v0.2.0/dsh-mcp-scope-0.2.0.tgz
+#
+# To re-enable npm publishing later: uncomment the "Publish to npm" step
+# below, add the repository secret NPM_TOKEN, and restore `id-token: write`
+# in `permissions` when using `--provenance`.
+#
+# Flow:
+#   1. move CHANGELOG notes from "[Unreleased]" into a dated section and bump
+#      package.json#version (commit);
 #   2. tag the commit:      git tag v0.2.0
 #   3. push tag:            git push origin v0.2.0
-#   → this workflow runs the full gate, packs, and `npm publish`s.
-#
-# Secrets required on the repository:
-#   NPM_TOKEN — an npm automation token (publish-only) for the package owner.
-# Provenance: publishing with --provenance requires the npm registry to
-# support it and OIDC (`id-token: write` below). If the registry/organization
-# does not support provenance, drop `--provenance` and the permissions line.
+#   → full gate → release notes from CHANGELOG → GitHub Release + tgz asset.
 
 on:
   push:
     tags: ['v*']
 
 permissions:
-  contents: write # create the GitHub Release + attach assets
-  id-token: write # npm provenance
+  contents: write # create the GitHub Release + attach the tgz asset
 
 jobs:
   release:
-    name: Gate, pack, publish
+    name: Gate, pack, GitHub Release (tgz)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +38,6 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         # --legacy-peer-deps: the dsh devDep matrix spans version lines whose
@@ -58,10 +63,14 @@ jobs:
       - name: Compose release notes from CHANGELOG
         run: node scripts/release-notes.mjs "$PKG_VERSION" --out .smoke/release-notes.md
 
-      - name: Publish to npm
-        run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # ------------------------------------------------------------------
+      # Temporarily disabled — npm publish. Re-enable when ready:
+      #
+      # - name: Publish to npm
+      #   run: npm publish --provenance
+      #   env:
+      #     NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # ------------------------------------------------------------------
 
       - name: Create GitHub Release with tgz asset
         uses: softprops/action-gh-release@v2
