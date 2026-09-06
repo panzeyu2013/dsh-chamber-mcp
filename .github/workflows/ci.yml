@@ -62,7 +62,7 @@ jobs:
         run: npm run verify:package
 
       - name: Upload packed tarball
-        uses: actions/upload-artifact@v6 # TODO: pin 40-hex SHA once the repo is public
+        uses: actions/upload-artifact@v7 # TODO: pin 40-hex SHA once the repo is public
         with:
           name: dsh-mcp-scope-${{ matrix.node }}-${{ github.sha }}
           path: .smoke/verify/dist/*.tgz

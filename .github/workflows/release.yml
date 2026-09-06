@@ -146,7 +146,7 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Attach packed tarball artifact
-        uses: actions/upload-artifact@v6 # TODO: pin 40-hex SHA once the repo is public
+        uses: actions/upload-artifact@v7 # TODO: pin 40-hex SHA once the repo is public
         with:
           name: dsh-mcp-scope-tgz
           path: .smoke/verify/dist/*.tgz*
