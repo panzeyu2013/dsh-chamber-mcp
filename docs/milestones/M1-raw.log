@@ -1,8 +1,8 @@
 dsh plugin add exit=undefined
 bundles: @deepseek-ai/dsh-base, @deepseek-ai/dsh-web-app, dsh-mcp-scope
-on-workspace=f7591e3b-7824-4bb8-8d5e-6907af70a920 off-workspace=ff219463-7d06-4dc4-aebd-788e9a8ce766
+on-workspace=a03e4eab-5fac-44cd-a75a-c62f25a7967f off-workspace=69e0e291-5ba1-45f1-923b-d48624986601
 servers: ["fixture"]
-session-on=session-2d320c3b-a5b0-49a4-9d77-e6186be62e65 session-off=session-0ffa8fac-0617-4590-8e7e-6463ff8bd9af
+session-on=session-387f3f9a-68f6-481f-a77c-729fc633bcfe session-off=session-b871584a-f915-4093-bcd3-9ac4caee8e4f
 follow on: snapshot delivered (session activated)
 follow off: snapshot delivered (session activated)
 prompted on-workspace

@@ -28,7 +28,12 @@ const lines = changelog.split('\n')
 
 /** Heading level + parsed section key; sections are `## [<key>] - <date>` or `## <key>`. */
 function headingOf(line) {
-  const match = /^(#{1,6})\s+\[?([^\]]+?)\]?(?:\s*-\s*(.+))?$/.exec(line.trim())
+  const trimmed = line.trim()
+  // A '[' must be closed by ']' — otherwise a hyphen inside a bracketed
+  // pre-release key (0.0.1-beta.1) would split at the first '-'.
+  const match =
+    /^(#{1,6})\s+\[([^\]]+)\](?:\s*-\s*(.+))?$/.exec(trimmed) ??
+    /^(#{1,6})\s+([^\s]+?)(?:\s*-\s*(.+))?$/.exec(trimmed)
   if (!match) return undefined
   const [, hashes, key, date] = match
   return { level: hashes.length, key: key.trim(), date: date?.trim() }
