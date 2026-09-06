@@ -21,7 +21,7 @@ special-cases this plugin** — it is an ordinary `dsh plugin` install.
 
 ## Install
 
-Prereqs: Node ≥ 22, pnpm on PATH (the dsh CLI drives pnpm itself).
+Prereqs: Node ≥ 24, pnpm on PATH (the dsh CLI drives pnpm itself).
 
 ```sh
 # into the web profile of a specific dsh instance (per-instance management)
@@ -93,7 +93,7 @@ npm run pack:tgz       # build + .smoke/dsh-mcp-scope-<ver>.tgz
 npm run test:smoke     # live M0/M1 smoke (needs the chamber-anchored dsh CLI; see docs/RELEASE.md)
 ```
 
-CI (`.github/workflows/ci.yml`, Node 22+24 on push/PR) runs the full gate and
+CI (`.github/workflows/ci.yml`, Node 24 on push/PR) runs the full gate and
 uploads the tarball; releases are tag-driven (`v*` →
 `.github/workflows/release.yml` → `npm publish --provenance`). See
 `docs/RELEASE.md` for the release checklist and smoke-runner requirements.

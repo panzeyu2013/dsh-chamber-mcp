@@ -7,12 +7,12 @@ on:
 
 jobs:
   check:
-    name: typecheck + tests + build + package verify
+    name: typecheck + tests + build + package verify (Node 24)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        node: ['22', '24']
+        node: ['24']
     steps:
       - uses: actions/checkout@v4
 
@@ -60,10 +60,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Node 22
+      - name: Setup Node 24
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
         env:
           npm_config_cache: "${{ runner.temp }}/npm-cache"
