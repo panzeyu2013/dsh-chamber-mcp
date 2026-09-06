@@ -449,6 +449,27 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     }
   })
 
+  it("revokes when the workspace's directory disappears from disk (R2I-7)", async () => {
+    const h = await mount()
+    try {
+      const wsA = await h.addWorkspace('dirgone')
+      const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.createAgent(agentA)
+      const defs = new Map([[TOOL_A, def(TOOL_A)]])
+      h.push(SERVER, 1, defs)
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
+
+      // The directory is removed while the registry row still exists: the
+      // canonical-cwd resolution fails closed and the next reconcile revokes.
+      rmSync(wsA.path, { recursive: true, force: true })
+      h.applier.reconcile()
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeUndefined()
+      expect(h.lines.at(-1)?.message).toContain('revoked server "files" from agent agent-a (agent has no workspace)')
+    } finally {
+      h.cleanup()
+    }
+  })
+
   it('applies tools once a workspace appears for a previously workspace-less agent (IMPL-1/ARCH-2)', async () => {
     const h = await mount()
     try {

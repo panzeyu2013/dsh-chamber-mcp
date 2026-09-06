@@ -117,13 +117,18 @@ parity.
 
 ## Round-2 residuals (documented/backlog)
 
-- Mock-LLM model-request capture still impossible headless (rc.1 cold
-  sessions); registry-level gate proof + host suite stand in (ARCH-4).
-- Workspace deletion revokes on the next push/reconcile event; rc.1 exposes no
-  workspace lifecycle events, so a quiescent window exists (ARCH-2 tail).
+- ~~Mock-LLM model-request capture impossible headless~~ **CLOSED**: the rc.1
+  remote mux (`/api/remote.mux`, `session/follow` + `maxMessages`) activates
+  sessions headlessly; `scripts/smoke/m1.mjs` now captures the assembled
+  `tools[]` per workspace turn — R3 PASS live (docs/milestones/M1-live-capture.log).
+- Workspace deletion/change now triggers an applier refresh immediately via
+  the durable `domain/changed` event (domain `workspace`, table `workspaces`)
+  — the rc.1 workspace registry emits no events of its own, so this closes
+  the quiescent window (ARCH-2 tail; test in manager.spec).
 - Delegation children never receive MCP tools by design (preset-governed;
   ARCH-3); real-delegation E2E is backlog.
-- `tools/list` pagination is unbounded (official mirror; SEC-05 backlog);
+- `tools/list` pagination now bounded at `MAX_SYNC_TOOLS = 2000` with a
+  fail-keeping-previous sync (SEC-05 closed);
   reconcile+credential same-tick double-cycle remains theoretically possible
   (convergent; IMPL-3 tail).
 - UX polish backlog (R2U-06/07/08 items: badge retry cue, a11y/focus extras,

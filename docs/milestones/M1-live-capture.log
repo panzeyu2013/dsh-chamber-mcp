@@ -1,0 +1,26 @@
+[mock] mock-llm listening on 39001
+[m1:out] dsh web: http://127.0.0.1:32132/?token=6fkFa4jiAtrfaKrxHWFreI8KkQck9Jj329m1Vn0PKh4
+01:06:21 instance m1 up at http://127.0.0.1:32132
+01:06:22 dsh plugin add exit=undefined
+01:06:22 bundles: @deepseek-ai/dsh-base, @deepseek-ai/dsh-web-app, dsh-mcp-scope
+[m1:out] dsh web: http://127.0.0.1:32132/?token=mXAnWXNlE6g0osm-MA9C-CebkaYXbyC-GrCuHephCJk
+01:06:24 instance m1 up at http://127.0.0.1:32132
+01:06:24 on-workspace=5b14c95a-2213-4846-ba40-83e11ff81502 off-workspace=c2962764-75d1-4050-a495-51a37c99c1f9
+01:06:24 servers: ["fixture"]
+01:06:27 session-on=session-f1a31d8b-09d0-4412-a0e7-c72898582699 session-off=session-0dab3f1b-a5ef-4f1c-a01b-50d45502cb79
+01:06:30 follow on: snapshot delivered (session activated)
+01:06:30 follow off: snapshot delivered (session activated)
+01:06:32 prompted on-workspace
+01:06:35 prompted off-workspace
+01:06:47 mock received 4 chat requests
+01:06:47 request#0: tools=[ask_user_question, bash, create_goal, edit, exit_plan_mode, get_goal, glob, grep, interrupt_agent, job_kill, job_list, job_output, list_agents, mcp__fixture__echo, mcp__fixture__env_report, ralph, read, read_image, send_message, skill, subagent, subagent_fork, todo_write, update_goal, web_fetch, web_search, workflow, write] count=28 model=deepseek-v4-flash
+01:06:47 request#1: tools=[] count=0 model=deepseek-v4-flash
+01:06:47 request#2: tools=[ask_user_question, bash, create_goal, edit, exit_plan_mode, get_goal, glob, grep, interrupt_agent, job_kill, job_list, job_output, list_agents, ralph, read, read_image, send_message, skill, subagent, subagent_fork, todo_write, update_goal, web_fetch, web_search, workflow, write] count=26 model=deepseek-v4-flash
+01:06:47 request#3: tools=[] count=0 model=deepseek-v4-flash
+01:06:47 turn requests captured: 2 (side requests: 2)
+01:06:47 turn#0: tools=[ask_user_question, bash, create_goal, edit, exit_plan_mode, get_goal, glob, grep, interrupt_agent, job_kill, job_list, job_output, list_agents, mcp__fixture__echo, mcp__fixture__env_report, ralph, read, read_image, send_message, skill, subagent, subagent_fork, todo_write, update_goal, web_fetch, web_search, workflow, write] count=28
+01:06:47 turn#1: tools=[ask_user_question, bash, create_goal, edit, exit_plan_mode, get_goal, glob, grep, interrupt_agent, job_kill, job_list, job_output, list_agents, ralph, read, read_image, send_message, skill, subagent, subagent_fork, todo_write, update_goal, web_fetch, web_search, workflow, write] count=26
+01:06:47 R3-live-capture: PASS
+01:06:47 R3: on-workspace turn carries mcp__fixture__* tools: true
+01:06:47 R3: off-workspace turn carries NO mcp__fixture__* tools: true (stock tools remain: true)
+01:06:47 evidence written to /root/projects/dsh-mcp-scope/docs/milestones/M1-raw.log

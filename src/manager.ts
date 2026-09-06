@@ -18,6 +18,8 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+// Type merge: `domain/changed` event + storageDomain ctx (types only).
+import type {} from '@deepseek-ai/dsh-storage-domain'
 import type { CredentialRef, CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { SessionId } from '@deepseek-ai/dsh-session'
@@ -30,6 +32,10 @@ import { credentialRefsOf, type McpScopeDoc, type ServerDef } from './shared/mod
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-credentials'
+
+/** Durable storage-domain identity of the workspace registry (dsh-workspace). */
+export const WORKSPACE_DOMAIN_NAME = 'workspace'
+export const WORKSPACE_TABLE_NAME = 'workspaces'
 
 /** Logger surface for manager + supervisor + applier (ctx.logger-compatible). */
 export type ManagerLogger = ApplierLogger
@@ -200,6 +206,25 @@ export function createManager(options: ManagerOptions): ManagerHandle {
     }
     return refs
   }
+
+  // Workspace registry changes (create/delete/rename/session membership):
+  // rc.1 exposes no workspace-domain events of its own, but every durable
+  // workspace write emits `domain/changed` for domain "workspace" /
+  // table "workspaces". Re-judge live agent membership on any such write so
+  // a deleted workspace revokes its sessions' tools promptly instead of
+  // waiting for the next settings/server event (the applier refresh is
+  // diffed: unchanged pairs are no-ops).
+  ctx.effect(() => {
+    const off = ctx.on('domain/changed', (change) => {
+      if (disposed) return
+      if (change.domain !== WORKSPACE_DOMAIN_NAME || change.table !== 'workspaces') return
+      enqueue(async () => {
+        if (disposed) return
+        applier.reconcile()
+      })
+    })
+    return () => off()
+  }, 'mcp-scope.workspace-domain()')
 
   // Credential updates: restart every server drawing on the changed ref so
   // the new value reaches the next connect attempt.

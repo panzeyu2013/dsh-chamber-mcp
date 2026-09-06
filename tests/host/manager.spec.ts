@@ -227,6 +227,32 @@ describe('bridge manager lifecycle', () => {
     }
   })
 
+  it('workspace domain/changed events trigger a quiet applier refresh (no side effects on an unchanged doc)', async () => {
+    const { ctx, manager, lines, setDoc, dispose } = await boot()
+    try {
+      setDoc({ servers: [stdioServer('fix')], overrides: {} })
+      manager.reconcile()
+      await waitFor(() => started(lines, 'fix') === 1, 'server started log')
+      await waitFor(
+        () => lines.some((l) => l.message.includes('mcp-scope(fix): synced 8 tools')),
+        'initial sync log',
+      )
+      const before = lines.length
+      // Workspace-registry writes emit domain/changed for domain "workspace":
+      // the refresh must run without restarting servers or touching the doc.
+      ctx.emit('domain/changed', { domain: 'workspace', table: 'workspaces', key: 'ws-1', operation: 'put', value: {} })
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      expect(lines.length).toBe(before)
+      expect(started(lines, 'fix')).toBe(1)
+      // Non-workspace domains are ignored the same way.
+      ctx.emit('domain/changed', { domain: 'other', table: 'x', key: 'k', operation: 'put', value: {} })
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      expect(lines.length).toBe(before)
+    } finally {
+      await dispose()
+    }
+  })
+
   it('a queued credential restart of a concurrently removed server never resurrects it (R2I-1)', async () => {
     const { ctx, manager, lines, setDoc, dispose } = await boot()
     try {

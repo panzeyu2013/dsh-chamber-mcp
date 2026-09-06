@@ -42,6 +42,14 @@ const INVALID_NAME_CHARS = /[^A-Za-z0-9_-]/g
 /** Hex chars of the SHA-256 identity hash appended on lossy normalization. */
 export const HASH_LENGTH = 12
 
+/**
+ * Hard cap on one server's tool count. The official bridge mirrors
+ * pagination unboundedly; this one bounds it so a misbehaving server cannot
+ * drive unbounded per-agent registration fan-out (SEC-05). Crossing the cap
+ * fails the sync like any fetch-phase failure: the previous generation stays.
+ */
+export const MAX_SYNC_TOOLS = 2000
+
 /** Default timeout for individual MCP tool calls (ms) — official default. */
 export const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000
 
@@ -134,6 +142,11 @@ export async function fetchToolDefinitions(
       if (definitions.has(publicName)) {
         throw new Error(
           `mcp-scope(${opts.serverName}): server listed tool "${tool.name}" more than once — invalid tool list`,
+        )
+      }
+      if (definitions.size >= MAX_SYNC_TOOLS) {
+        throw new Error(
+          `mcp-scope(${opts.serverName}): server lists more than ${MAX_SYNC_TOOLS} tools — refusing the sync`,
         )
       }
       definitions.set(publicName, createDefinition(client, publicName, tool, opts))

@@ -120,6 +120,13 @@ describe('fetchToolDefinitions', () => {
     await expect(fetchToolDefinitions(client as never, defaultOpts)).rejects.toThrow(/more than once/)
   })
 
+  it('refuses a server that lists more than MAX_SYNC_TOOLS tools (SEC-05 cap)', async () => {
+    const big: ListedTool[] = []
+    for (let i = 0; i < 2001; i++) big.push({ name: `tool-${i}`, inputSchema: { type: 'object' } })
+    const client = createMockClient(big)
+    await expect(fetchToolDefinitions(client as never, defaultOpts)).rejects.toThrow(/more than 2000 tools/)
+  })
+
   it('paginates until the server stops returning a nextCursor', async () => {
     const pages: ListedTool[][] = [
       [{ name: 'a', inputSchema: { type: 'object' } }],
