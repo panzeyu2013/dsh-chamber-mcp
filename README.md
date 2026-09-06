@@ -84,12 +84,19 @@ UI cannot read them back).
 ## Development
 
 ```sh
-npm install            # dev deps (legacy-peer-deps tolerated: version-line skew)
+npm install            # dev deps (--legacy-peer-deps: dsh devDep version-line skew)
 npm run typecheck      # src + tests
 npm test               # vitest suite (133 tests)
-node scripts/build.mjs # emits lib/index.js (host), lib/client.js (browser), lib/types
+npm run check          # full gate: typecheck + tests + build + package verify
+npm run verify:package # pack → contents whitelist → consumer d.ts check → determinism
 npm run pack:tgz       # build + .smoke/dsh-mcp-scope-<ver>.tgz
+npm run test:smoke     # live M0/M1 smoke (needs the chamber-anchored dsh CLI; see docs/RELEASE.md)
 ```
+
+CI (`.github/workflows/ci.yml`, Node 22+24 on push/PR) runs the full gate and
+uploads the tarball; releases are tag-driven (`v*` →
+`.github/workflows/release.yml` → `npm publish --provenance`). See
+`docs/RELEASE.md` for the release checklist and smoke-runner requirements.
 
 Docs: `docs/design.md` (architecture), `docs/recon/` (evidence reports),
 `docs/milestones/M0.md` + `M1.md` (smoke evidence), `docs/host-notes.md` /

@@ -31,7 +31,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "pack:tgz": "node scripts/build.mjs && npm pack --pack-destination .smoke/"
+    "check": "npm run typecheck && npm test && npm run build && npm run verify:package",
+    "verify:package": "node scripts/verify-package.mjs",
+    "pack:tgz": "npm pack --pack-destination .smoke/",
+    "test:smoke": "node scripts/smoke/m1.mjs && node scripts/smoke/m0.mjs"
   },
   "dsh": {
     "bundle": {
@@ -98,5 +101,17 @@
     "vitest": "^3.2.0",
     "@deepseek-ai/dsh-timeout": "0.1.2-rc.1",
     "@deepseek-ai/dsh-storage-domain": "0.1.2-rc.1"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "mcp",
+    "model-context-protocol",
+    "workspace",
+    "tools"
+  ],
+  "prepack": "node scripts/build.mjs"
 }

@@ -11,3 +11,4 @@
 | host-notes.md | Host-half API findings & deviations (written during implementation) |
 | ui-notes.md | Client-half API findings & deviations (written during implementation) |
 | review/ | Six-axis review reports (round 1 + round 2 under `review/round2/`) + consolidated summary with disposition matrix |
+| RELEASE.md | CI + release mechanics: workflows, tag flow, smoke runner, rollback |

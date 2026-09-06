@@ -1,0 +1,66 @@
+name: Release
+
+# Tag-driven npm release. Usage:
+#   1. bump `version` in package.json (+ CHANGELOG entry; commit);
+#   2. tag the commit:      git tag v0.2.0
+#   3. push tag:            git push origin v0.2.0
+#   → this workflow runs the full gate, packs, and `npm publish`s.
+#
+# Secrets required on the repository:
+#   NPM_TOKEN — an npm automation token (publish-only) for the package owner.
+# Provenance: publishing with --provenance requires the npm registry to
+# support it and OIDC (`id-token: write` below). If the registry/organization
+# does not support provenance, drop `--provenance` and the permissions line.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+jobs:
+  release:
+    name: Gate, pack, publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        # --legacy-peer-deps: the dsh devDep matrix spans version lines whose
+        # peer ranges conflict (e.g. dsh-client-runtime 0.1.1 vs dsh-agent
+        # 0.1.2); at runtime those peers resolve from the dsh install, so the
+        # dev-tree install deliberately relaxes peer resolution.
+        run: npm ci --no-audit --no-fund --legacy-peer-deps
+
+      - name: Full gate (typecheck + tests + build + package verify)
+        run: npm run check
+
+      - name: Tag/version sanity
+        run: |
+          pkg_ver=$(node -p "require('./package.json').version")
+          tag_ver="${GITHUB_REF_NAME#v}"
+          test "$pkg_ver" = "$tag_ver" || {
+            echo "::error::package.json version $pkg_ver does not match tag v$tag_ver"
+            exit 1
+          }
+          echo "Releasing dsh-mcp-scope@$pkg_ver"
+
+      - name: Publish to npm
+        run: npm publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Attach packed tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-mcp-scope-tgz
+          path: .smoke/verify/dist/*.tgz

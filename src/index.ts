@@ -21,6 +21,15 @@ import z from '@deepseek-ai/schemastery'
 import { createManager, type ManagerHandle } from './manager.js'
 import { DocumentSchema } from './schema.js'
 import { EMPTY_DOC, validateDoc, type McpScopeDoc } from './shared/model.js'
+// Public type surface for typed consumers (FE-10 host side).
+export type {
+  McpScopeDoc,
+  ServerDef,
+  StdioServerDef,
+  StreamableHttpServerDef,
+  WorkspaceOverrides,
+  WorkspaceOverrides as WorkspaceOverridesAlias,
+} from './shared/model.js'
 // Side-effect type imports: ctx.tools / ctx.settings / ctx.credentials merge.
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-settings'
