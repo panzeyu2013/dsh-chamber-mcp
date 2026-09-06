@@ -86,7 +86,7 @@ UI cannot read them back).
 ```sh
 npm install            # dev deps (legacy-peer-deps tolerated: version-line skew)
 npm run typecheck      # src + tests
-npm test               # vitest suite (130 tests)
+npm test               # vitest suite (133 tests)
 node scripts/build.mjs # emits lib/index.js (host), lib/client.js (browser), lib/types
 npm run pack:tgz       # build + .smoke/dsh-mcp-scope-<ver>.tgz
 ```

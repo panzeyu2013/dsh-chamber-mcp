@@ -258,7 +258,7 @@ describe('McpScopeSection render', () => {
     await flush()
     expect(loading.text()).toContain(en['workspaces.loading'])
     expect(loading.text()).not.toContain(en['workspaces.empty'])
-    expect(loading.text()).not.toContain('Off in')
+    expect(loading.text()).not.toContain(en[countKey('server.offWorkspaces', 1)].replace('{count}', '1'))
     loading.unmount()
     const failed = mountSection(doc, {}, { wsState: 'error', wsPhase: 'ready', wsItems: [] })
     await flush()

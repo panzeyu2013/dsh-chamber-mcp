@@ -111,7 +111,7 @@ performance,interaction,frontend,fix-verification}.md`.
 | R2U-03/04/05 | banner dismiss button; Esc closes remove-confirm + focus restore; card actions disabled while a form is open; dedicated "Clearing…" copy; zh ellipsis aligned |
 | R2P-3 | epoch map pruned on server removal; dead `startup` param removed |
 
-Final state: **130 tests / 11 files green**, both typechecks clean, build
+Final state: **133 tests / 11 files green**, both typechecks clean, build
 deterministic, client bundle purity re-verified, locales at 82 keys × 2 with
 parity.
 

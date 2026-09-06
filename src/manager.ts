@@ -232,6 +232,11 @@ export function createManager(options: ManagerOptions): ManagerHandle {
     const off = ctx.on('credentials/reference-updated', (ref: CredentialRef) => {
       if (disposed) return
       if (!refsInUse().has(ref)) return
+      // Note: a reconcile-triggered restart and a credential restart for the
+      // same server can still both cycle in one tick (reconcile bypasses the
+      // coalescing set by design). The chain serializes them and the later
+      // start resolves credentials per attempt, so the double cycle always
+      // converges — accepted as documented in docs/review/SUMMARY.md.
       const affected = options.getDoc().servers.filter((server) => credentialRefsOf(server).includes(ref))
       for (const server of affected) {
         // Log only when the restart is actually queued (a same-tick second
