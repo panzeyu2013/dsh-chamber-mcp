@@ -34,7 +34,8 @@
     "check": "npm run typecheck && npm test && npm run build && npm run verify:package",
     "verify:package": "node scripts/verify-package.mjs",
     "pack:tgz": "mkdir -p .smoke && npm pack --pack-destination .smoke/",
-    "test:smoke": "node scripts/smoke/m1.mjs && node scripts/smoke/m0.mjs"
+    "test:smoke": "node scripts/smoke/m1.mjs && node scripts/smoke/m0.mjs",
+    "verify:workflows": "node scripts/verify-workflow-action-pins.mjs"
   },
   "dsh": {
     "bundle": {
@@ -113,5 +114,6 @@
     "workspace",
     "tools"
   ],
-  "prepack": "node scripts/build.mjs"
+  "prepack": "node scripts/build.mjs",
+  "packageManager": "npm@11.19.0"
 }

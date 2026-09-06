@@ -1,8 +1,15 @@
 # Release & CI guide — dsh-mcp-scope
 
-## CI (push / PR)
+## CI (push / tags / PR)
 
-`.github/workflows/ci.yml` runs on every push/PR against **Node 24**:
+`.github/workflows/ci.yml` runs the SAME validation chain on every push to
+main, every `v*` tag push, and every PR against **Node 24** (chamber norm: a
+tag can never publish an untested commit; release.yml additionally re-runs
+the full gate itself because tag-triggered workflows run in parallel). The
+first step verifies workflow action pins and release structure
+(`npm run verify:workflows`); installs are frozen `npm ci` with a
+lockfile-not-rewritten assert. The workflow is also dispatchable so the
+self-hosted live-smoke lane is reachable.
 
 1. `npm ci`
 2. `npm run typecheck` — src + tests, two tsconfigs
@@ -58,15 +65,24 @@ git push origin v0.0.1     # triggers .github/workflows/release.yml
 
 The workflow then:
 
-1. re-runs the full gate and verifies `package.json#version === tag`;
+1. re-runs the full gate and verifies `package.json#version === requested`;
 2. composes the release notes from the changelog section of the released
    version (`node scripts/release-notes.mjs "$PKG_VERSION"` — fails the run
    if the section is missing or empty or undated, so a release can never ship
    without notes);
-3. creates the **GitHub Release** for the tag with those notes as the body
-   and the packed `dsh-mcp-scope-<version>.tgz` attached as the release
-   asset (plus the workflow artifact upload). npm publishing is currently
-   commented out — see the workflow header for the re-enable recipe.
+3. refuses to re-publish over an existing *published* release (only stale
+   drafts are deleted first — softprops would otherwise silently update the
+   old release and discard the fresh body);
+4. writes a `.sha256` sidecar next to the tgz and creates the **GitHub
+   Release** with the notes as the body and `dsh-mcp-scope-<version>.tgz` +
+   `….tgz.sha256` attached (plus the workflow artifact upload). npm
+   publishing is currently commented out — see the workflow header for the
+   re-enable recipe.
+
+Publication is serialized (`concurrency.group: release-publish`) and also
+runs from `workflow_dispatch` with a **dry_run** mode: any change to
+workflows/scripts/action pins must be validated by one dry run before the
+formal tag (chamber rule).
 
 Compatibility notes for consumers:
 

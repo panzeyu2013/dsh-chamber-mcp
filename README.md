@@ -104,7 +104,7 @@ npm run pack:tgz       # build + .smoke/dsh-mcp-scope-<ver>.tgz
 npm run test:smoke     # live M0/M1 smoke (needs the chamber-anchored dsh CLI; see docs/RELEASE.md)
 ```
 
-CI (`.github/workflows/ci.yml`, Node 24 on push/PR) runs the full gate and
+CI (`.github/workflows/ci.yml`, Node 24 on push/tags/PR + dispatch) runs the full gate and
 uploads the tarball; releases are tag-driven (`v*` → `.github/workflows/release.yml` → GitHub
 Release whose asset is the packed `dsh-mcp-scope-<version>.tgz`; npm publish
 is temporarily disabled). See `docs/RELEASE.md` for the release checklist and

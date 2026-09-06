@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Repo conventions aligned with dsh-chamber norms (compliance audit,
+  `docs/review/compliance.md`): workflow action-pin & release-structure
+  verification (`npm run verify:workflows`), tag pushes run the same CI
+  chain, serialized publication with a refuse-existing-release guard, dry-run
+  dispatch mode, tgz `.sha256` sidecar, `packageManager` field, PR template,
+  AGENTS.md, built-entry import probe in `verify:package`.
+
 ## [0.0.1] - 2026-09-06
 
 First functional release of the third-party dsh plugin: MCP servers managed per

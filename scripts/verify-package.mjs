@@ -13,6 +13,7 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -81,6 +82,15 @@ writeFileSync(consumerTsc, JSON.stringify({
 }, null, 2))
 run(process.execPath, [tsc, '-p', consumerTsc], consumerDir)
 console.log('consumer typecheck OK (host + ./client entry types)')
+
+// Execute the BUILT host entry against repo node_modules (runtime analog of
+// chamber's installed-binary smoke): import failure or a missing export here
+// is a packaging defect the typecheck cannot see.
+const probe = await import(pathToFileURL(join(root, 'lib', 'index.js')).href)
+for (const key of ['name', 'inject', 'Config', 'apply']) {
+  if (!(key in probe)) throw new Error(`built lib/index.js is missing the ${key} export`)
+}
+console.log('built lib/index.js imports OK (exports: ' + Object.keys(probe).join(', ') + ')')
 
 // 4. determinism: rebuild once more and compare host + client bundles
 const hash = (f) => createHash('sha256').update(readFileSync(f)).digest('hex')
