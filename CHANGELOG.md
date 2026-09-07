@@ -5,24 +5,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.0.2] - 2026-09-06
-
-### Changed
-
-- **Repository & package renamed `dsh-mcp-scope` → `dsh-chamber-mcp`**:
-  GitHub repository `panzeyu2013/dsh-chamber-mcp`, npm-style package identity
-  `dsh-chamber-mcp`, loader row `name: dsh-chamber-mcp`, client-info identity
-  derived from `package.json` (drift-proof), artifact file
-  `dsh-chamber-mcp-0.0.2.tgz` (+ `.sha256`). Install command and asset URLs
-  updated everywhere. The internal settings namespace / loader row id
-  `mcp-scope` is unchanged (stable config identity — existing documents keep
-  working). v0.0.1 remains published under the old name and keeps working.
-
 ## [0.0.1] - 2026-09-06
 
-First functional release of the third-party dsh plugin: MCP servers managed per
-workspace from the dsh Settings UI, with tools injected into the tool scopes of
-enabled workspaces only.
+First functional release of `dsh-chamber-mcp`, a standalone third-party dsh
+plugin: MCP servers managed per workspace from the dsh Settings UI, with tools
+injected into the tool scopes of enabled workspaces only.
 
 ### Added
 

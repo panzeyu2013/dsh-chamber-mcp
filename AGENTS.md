@@ -2,9 +2,8 @@
 
 `dsh-chamber-mcp` is a standalone third-party dsh plugin (settings-namespace MCP
 servers with per-workspace per-agent tool-scope injection). Releases: GitHub Releases carrying the packed tgz + `.sha256` (npm publish
-temporarily disabled). v0.0.1 shipped as `dsh-mcp-scope`; the repository and
-package were renamed to `dsh-chamber-mcp` at v0.0.2 (internal settings
-namespace/loader id `mcp-scope` unchanged).
+temporarily disabled). Current release: v0.0.1 of `dsh-chamber-mcp` (internal
+settings namespace/loader id: `mcp-scope`).
 
 ## Where things live
 

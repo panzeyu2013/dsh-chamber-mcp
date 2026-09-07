@@ -31,8 +31,8 @@ Releases ship as a GitHub Release whose asset is the packed tarball
 ```sh
 # into the web profile of a specific dsh instance (per-instance management)
 dsh plugin --profile web add \
-  https://github.com/<owner>/dsh-chamber-mcp/releases/download/v0.0.2/dsh-chamber-mcp-0.0.2.tgz
-# or, after building locally:  add file:./dsh-chamber-mcp-0.0.2.tgz
+  https://github.com/<owner>/dsh-chamber-mcp/releases/download/v0.0.1/dsh-chamber-mcp-0.0.1.tgz
+# or, after building locally:  add file:./dsh-chamber-mcp-0.0.1.tgz
 # restart the instance (the profile bundle list changed)
 ```
 
