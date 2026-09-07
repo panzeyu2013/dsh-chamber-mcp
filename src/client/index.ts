@@ -1,5 +1,5 @@
 /**
- * Browser half of dsh-mcp-scope: registers the `mcp-scope` settings section
+ * Browser half of dsh-chamber-mcp: registers the `mcp-scope` settings section
  * (locale + section registration + controller wiring).
  *
  * Required cordis services (fiber inject): slots, locale, remote

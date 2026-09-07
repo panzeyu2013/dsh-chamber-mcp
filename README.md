@@ -1,4 +1,4 @@
-# dsh-mcp-scope
+# dsh-chamber-mcp
 
 A user-installable **third-party dsh plugin** that manages **MCP servers per
 workspace** from the dsh Settings UI:
@@ -31,12 +31,12 @@ Releases ship as a GitHub Release whose asset is the packed tarball
 ```sh
 # into the web profile of a specific dsh instance (per-instance management)
 dsh plugin --profile web add \
-  https://github.com/<owner>/dsh-mcp-scope/releases/download/v0.0.1/dsh-mcp-scope-0.0.1.tgz
-# or, after building locally:  add file:./dsh-mcp-scope-0.0.1.tgz
+  https://github.com/<owner>/dsh-chamber-mcp/releases/download/v0.0.2/dsh-chamber-mcp-0.0.2.tgz
+# or, after building locally:  add file:./dsh-chamber-mcp-0.0.2.tgz
 # restart the instance (the profile bundle list changed)
 ```
 
-(Once npm publishing is re-enabled, `dsh plugin --profile web add dsh-mcp-scope`
+(Once npm publishing is re-enabled, `dsh plugin --profile web add dsh-chamber-mcp`
 installs the same content from the registry.)
 
 - The package's `dsh.bundle` patch inserts one loader row (`mcp-scope`); the
@@ -70,7 +70,7 @@ policy.
 ## Uninstall
 
 ```sh
-dsh plugin --profile web remove dsh-mcp-scope   # + restart the instance
+dsh plugin --profile web remove dsh-chamber-mcp   # + restart the instance
 ```
 
 Removing the package stops the servers and drops the settings section. Namespace
@@ -100,13 +100,13 @@ npm run typecheck      # src + tests
 npm test               # vitest suite (133 tests)
 npm run check          # full gate: typecheck + tests + build + package verify
 npm run verify:package # pack → contents whitelist → consumer d.ts check → determinism
-npm run pack:tgz       # build + .smoke/dsh-mcp-scope-<ver>.tgz
+npm run pack:tgz       # build + .smoke/dsh-chamber-mcp-<ver>.tgz
 npm run test:smoke     # live M0/M1 smoke (needs the chamber-anchored dsh CLI; see docs/RELEASE.md)
 ```
 
 CI (`.github/workflows/ci.yml`, Node 24 on push/tags/PR + dispatch) runs the full gate and
 uploads the tarball; releases are tag-driven (`v*` → `.github/workflows/release.yml` → GitHub
-Release whose asset is the packed `dsh-mcp-scope-<version>.tgz`; npm publish
+Release whose asset is the packed `dsh-chamber-mcp-<version>.tgz`; npm publish
 is temporarily disabled). See `docs/RELEASE.md` for the release checklist and
 smoke-runner requirements.
 

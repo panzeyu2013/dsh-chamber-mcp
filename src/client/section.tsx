@@ -140,7 +140,7 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
   }
 
   return (
-    <div data-dsh-mcp-scope-section>
+    <div data-dsh-chamber-mcp-section>
       <header style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
         <h2 style={{ margin: 0, fontSize: 17 }}>{t('nav')}</h2>
         <span style={{ flex: 1 }} />

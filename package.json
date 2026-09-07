@@ -1,6 +1,6 @@
 {
-  "name": "dsh-mcp-scope",
-  "version": "0.0.1",
+  "name": "dsh-chamber-mcp",
+  "version": "0.0.2",
   "description": "Third-party dsh plugin: manage MCP servers per workspace from the Settings UI; tools are injected into the tool scopes of enabled workspaces only (mcp__ naming, official semantics).",
   "license": "MIT",
   "type": "module",

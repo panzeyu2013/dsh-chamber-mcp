@@ -1,4 +1,4 @@
-# Host-half implementation notes (dsh-mcp-scope)
+# Host-half implementation notes (dsh-chamber-mcp)
 
 Evidence for the coordinator: exact service/API signatures relied on that
 differ from the recon docs, the test-mounting recipe (reproducible), and the
@@ -137,7 +137,7 @@ flags and the full config is green at the time of writing.
    (`[image: <mime>, content discarded]`, `[audio: …]`, `[resource: …]`);
    `resource_link` renders as `Resource link: <name> (<uri>)` (rc.1 wording);
    the canonical `{content, structuredContent?}` value keeps raw blocks.
-4. **Client identity** on the wire is `{name: 'dsh-mcp-scope', version:
+4. **Client identity** on the wire is `{name: 'dsh-chamber-mcp', version:
    '0.0.1'}` (official sends `dsh-mcp-client`); server-facing semantics
    unchanged.
 5. **Reconnect policy is fixed at official defaults** (`500→30_000 ms`,

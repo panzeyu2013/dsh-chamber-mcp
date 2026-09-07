@@ -1,5 +1,5 @@
 /**
- * Shared pure model of the dsh-mcp-scope settings namespace. No runtime
+ * Shared pure model of the dsh-chamber-mcp settings namespace. No runtime
  * dependencies — imported by both the host half and (type-only where possible)
  * the browser half.
  */

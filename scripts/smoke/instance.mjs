@@ -1,4 +1,4 @@
-// dsh-mcp-scope smoke driver: boot a SCRATCH dsh instance (the anchor 0.1.2-rc.1
+// dsh-chamber-mcp smoke driver: boot a SCRATCH dsh instance (the anchor 0.1.2-rc.1
 // CLI — the same generation users run via chamber) and drive its HTTP RPC surface.
 // rc.1 wire generation: slash typert endpoints (/api/settings/describe etc.), payloads
 // {args:{...}} inside the client-request envelope, launch-token cookie auth.

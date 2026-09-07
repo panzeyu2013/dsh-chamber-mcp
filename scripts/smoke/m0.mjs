@@ -1,4 +1,4 @@
-// M0 smoke for dsh-mcp-scope against a scratch anchor (0.1.2-rc.1) instance.
+// M0 smoke for dsh-chamber-mcp against a scratch anchor (0.1.2-rc.1) instance.
 // Phases: setup (workspaces/creds/baseline), install (dsh plugin add tgz + restart),
 // plugin (namespace R/W + revision conflict), gate (server add → spawn → sessions in
 // two workspaces with ws-b off → apply/revoke log evidence).
@@ -10,7 +10,7 @@ import { Instance, SMOKE, ROOT, NODE, log } from './instance.mjs'
 const PORT = 32131
 const HOME = join(SMOKE, 'm0-home')
 const PKG_VERSION = JSON.parse(readFileSync(join(ROOT,'package.json'),'utf8')).version
-const TGZ = join(SMOKE, `dsh-mcp-scope-${PKG_VERSION}.tgz`)
+const TGZ = join(SMOKE, `${PKG_NAME}-${PKG_VERSION}.tgz`)
 // Self-contained: pack the plugin tarball when it is not present yet (npm
 // cache redirected into .smoke so a read-only HOME cannot break the pack).
 if (!existsSync(TGZ)) {
@@ -46,8 +46,8 @@ say(`ws-b ${JSON.stringify(WB)} created=${b.created}`)
 
 step('baseline: plugin-inventory before install')
 const inv0 = await inst.rpc('pluginInventory/list', {})
-const hasMine0 = inv0.entries.some((e) => e.moduleName === 'dsh-mcp-scope')
-say(`dsh-mcp-scope row present before install: ${hasMine0}`)
+const hasMine0 = inv0.entries.some((e) => e.moduleName === PKG_NAME)
+say(`${PKG_NAME} row present before install: ${hasMine0}`)
 
 step('baseline: settings describe (ns count)')
 const s0 = await inst.rpc('settings/describe')
@@ -72,14 +72,14 @@ say(`exit=${add.status}`)
 say((add.stdout + add.stderr).split('\n').slice(-8).join('\n'))
 const pkgJson = JSON.parse(readFileSync(join(HOME, 'profiles', 'web', 'package.json'), 'utf8'))
 say(`bundles after add: ${pkgJson.dsh.profile.bundles.join(', ')}`)
-say(`bundles includes dsh-mcp-scope: ${pkgJson.dsh.profile.bundles.includes('dsh-mcp-scope')}`)
+say(`bundles includes ${PKG_NAME}: ${pkgJson.dsh.profile.bundles.includes(PKG_NAME)}`)
 
 step('reboot after install')
 await inst.boot()
 
 step('plugin-inventory after install')
 const inv1 = await inst.rpc('pluginInventory/list', {})
-const row = inv1.entries.find((e) => e.moduleName === 'dsh-mcp-scope')
+const row = inv1.entries.find((e) => e.moduleName === PKG_NAME)
 say(`row: ${JSON.stringify(row)}`)
 
 step('settings describe: mcp-scope namespace')

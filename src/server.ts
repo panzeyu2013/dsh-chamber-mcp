@@ -22,6 +22,7 @@
  * @module
  */
 
+import { createRequire } from 'node:module'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
@@ -29,6 +30,9 @@ import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { fetchToolDefinitions, DEFAULT_TOOL_CALL_TIMEOUT_MS } from './tools.js'
 import type { ToolDefinitions } from './tools.js'
+
+// Package identity the MCP client announces (kept in sync with package.json).
+const pkgIdentity = createRequire(import.meta.url)('../package.json') as { name: string; version: string }
 
 /** Automatic reconnect policy for one MCP server connection. */
 export interface ReconnectConfig {
@@ -318,7 +322,7 @@ const fmtError = (error: unknown): string =>
    */
   async function connectGeneration(): Promise<void> {
     const generationClient = new Client(
-      { name: 'dsh-mcp-scope', version: '0.0.1' },
+      { name: pkgIdentity.name, version: pkgIdentity.version },
       { capabilities: {} },
     )
     const closed = deferred<void>()

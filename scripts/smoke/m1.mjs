@@ -8,8 +8,10 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Instance, SMOKE, ROOT, NODE, log } from './instance.mjs'
 
-const PKG_VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
-const TGZ = join(SMOKE, `dsh-mcp-scope-${PKG_VERSION}.tgz`)
+const PKG_META = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+const PKG_NAME = PKG_META.name
+const PKG_VERSION = PKG_META.version
+const TGZ = join(SMOKE, `${PKG_NAME}-${PKG_VERSION}.tgz`)
 // Self-contained: pack the plugin tarball when it is not present yet (npm
 // cache redirected into .smoke so a read-only HOME cannot break the pack).
 if (!existsSync(TGZ)) {

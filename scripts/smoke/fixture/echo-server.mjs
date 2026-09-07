@@ -1,4 +1,4 @@
-// Smoke-test fixture: a tiny stdio MCP server used to prove dsh-mcp-scope wiring.
+// Smoke-test fixture: a tiny stdio MCP server used to prove dsh-chamber-mcp wiring.
 // Tools:
 //   echo        { text: string } -> { text }          (protocol round-trip)
 //   env_report  {} -> { tokenPresent: bool, tokenLength: number }  (proves envKeys injection)
@@ -7,6 +7,8 @@
 import { appendFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+// NOTE: absolute path on purpose — the SDK's exports map re-maps the bare
+// subpath (dist/esm/dist/esm), while a direct file URL resolves correctly.
 import { McpServer } from '/root/projects/dsh-mcp-scope/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js'
 import { StdioServerTransport } from '/root/projects/dsh-mcp-scope/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js'
 
@@ -18,7 +20,7 @@ const mark = (event, extra = {}) => {
   } catch { /* marker is best-effort */ }
 }
 
-const server = new McpServer({ name: 'dsh-mcp-scope-fixture', version: '1.0.0' }, {
+const server = new McpServer({ name: 'dsh-chamber-mcp-fixture', version: '1.0.0' }, {
   capabilities: { tools: { listChanged: true } },
 })
 

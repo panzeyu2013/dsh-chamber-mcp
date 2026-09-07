@@ -1,4 +1,4 @@
-// dsh-mcp-scope build: host half (tsc ESM) + declarations + client half (esbuild CJS
+// dsh-chamber-mcp build: host half (tsc ESM) + declarations + client half (esbuild CJS
 // wrapped in the official window.__ModuleLoader__.load({ id, factory }) shape).
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'

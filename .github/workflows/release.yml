@@ -5,10 +5,10 @@ name: Release
 # change must be validated by one dry run before the formal tag).
 #
 # ⚠ npm publishing is TEMPORARILY DISABLED — releases currently ship the
-# packed `dsh-mcp-scope-<version>.tgz` as the GitHub Release asset; users
+# packed `dsh-chamber-mcp-<version>.tgz` as the GitHub Release asset; users
 # install it directly, e.g.:
 #   dsh plugin --profile web add \
-#     https://github.com/<owner>/dsh-mcp-scope/releases/download/v0.0.1/dsh-mcp-scope-0.0.1.tgz
+#     https://github.com/<owner>/dsh-chamber-mcp/releases/download/v0.0.1/dsh-chamber-mcp-0.0.1.tgz
 #
 # To re-enable npm publishing later: uncomment the "Publish to npm" step
 # below, add the repository secret NPM_TOKEN, and restore `id-token: write`
@@ -92,7 +92,7 @@ jobs:
             echo "::error::package.json version $pkg_ver does not match requested v$tag_ver"
             exit 1
           }
-          echo "Releasing dsh-mcp-scope@$pkg_ver"
+          echo "Releasing dsh-chamber-mcp@$pkg_ver"
           echo "PKG_VERSION=$pkg_ver" >> "$GITHUB_ENV"
 
       - name: Compose release notes from CHANGELOG
@@ -101,8 +101,8 @@ jobs:
       - name: Write tgz sha256 sidecar
         run: |
           cd .smoke/verify/dist
-          sha256sum dsh-mcp-scope-*.tgz > dsh-mcp-scope-${{ env.PKG_VERSION }}.tgz.sha256
-          cat dsh-mcp-scope-${{ env.PKG_VERSION }}.tgz.sha256
+          sha256sum dsh-chamber-mcp-*.tgz > dsh-chamber-mcp-${{ env.PKG_VERSION }}.tgz.sha256
+          cat dsh-chamber-mcp-${{ env.PKG_VERSION }}.tgz.sha256
 
       # Chamber postmortem: softprops/action-gh-release finds an existing
       # release by tag and silently UPDATES it, discarding the fresh body.
@@ -138,7 +138,7 @@ jobs:
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true') }}
         uses: softprops/action-gh-release@v3 # TODO: pin 40-hex SHA once the repo is public
         with:
-          name: dsh-mcp-scope v${{ env.PKG_VERSION }}
+          name: dsh-chamber-mcp v${{ env.PKG_VERSION }}
           body_path: .smoke/release-notes.md
           files: |
             .smoke/verify/dist/*.tgz
@@ -148,6 +148,6 @@ jobs:
       - name: Attach packed tarball artifact
         uses: actions/upload-artifact@v6 # TODO: pin 40-hex SHA once the repo is public
         with:
-          name: dsh-mcp-scope-tgz
+          name: dsh-chamber-mcp-tgz
           path: .smoke/verify/dist/*.tgz*
           if-no-files-found: error

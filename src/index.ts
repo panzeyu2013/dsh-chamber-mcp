@@ -1,5 +1,5 @@
 /**
- * dsh-mcp-scope — host half plugin entry (also the package main).
+ * dsh-chamber-mcp — host half plugin entry (also the package main).
  *
  * Manages MCP servers per workspace: a settings namespace document
  * (`mcp-scope`) defines servers (stdio / streamable-http) and per-workspace
@@ -13,7 +13,7 @@
  * `apply`, no default export. `apply` returns fast — activation is NOT gated
  * on MCP connects; per-server connect runs asynchronously.
  *
- * @module dsh-mcp-scope
+ * @module dsh-chamber-mcp
  */
 
 import type { Context } from '@deepseek-ai/cordis'

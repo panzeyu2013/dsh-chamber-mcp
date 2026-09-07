@@ -1,4 +1,4 @@
-# dsh-mcp-scope — docs index
+# dsh-chamber-mcp — docs index
 
 | Doc | Purpose |
 |---|---|

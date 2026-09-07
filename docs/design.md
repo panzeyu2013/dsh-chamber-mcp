@@ -1,4 +1,4 @@
-# dsh-mcp-scope — design (final)
+# dsh-chamber-mcp — design (final)
 
 Locked after recon A–F (docs/recon/*). Version targets: compile & verify against
 **dsh 0.1.2-rc.1** (npm dist-tag `next`; the version chamber runs; types under the
@@ -6,13 +6,13 @@ anchor install are authoritative). Reference sources: ref-dsh checkout (0.1.0-rc
 
 ## 1. Deliverable (package layout)
 
-Single npm package **`dsh-mcp-scope`** — dual-face + bundle (one loader row):
+Single npm package **`dsh-chamber-mcp`** — dual-face + bundle (one loader row):
 
 ```
 package.json           main lib/index.js; exports: "." | "./client" | "./cordis.patch.yml" | "./package.json"
                        "dsh": { "bundle": { "patch": "./cordis.patch.yml" },
                                  "client": { "inject": [...], "platform": "web" } }
-cordis.patch.yml       - insert: - id: mcp-scope, name: dsh-mcp-scope
+cordis.patch.yml       - insert: - id: mcp-scope, name: dsh-chamber-mcp
 src/index.ts           HOST half: plugin entry (name/inject/Config/apply) — real logic
 src/client/…           BROWSER half: settings section UI (compiled to lib/client.js)
 src/shared/…           pure types + constants shared by both halves (type-only for client)
@@ -20,7 +20,7 @@ lib/index.js           host ESM (tsc emit)          lib/types/**  declarations
 lib/client.js          browser bundle (esbuild CJS + __ModuleLoader__.load wrapper)
 ```
 
-Install (documented): `dsh plugin --profile web add dsh-mcp-scope` (npm/git/file:) →
+Install (documented): `dsh plugin --profile web add dsh-chamber-mcp` (npm/git/file:) →
 bundle appended to `dsh.profile.bundles`, row inserted by patch, restart instance.
 Chamber: zero code/seed involvement (official dsh web SettingsRoot shows the section).
 

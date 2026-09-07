@@ -5,7 +5,7 @@
  *  2. assert the tarball carries exactly the publish surface (no src/tests/
  *     .smoke/node_modules leakage; lib + cordis.patch.yml + LICENSE + README);
  *  3. extract the tarball and typecheck a small consumer against BOTH
- *     entry points (`dsh-mcp-scope` host types and `dsh-mcp-scope/client`)
+ *     entry points (`dsh-chamber-mcp` host types and `dsh-chamber-mcp/client`)
  *     with peer types resolved from the repo tree;
  *  4. determinism spot check: a second build must produce identical
  *     lib/index.js and lib/client.js.
@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+const pkgName = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).name
 const scratch = join(root, '.smoke', 'verify')
 const tsc = join(root, 'node_modules', 'typescript', 'bin', 'tsc')
 // npm must never write to the (possibly read-only) user HOME: redirect its
@@ -47,7 +48,7 @@ if (!listing.some((l) => l.startsWith('lib/types/'))) throw new Error('tarball m
 console.log(`tarball contents OK (${listing.length} entries)`)
 
 // 3. consumer typecheck against the extracted package
-const extractDir = join(scratch, 'consumer', 'node_modules', 'dsh-mcp-scope')
+const extractDir = join(scratch, 'consumer', 'node_modules', pkgName)
 mkdirSync(extractDir, { recursive: true })
 // npm tarballs root everything under `package/`; strip it so the consumer
 // resolves the module from the directory named after the package.
@@ -55,10 +56,10 @@ run('tar', ['-xzf', join(scratch, 'dist', tgzName), '-C', extractDir, '--strip-c
 const consumerDir = join(scratch, 'consumer')
 const consumer = join(consumerDir, 'consumer.ts')
 writeFileSync(consumer, `// Consumer-surface typecheck against the packed artifact.
-import type {} from 'dsh-mcp-scope'
-import type {} from 'dsh-mcp-scope/client'
-import type { McpScopeSectionProps, McpScopeFace, McpStoreSnapshot, SaveOutcome, AddDraft } from 'dsh-mcp-scope/client'
-import type { McpScopeDoc, ServerDef } from 'dsh-mcp-scope'
+import type {} from '${pkgName}'
+import type {} from '${pkgName}/client'
+import type { McpScopeSectionProps, McpScopeFace, McpStoreSnapshot, SaveOutcome, AddDraft } from '${pkgName}/client'
+import type { McpScopeDoc, ServerDef } from '${pkgName}'
 
 // Compile-time shape probes (never executed).
 declare const face: McpScopeFace

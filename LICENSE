@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 dsh-mcp-scope contributors
+Copyright (c) 2026 dsh-chamber-mcp contributors
 
 Portions of the MCP client bridge logic (tool naming, sync/generation-swap,
 executor, transport and reconnect semantics) mirror the reference

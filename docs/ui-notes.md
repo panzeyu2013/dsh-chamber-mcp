@@ -1,4 +1,4 @@
-# Client-UI implementation notes (dsh-mcp-scope browser half)
+# Client-UI implementation notes (dsh-chamber-mcp browser half)
 
 Author: client-UI subagent. Companion to `docs/design.md` §5 and
 `docs/recon/ui-contracts.md`. Compiled against the repo's installed

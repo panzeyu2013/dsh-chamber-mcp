@@ -1,4 +1,4 @@
-# Release & CI guide — dsh-mcp-scope
+# Release & CI guide — dsh-chamber-mcp
 
 ## CI (push / tags / PR)
 
@@ -19,7 +19,7 @@ self-hosted live-smoke lane is reachable.
    - tarball contains exactly the publish surface (`lib`, `cordis.patch.yml`,
      `LICENSE`, `README.md`, `package.json`; no `src|tests|.smoke|docs` leaks);
    - a consumer typecheck passes against the **packed** artifact for both
-     entry points (`dsh-mcp-scope` and `dsh-mcp-scope/client`);
+     entry points (`dsh-chamber-mcp` and `dsh-chamber-mcp/client`);
    - the build is deterministic (second build byte-identical).
 6. Artifact upload of the tarball.
 
@@ -37,7 +37,7 @@ Preconditions (first release only):
 - A public GitHub repository (the Release + asset need `push` rights; no
   secrets are required in the current tgz-only mode).
 - **npm publishing is temporarily disabled**; releases ship the packed
-  `dsh-mcp-scope-<version>.tgz` as the GitHub Release asset, installable via
+  `dsh-chamber-mcp-<version>.tgz` as the GitHub Release asset, installable via
   `dsh plugin --profile web add <asset-url>`. Re-enable npm publish later by
   uncommenting the step in `.github/workflows/release.yml` (requires
   `NPM_TOKEN`, `id-token: write` for provenance, and the npm name owned).
@@ -74,7 +74,7 @@ The workflow then:
    drafts are deleted first — softprops would otherwise silently update the
    old release and discard the fresh body);
 4. writes a `.sha256` sidecar next to the tgz and creates the **GitHub
-   Release** with the notes as the body and `dsh-mcp-scope-<version>.tgz` +
+   Release** with the notes as the body and `dsh-chamber-mcp-<version>.tgz` +
    `….tgz.sha256` attached (plus the workflow artifact upload). npm
    publishing is currently commented out — see the workflow header for the
    re-enable recipe.
@@ -88,7 +88,7 @@ Compatibility notes for consumers:
 
 - The dsh loader resolves the row module from the profile dir (pnpm) or the
   dsh installation; the published tarball is exactly what
-  `dsh plugin --profile web add dsh-mcp-scope` installs.
+  `dsh plugin --profile web add dsh-chamber-mcp` installs.
 - Peers (`@deepseek-ai/dsh-*`, cordis) are resolved from the dsh install's
   fallback farm; only `@modelcontextprotocol/sdk`, `@deepseek-ai/schemastery`
   and `zod` are real dependencies installed by pnpm.
@@ -116,5 +116,5 @@ etc.
   asset URL (profile bundles reconcile by installed state).
 - The plugin is per-instance state: uninstall guidance lives in README.
 - (When npm publishing is re-enabled: `npm unpublish` within 72 h or a fixed
-  patch release, and users simply `dsh plugin --profile web add dsh-mcp-scope`
+  patch release, and users simply `dsh plugin --profile web add dsh-chamber-mcp`
   again — pnpm update picks the fix.)
