@@ -50,6 +50,16 @@ export const HASH_LENGTH = 12
  */
 export const MAX_SYNC_TOOLS = 2000
 
+/**
+ * Hard cap on one sync's `tools/list` request count (SEC-05). The tool cap
+ * above cannot bound a server that answers with EMPTY pages while minting a
+ * fresh cursor each time — no name repeats and no tool accumulates, so the
+ * loop would issue requests forever. One page per tool is already
+ * pathological, so this caps no server the tool cap does not; it only closes
+ * the unbounded case. Crossing it fails the sync like any fetch-phase failure.
+ */
+export const MAX_SYNC_PAGES = MAX_SYNC_TOOLS
+
 /** Default timeout for individual MCP tool calls (ms) — official default. */
 export const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000
 
@@ -122,10 +132,10 @@ function callToolUncached(
  * Fetch the full tool list (paginated, uncached raw `tools/list`) and build
  * the complete next generation of {@link ToolDefinition}s under public names.
  * Pure build — nothing is registered anywhere. A duplicate raw name in the
- * server's list rejects the whole fetch, and so does a server that repeats a
- * continuation cursor (an invalid list would otherwise spin this loop
- * forever); failures leave any previous generation untouched (the supervisor
- * owns that discipline).
+ * server's list rejects the whole fetch, and so do a repeated continuation
+ * cursor and a page count past {@link MAX_SYNC_PAGES} (either would otherwise
+ * let an invalid list spin this loop forever); failures leave any previous
+ * generation untouched (the supervisor owns that discipline).
  *
  * @param client - Connected MCP Client used to list tools (and later to call them).
  * @param opts - Server namespace and per-call timeout.
@@ -140,7 +150,17 @@ export async function fetchToolDefinitions(
   // loop, so it is a protocol violation rather than a page to fetch.
   const seenCursors = new Set<string>()
   let cursor: string | undefined
+  let pages = 0
   do {
+    // The duplicate-cursor guard cannot bound a server that keeps minting
+    // FRESH cursors over empty pages, so the request count is capped too. One
+    // page per tool is already pathological, so this bounds no server the tool
+    // cap does not — it only removes the unbounded case.
+    if (++pages > MAX_SYNC_PAGES) {
+      throw new Error(
+        `mcp-scope(${opts.serverName}): server paginated past ${MAX_SYNC_PAGES} tools/list pages — refusing the sync`,
+      )
+    }
     const response = await listToolsUncached(client, cursor)
     for (const tool of response.tools) {
       const publicName = publicToolName(opts.serverName, tool.name)

@@ -5,9 +5,10 @@ servers with per-workspace per-agent tool-scope injection). Releases: GitHub Rel
 temporarily disabled). Current release: v0.0.2 of `dsh-chamber-mcp` (internal
 settings namespace/loader id: `mcp-scope`).
 
-Upstream generation: devDependencies pin the **dsh 0.1.5-rc.1** package set —
-the compile-time API surface and the CI guard. Peer ranges additionally accept
-the **0.1.2-rc.1** generation the chamber anchor runs
+Upstream generation: devDependencies pin the **dsh 0.1.5-rc.2** package set —
+the generation a `dsh@0.1.5-rc.1` install actually resolves to, and now the
+compile-time API surface and the CI guard. Peer ranges additionally accept the
+**0.1.2-rc.1** generation the chamber anchor runs
 (`^0.1.2-rc.1 || ^0.1.5-rc.1`); the surface this plugin calls is byte-identical
 across both and both are live-verified. Migrating the pin: `docs/RELEASE.md`.
 

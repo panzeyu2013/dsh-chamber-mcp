@@ -41,11 +41,15 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        # --legacy-peer-deps: the dsh devDep matrix spans version lines whose
-        # peer ranges conflict (e.g. dsh-client-runtime 0.1.1 vs dsh-agent
-        # 0.1.2); at runtime those peers resolve from the dsh install, so the
-        # dev-tree install deliberately relaxes peer resolution.
-        run: npm ci --no-audit --no-fund --legacy-peer-deps
+        # No --legacy-peer-deps: after the 0.1.5 migration every @deepseek-ai
+        # devDep is pinned to the SAME generation (0.1.5-rc.2, the one a
+        # `dsh@0.1.5-rc.1` install actually resolves to), so the peer graph is
+        # internally consistent and npm resolves it unaided. Pinning the
+        # umbrella's rc.1 while upstream's own rc.1 peers pull rc.2 artifacts
+        # is what used to force the relaxed resolution. A future pin that
+        # reopens the conflict will fail here loudly — fix the pins, not the
+        # flag.
+        run: npm ci --no-audit --no-fund
 
       # npm ci is inherently frozen (errors on package.json/lockfile drift and
       # never writes the lockfile); this assert makes the invariant visible
@@ -91,7 +95,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund --legacy-peer-deps
+        run: npm ci --no-audit --no-fund
 
       - name: Build & pack
         run: npm run build && mkdir -p .smoke && npm run pack:tgz

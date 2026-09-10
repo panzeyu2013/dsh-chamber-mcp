@@ -11,6 +11,7 @@ import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import {
   HASH_LENGTH,
   MAX_PUBLIC_NAME_LENGTH,
+  MAX_SYNC_PAGES,
   createDefinition,
   fetchToolDefinitions,
   publicToolName,
@@ -157,6 +158,16 @@ describe('fetchToolDefinitions', () => {
     await expect(fetchToolDefinitions(client as never, defaultOpts)).rejects.toThrow(/repeated a tools\/list continuation cursor/)
     // The loop is cut short rather than spinning: first page + the repeat.
     expect(client.listTools.mock.calls.length).toBeLessThanOrEqual(3)
+  })
+
+  it('rejects a server that keeps minting fresh cursors over empty pages (page cap)', async () => {
+    // Empty pages defeat both other guards: no name repeats and no tool
+    // accumulates, so without a page cap this loop never terminates.
+    const client = createMockClient([])
+    let page = 0
+    client.listTools.mockImplementation(async () => ({ tools: [], nextCursor: `fresh-${page++}` }))
+    await expect(fetchToolDefinitions(client as never, defaultOpts)).rejects.toThrow(/paginated past 2000 tools\/list pages/)
+    expect(client.listTools.mock.calls.length).toBeLessThanOrEqual(MAX_SYNC_PAGES + 1)
   })
 
   it('accepts a longer pagination chain whose cursors are all distinct', async () => {

@@ -61,12 +61,16 @@ Run: `npm run typecheck` (both tsconfigs) and
    (identity-compared) — the live Agent is its own key; omitted = global view.
 5. **dsh-settings-file mounting**: `FileSettingsProvider` needs
    `dsh-atomic-write` and `dsh-home-paths` at runtime (installed as
-   devDependencies). `npm install --legacy-peer-deps` remains the documented
-   dev-tree install (CI runs the same): the dsh devDep set still spans version
-   lines whose peer ranges conflict. The original conflict source
-   (`dsh-client-runtime@0.1.1-rc.2` peering on an older `dsh-agent`) is gone —
-   that package left the upstream release train and was dropped in the 0.1.5
-   migration. `resolveSpec`/`Config` match recon.
+   devDependencies). A plain `npm install`/`npm ci` resolves the dev tree — no
+   peer relaxation. That was NOT true before the 0.1.5 migration: the devDep
+   matrix mixed version lines, first because `dsh-client-runtime@0.1.1-rc.2`
+   peered on an older `dsh-agent`, and (after that package left the release
+   train) because pinning the umbrella's `0.1.5-rc.1` while upstream's own
+   rc.1 peers resolve to rc.2 artifacts is internally inconsistent. Every
+   `@deepseek-ai/*` devDep is now pinned to the generation a `dsh@0.1.5-rc.1`
+   install actually resolves to (`0.1.5-rc.2`), which closes the conflict at
+   the source; `docs/review/compliance.md` §(e) recommended exactly this once
+   the matrix settled on one line. `resolveSpec`/`Config` match recon.
 6. **SDK 1.30 high-level McpServer**: `registerTool` input schemas must be
    zod schemas or raw zod shapes — plain JSON-Schema objects throw
    (`inputSchema must be a Zod schema or raw shape`). Runtime
@@ -179,8 +183,9 @@ flags and the full config is green at the time of writing.
   the real gate). The M0/M1 smoke (anchor instance) remains the true
   end-to-end gate.
 - `dsh-settings-file`/`dsh-atomic-write`/`dsh-home-paths`/`dsh-system-prompt`
-  were added to devDependencies via `--legacy-peer-deps` (peer conflict
-  pre-existed between `dsh-client-runtime@0.1.1-rc.2` and `dsh-agent`).
+  were added to devDependencies under the old cross-line matrix, which is what
+  once required `--legacy-peer-deps`; the 0.1.5 migration pins the whole
+  `@deepseek-ai/*` set to one generation and the flag is gone.
 - `tests/fixture/mcp-fixture-server.mjs` child processes rely on repo
   `node_modules` resolution (spawned with `process.execPath` from the repo
   cwd); moving the fixture would break the supervisor/manager specs.

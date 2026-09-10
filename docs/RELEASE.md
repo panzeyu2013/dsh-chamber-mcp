@@ -97,20 +97,32 @@ Compatibility notes for consumers:
   generation, still in production), expressed by the peer range
   `^0.1.2-rc.1 || ^0.1.5-rc.1`. A dsh upgrade that changes the typed surface
   should trigger a compat release; CI typecheck against the installed dsh set
-  is the guard (devDependencies pin `0.1.5-rc.1`).
+  is the guard (devDependencies pin `0.1.5-rc.2`, the resolved generation).
 - Auditing a new upstream line (the 0.1.5 migration, CHANGELOG 0.0.2): diff
   `src/` of the peer packages between the two release tags (`dsh-v<old>`..
   `dsh-v<new>` in the harness checkout), bump the devDependency pins, typecheck
   + test against the new set, then boot the real new CLI per §smoke capturing
   the per-workspace tool list AND the browser half's registration trace, and
-  only then widen the peer range. Two traps this pass found: a pinned package
-  can silently leave the release train (0.1.2-era `dsh-client-runtime`,
-  `dsh-client-schema-form`, `dsh-client-web-react` never shipped past
-  `0.1.1-rc.2`/`0.1.0-rc.7`), and client service/type ownership moves between
-  packages (`ctx.slots` is declared by `dsh-client-ui-renderer` in 0.1.5, not
-  by the client runtime). Grep the installed tree for each injected service
-  name and each slot key rather than assuming the 0.1.2 owner still provides
-  them.
+  only then widen the peer range. Four traps this pass found:
+  1. **Pin the RESOLVED generation, not the umbrella's own version.** A
+     `dsh@X` install resolves its internal caret ranges past `X` (0.1.5-rc.1 →
+     0.1.5-rc.2 for 230 of 231 packages), and upstream's own rc.1 peers pull
+     rc.2 artifacts, so pinning the literal umbrella version leaves the dev
+     tree self-inconsistent and forces `--legacy-peer-deps`. Pin every
+     `@deepseek-ai/*` devDep to the generation the target install actually
+     resolves to; the flag then falls away.
+  2. **A pinned package can silently leave the release train.** 0.1.2-era
+     `dsh-client-runtime`, `dsh-client-schema-form` and `dsh-client-web-react`
+     never shipped past `0.1.1-rc.2`/`0.1.0-rc.7`. Check `npm view <pkg>
+     dist-tags` before assuming a package still tracks the umbrella.
+  3. **Client service and type ownership moves between packages.** `ctx.slots`
+     is declared by `dsh-client-ui-renderer` in 0.1.5, not by the client
+     runtime. Grep the installed tree for each injected service name and each
+     slot key instead of assuming the old owner still provides them.
+  4. **`dsh.client.inject` must name the client packages whose services the
+     browser half calls** (that is the upstream convention, e.g.
+     `dsh-client-locale`). It is load-bearing for boot-graph factory arrival
+     and entry composition, not decoration.
 
 ## Smoke (§smoke) — what the self-hosted job runs
 

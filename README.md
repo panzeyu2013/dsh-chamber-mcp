@@ -82,10 +82,11 @@ UI cannot read them back).
 ## Compatibility
 
 - Target/verified: dsh **0.1.5-rc.1 / 0.1.5-rc.2** (npm `latest`) is the
-  compile-time anchor — `devDependencies` pin `@deepseek-ai/dsh-*@0.1.5-rc.1`
-  and CI guards that set. dsh **0.1.2-rc.1** (the generation dsh-chamber
-  currently runs) is also supported and live-verified; the peer ranges accept
-  both (`^0.1.2-rc.1 || ^0.1.5-rc.1`) and every API this plugin calls is
+  compile-time anchor — `devDependencies` pin `@deepseek-ai/dsh-*@0.1.5-rc.2`
+  (the generation a `dsh@0.1.5-rc.1` install actually resolves to) and CI
+  guards that set. dsh **0.1.2-rc.1** (the generation dsh-chamber currently
+  runs) is also supported and live-verified; the peer ranges accept both
+  (`^0.1.2-rc.1 || ^0.1.5-rc.1`) and every API this plugin calls is
   byte-identical or additively changed between the two generations.
 - Requirement model: every configured server defaults on for all of this dsh's
   workspaces; only explicit per-workspace records turn one off.
@@ -99,7 +100,7 @@ UI cannot read them back).
 ## Development
 
 ```sh
-npm install            # dev deps (--legacy-peer-deps: dsh devDep version-line skew)
+npm install            # dev deps (all @deepseek-ai/* pinned to one dsh generation)
 npm run typecheck      # src + tests
 npm test               # vitest suite (133 tests)
 npm run check          # full gate: typecheck + tests + build + package verify
