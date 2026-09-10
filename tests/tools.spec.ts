@@ -144,6 +144,33 @@ describe('fetchToolDefinitions', () => {
     const definitions = await fetchToolDefinitions(client as never, defaultOpts)
     expect([...definitions.keys()]).toEqual(['mcp__srv__a', 'mcp__srv__b'])
   })
+
+  it('rejects a server that repeats a tools/list continuation cursor (parity with the official bridge)', async () => {
+    // A server echoing the same nextCursor can never terminate pagination.
+    // Pages carry distinct names so the duplicate-name check cannot mask it.
+    const client = createMockClient([])
+    let page = 0
+    client.listTools.mockImplementation(async () => ({
+      tools: [{ name: `t${page++}`, inputSchema: { type: 'object' } }],
+      nextCursor: 'stuck',
+    }))
+    await expect(fetchToolDefinitions(client as never, defaultOpts)).rejects.toThrow(/repeated a tools\/list continuation cursor/)
+    // The loop is cut short rather than spinning: first page + the repeat.
+    expect(client.listTools.mock.calls.length).toBeLessThanOrEqual(3)
+  })
+
+  it('accepts a longer pagination chain whose cursors are all distinct', async () => {
+    const client = createMockClient([])
+    client.listTools.mockImplementation(async (params?: Record<string, unknown>) => {
+      const index = params?.cursor === undefined ? 0 : Number((params.cursor as string).split('-')[1]) + 1
+      return {
+        tools: [{ name: `t${index}`, inputSchema: { type: 'object' } }],
+        nextCursor: index < 5 ? `page-${index}` : undefined,
+      }
+    })
+    const definitions = await fetchToolDefinitions(client as never, defaultOpts)
+    expect([...definitions.keys()]).toEqual(['mcp__srv__t0', 'mcp__srv__t1', 'mcp__srv__t2', 'mcp__srv__t3', 'mcp__srv__t4', 'mcp__srv__t5'])
+  })
 })
 
 // ---- Executor mapping ----

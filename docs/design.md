@@ -1,8 +1,10 @@
 # dsh-chamber-mcp — design (final)
 
 Locked after recon A–F (docs/recon/*). Version targets: compile & verify against
-**dsh 0.1.2-rc.1** (npm dist-tag `next`; the version chamber runs; types under the
-anchor install are authoritative). Reference sources: ref-dsh checkout (0.1.0-rc.5) for logic.
+**dsh 0.1.2-rc.1** (the version chamber runs; types under the anchor install are
+authoritative), runtime-verified additionally against **dsh 0.1.5-rc.1 /
+0.1.5-rc.2** (npm dist-tag `latest`) — see CHANGELOG 0.0.2. Reference sources:
+ref-dsh checkout (0.1.0-rc.5) for logic.
 
 ## 1. Deliverable (package layout)
 

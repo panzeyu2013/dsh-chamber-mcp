@@ -21,9 +21,9 @@ special-cases this plugin** — it is an ordinary `dsh plugin` install.
 
 ## Install
 
-Prereqs: a dsh instance (0.1.2-rc.1 generation); Node ≥ 24 and pnpm on
-PATH are toolchain requirements for building this repo and for the dsh CLI
-driving pnpm — not requirements of the installed plugin itself.
+Prereqs: a dsh instance (0.1.2-rc.1 or 0.1.5-rc.x generation); Node ≥ 24 and
+pnpm on PATH are toolchain requirements for building this repo and for the dsh
+CLI driving pnpm — not requirements of the installed plugin itself.
 
 Releases ship as a GitHub Release whose asset is the packed tarball
 (`npm publish` is temporarily disabled). Install per instance:
@@ -81,8 +81,11 @@ UI cannot read them back).
 
 ## Compatibility
 
-- Target/verified: dsh **0.1.2-rc.1** (npm `next`; the generation dsh-chamber
-  runs). Compile-time API surface: `@deepseek-ai/dsh-*@0.1.2-rc.1`.
+- Target/verified: dsh **0.1.2-rc.1** (the generation dsh-chamber currently
+  runs) **and 0.1.5-rc.1 / 0.1.5-rc.2** (npm `latest`). Compile-time API
+  surface: `@deepseek-ai/dsh-*@0.1.2-rc.1`; the peer ranges accept both
+  generations (`^0.1.2-rc.1 || ^0.1.5-rc.1`) and every called API is
+  byte-identical or additively changed between them.
 - Requirement model: every configured server defaults on for all of this dsh's
   workspaces; only explicit per-workspace records turn one off.
 - Sessions outside any registered workspace (plain cwd sessions) never receive

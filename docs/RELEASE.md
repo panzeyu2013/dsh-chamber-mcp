@@ -92,10 +92,19 @@ Compatibility notes for consumers:
 - Peers (`@deepseek-ai/dsh-*`, cordis) are resolved from the dsh install's
   fallback farm; only `@modelcontextprotocol/sdk`, `@deepseek-ai/schemastery`
   and `zod` are real dependencies installed by pnpm.
-- Support window: dsh 0.1.2-rc.1 generation (npm `next`). A dsh upgrade that
-  changes the typed surface should trigger a compat release; CI typecheck
-  against the installed dsh set is the guard (devDependencies pin
-  `0.1.2-rc.1`).
+- Support window: dsh **0.1.2-rc.1** (the chamber anchor generation, still in
+  production) and **0.1.5-rc.1 / 0.1.5-rc.2** (npm `latest`), expressed by the
+  peer range `^0.1.2-rc.1 || ^0.1.5-rc.1`. A dsh upgrade that changes the typed
+  surface should trigger a compat release; CI typecheck against the installed
+  dsh set is the guard (devDependencies pin `0.1.2-rc.1`).
+- Auditing a new upstream line (the 0.1.5 pass, CHANGELOG 0.0.2): diff `src/`
+  of the peer packages between the two release tags (`dsh-v<old>`..`dsh-v<new>`
+  in the harness checkout), typecheck + test against the new package set, then
+  boot the real new CLI per §smoke capturing the per-workspace tool list, and
+  only then widen the peer range. The peer range is declarative only — profiles
+  install with `autoInstallPeers: false` and resolve these peers by name from
+  the dsh install's fallback farm — so a widened range never changes what is
+  installed.
 
 ## Smoke (§smoke) — what the self-hosted job runs
 

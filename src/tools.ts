@@ -122,8 +122,10 @@ function callToolUncached(
  * Fetch the full tool list (paginated, uncached raw `tools/list`) and build
  * the complete next generation of {@link ToolDefinition}s under public names.
  * Pure build — nothing is registered anywhere. A duplicate raw name in the
- * server's list rejects the whole fetch; failures leave any previous
- * generation untouched (the supervisor owns that discipline).
+ * server's list rejects the whole fetch, and so does a server that repeats a
+ * continuation cursor (an invalid list would otherwise spin this loop
+ * forever); failures leave any previous generation untouched (the supervisor
+ * owns that discipline).
  *
  * @param client - Connected MCP Client used to list tools (and later to call them).
  * @param opts - Server namespace and per-call timeout.
@@ -134,6 +136,9 @@ export async function fetchToolDefinitions(
   opts: ToolBridgeOptions,
 ): Promise<Map<string, ToolDefinition>> {
   const definitions = new Map<string, ToolDefinition>()
+  // Every cursor already followed: a repeated one can never terminate the
+  // loop, so it is a protocol violation rather than a page to fetch.
+  const seenCursors = new Set<string>()
   let cursor: string | undefined
   do {
     const response = await listToolsUncached(client, cursor)
@@ -152,6 +157,14 @@ export async function fetchToolDefinitions(
       definitions.set(publicName, createDefinition(client, publicName, tool, opts))
     }
     cursor = response.nextCursor
+    if (cursor !== undefined) {
+      if (seenCursors.has(cursor)) {
+        throw new Error(
+          `mcp-scope(${opts.serverName}): server repeated a tools/list continuation cursor — invalid tool list`,
+        )
+      }
+      seenCursors.add(cursor)
+    }
   } while (cursor)
   return definitions
 }

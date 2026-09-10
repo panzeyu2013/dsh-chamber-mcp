@@ -5,6 +5,50 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.2] - 2026-09-10
+
+Upstream compatibility release: `dsh` 0.1.5-rc.1 (npm `latest`) was audited and
+the plugin verified against it end-to-end — host half and browser half — with
+no API adaptation required. Carries the two findings that audit produced.
+
+### Changed
+
+- **Peer window widened** to `^0.1.2-rc.1 || ^0.1.5-rc.1` for the eight
+  `@deepseek-ai/dsh-*` peers. The previous `^0.1.2-rc.1` cannot match the
+  0.1.5 line: semver's prerelease rule only lets a prerelease version satisfy a
+  comparator with the *same* `major.minor.patch`, so `0.1.5-rc.2` failed it and
+  pnpm printed "Issues with peer dependencies found" on every install. The
+  range is purely declarative — dsh profiles install with
+  `autoInstallPeers: false` and resolve plugin peers by NAME from the dsh
+  install's module-fallback farm (`$DSH_HOME/profiles/node_modules/@deepseek-ai/*`),
+  so nothing was ever broken by the old range; the install log now matches the
+  documented support window.
+
+### Fixed
+
+- **`tools/list` pagination could spin forever.** A server repeating a
+  `nextCursor` made the sync loop re-fetch the same page indefinitely, so the
+  server never committed a tool generation. Every followed cursor is now
+  recorded and a repeat rejects the sync as an invalid tool list (the previous
+  generation stays registered), matching the guard the official
+  `dsh-mcp-client` bridge added in the same upstream release.
+
+### Security
+
+- The repeated-cursor guard also closes an unbounded-work path: a hostile MCP
+  server could previously hold a supervisor in an endless `tools/list` request
+  loop.
+
+### Compatibility
+
+- Verified against **dsh 0.1.5-rc.1 / 0.1.5-rc.2** (`latest`) *and* the
+  still-deployed **0.1.2-rc.1** (chamber anchor): typecheck, 137 tests, build,
+  package verification, plus a live boot of the real 0.1.5-rc.1 CLI (per-workspace
+  `mcp__<server>__*` injection captured from the model-facing tool list, and the
+  browser half served from `/plugins` evaluated to its `apply` + `inject` face).
+  Every API surface this plugin calls is byte-identical or additively changed
+  between the two generations.
+
 ## [0.0.1] - 2026-09-06
 
 First functional release of `dsh-chamber-mcp`, a standalone third-party dsh
