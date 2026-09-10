@@ -7,12 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.0.2] - 2026-09-10
 
-Upstream compatibility release: `dsh` 0.1.5-rc.1 (npm `latest`) was audited and
-the plugin verified against it end-to-end — host half and browser half — with
-no API adaptation required. Carries the two findings that audit produced.
+Upstream compatibility release: the plugin was migrated to the **dsh 0.1.5-rc.1**
+generation (npm `latest`) and audited end-to-end against it — host half and
+browser half — with no API adaptation required beyond the client type surface.
 
 ### Changed
 
+- **Toolchain migrated to dsh 0.1.5-rc.1.** Every `@deepseek-ai/dsh-*`
+  devDependency moves from `0.1.2-rc.1` to `0.1.5-rc.1`; that set is now the
+  compile-time API surface and the CI guard. Note the generation a `dsh
+  0.1.5-rc.1` install actually runs is `0.1.5-rc.2` (the umbrella's internal
+  caret ranges resolve there — 230 of 231 packages), and both were verified.
+- **Client half re-pointed at the 0.1.5 client contracts.** `ClientContext`
+  (`dsh-client-runtime`) → `Context` from `@deepseek-ai/cordis`, which is the
+  client context type upstream client plugins use; the local `FiberAwareContext`
+  structural patch for `ctx.effect` is gone (cordis declares it). The workspace
+  list type moves from `WorkspaceListState` to `WorkspaceSnapshot`
+  (`@deepseek-ai/dsh-api-workspace-controller/client`), and `ctx.slots` is now
+  merged from `@deepseek-ai/dsh-client-ui-renderer/client` — the package that
+  owns the slot registry in 0.1.5.
+- **Three off-train devDependencies dropped.** `dsh-client-runtime`,
+  `dsh-client-schema-form` and `dsh-client-web-react` stopped publishing at
+  `0.1.1-rc.2` / `0.1.0-rc.7` and never had a 0.1.2 or 0.1.5 release; only the
+  first was still referenced (for types, now replaced). Removing them deleted
+  101 packages from the lockfile — almost entirely the unused
+  `dsh-client-web-react` markdown/katex/shiki tree. `dsh-http-proxy` (a new
+  0.1.5 peer of `dsh-subprocess`) and `dsh-api-workspace-controller` were added.
+- **Client bundle externals re-derived from the 0.1.5 frozen platform table**
+  (`PLATFORM_MODULES`). The previous list named four packages that are not
+  platform modules in 0.1.5 and were never imported; the list now mirrors the
+  table verbatim, so an accidental import of a non-platform module fails the
+  build instead of producing a bundle the loader cannot resolve.
 - **Peer window widened** to `^0.1.2-rc.1 || ^0.1.5-rc.1` for the eight
   `@deepseek-ai/dsh-*` peers. The previous `^0.1.2-rc.1` cannot match the
   0.1.5 line: semver's prerelease rule only lets a prerelease version satisfy a
@@ -21,7 +46,7 @@ no API adaptation required. Carries the two findings that audit produced.
   range is purely declarative — dsh profiles install with
   `autoInstallPeers: false` and resolve plugin peers by NAME from the dsh
   install's module-fallback farm (`$DSH_HOME/profiles/node_modules/@deepseek-ai/*`),
-  so nothing was ever broken by the old range; the install log now matches the
+  so nothing was broken by the old range; the install log now matches the
   documented support window.
 
 ### Fixed
@@ -41,13 +66,18 @@ no API adaptation required. Carries the two findings that audit produced.
 
 ### Compatibility
 
-- Verified against **dsh 0.1.5-rc.1 / 0.1.5-rc.2** (`latest`) *and* the
-  still-deployed **0.1.2-rc.1** (chamber anchor): typecheck, 137 tests, build,
-  package verification, plus a live boot of the real 0.1.5-rc.1 CLI (per-workspace
-  `mcp__<server>__*` injection captured from the model-facing tool list, and the
-  browser half served from `/plugins` evaluated to its `apply` + `inject` face).
-  Every API surface this plugin calls is byte-identical or additively changed
-  between the two generations.
+- Peer ranges stay `^0.1.2-rc.1 || ^0.1.5-rc.1`: the chamber anchor still runs
+  0.1.2-rc.1, the surface this plugin calls is byte-identical or additively
+  changed across the two generations, and the migrated build was live-verified
+  on **both** (0.1.5-rc.1 and the 0.1.2-rc.1 anchor). CI now guards the 0.1.5
+  set only.
+- Verification for this release: `npm run check` PASS (typecheck, 137 tests,
+  build, package verification) plus a live boot of the real 0.1.5-rc.1 CLI —
+  per-workspace `mcp__<server>__*` injection captured from the model-facing tool
+  list (R3 PASS), and the browser half fetched from `/plugins`, evaluated under
+  the frozen platform table, and driven through `apply()` against the real
+  service contracts (dictionaries, settings scope, `settings.section`
+  registration, both remote subscriptions all reached).
 
 ## [0.0.1] - 2026-09-06
 

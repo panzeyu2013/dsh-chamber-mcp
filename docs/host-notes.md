@@ -61,9 +61,12 @@ Run: `npm run typecheck` (both tsconfigs) and
    (identity-compared) — the live Agent is its own key; omitted = global view.
 5. **dsh-settings-file mounting**: `FileSettingsProvider` needs
    `dsh-atomic-write` and `dsh-home-paths` at runtime (installed as
-   devDependencies; `npm install --legacy-peer-deps` was required because the
-   pre-existing `dsh-client-runtime@0.1.1-rc.2` devDep peers conflict with
-   `dsh-agent@0.1.2-rc.1`). `resolveSpec`/`Config` match recon.
+   devDependencies). `npm install --legacy-peer-deps` remains the documented
+   dev-tree install (CI runs the same): the dsh devDep set still spans version
+   lines whose peer ranges conflict. The original conflict source
+   (`dsh-client-runtime@0.1.1-rc.2` peering on an older `dsh-agent`) is gone —
+   that package left the upstream release train and was dropped in the 0.1.5
+   migration. `resolveSpec`/`Config` match recon.
 6. **SDK 1.30 high-level McpServer**: `registerTool` input schemas must be
    zod schemas or raw zod shapes — plain JSON-Schema objects throw
    (`inputSchema must be a Zod schema or raw shape`). Runtime

@@ -16,10 +16,12 @@
  * not.
  */
 
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context } from '@deepseek-ai/cordis'
 import type { CredentialInfo as CredentialInfoView } from '@deepseek-ai/dsh-credentials/types'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client' // 'settings.section' SlotMap entry + ctx.settingsScope merge (type-only)
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client' // ctx.slots merge (type-only; the renderer owns the slot registry in the 0.1.5 generation)
 import type {} from '@deepseek-ai/dsh-client-locale/client' // ctx.locale merge (type-only)
+import type {} from '@deepseek-ai/dsh-api-workspace-controller/client' // ctx.workspaces merge + WorkspaceSnapshot (type-only)
 import type { McpScopeDoc } from '../shared/model.js'
 import { MCP_SCOPE_NAMESPACE } from '../shared/model.js'
 import { en, zh, NS, type SettingsKey } from './locales.js'
@@ -75,20 +77,6 @@ export type { ServerCardProps } from './server-card.js'
 export type { AddServerFormProps, AddDraft, AddProblems } from './add-form.js'
 export type { WorkspaceItem, WorkspaceListHook, WorkspaceListStatus } from './workspaces.js'
 
-/**
- * cordis fiber typing note: the package augments its own `Context` with
- * `effect` through a RELATIVE module augmentation (`declare module
- * './context.ts'` inside fiber.d.ts). Against the shipped d.ts-only npm tree
- * that specifier cannot resolve to a file, so under NodeNext the merge is
- * silently lost for consumers (cross-package absolute augmentations like
- * `ctx.locale`/`ctx.settingsScope`/`ctx.slots` merge fine). Runtime behavior
- * is unaffected — `ctx.effect` is mixed onto the proxied context. This one
- * localized structural type restores the surface we call.
- */
-type FiberAwareContext = ClientContext & {
-  effect(execute: () => void | (() => void) | Iterable<() => void>, label?: string): unknown
-}
-
 /** Fold the Remote result union: business failures become thrown errors. */
 async function unwrap<T>(result: RemoteResultLike<T>): Promise<T> {
   if (result.ok) return result.value
@@ -118,8 +106,16 @@ function remoteCredentials(wire: McpRemoteWire): CredentialsGateway {
  */
 export const inject = ['slots', 'locale', 'remote', 'remote.credentials', 'settingsScope', 'workspaces']
 
-export function apply(ctxInput: ClientContext): void {
-  const ctx = ctxInput as FiberAwareContext
+/**
+ * Apply the browser half. The context type is cordis `Context` — the client
+ * context of the 0.1.5 generation (the 0.1.2-era `dsh-client-runtime`
+ * `ClientContext` is off the upstream release train). `effect` is declared on
+ * cordis's own `Context`, and the cross-package augmentations this plugin
+ * calls (`ctx.slots`/`ctx.locale`/`ctx.settingsScope`/`ctx.remote`/
+ * `ctx.workspaces`) merge through this module's type-only imports, so no
+ * local structural patch is needed.
+ */
+export function apply(ctx: Context): void {
   // (a) dictionaries — one registration, both built-in locales.
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'mcp-scope: dictionaries')
   const t = ctx.locale.bind(NS)

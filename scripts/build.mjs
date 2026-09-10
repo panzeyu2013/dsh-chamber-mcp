@@ -21,16 +21,17 @@ run('node', [join(root, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsco
 run('node', [join(root, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.host.json'])
 
 // 4. client half: esbuild CJS bundle wrapped for the browser module loader.
-// Externals = the official frozen platform table (see dsh packages/client/web/src/platform.ts).
+// Externals = the official frozen platform table, mirrored verbatim from
+// PLATFORM_MODULES in dsh packages/client/web/src/platform.ts at the pinned
+// generation. Nothing outside it may be required at runtime: the loader serves
+// those specifiers from its seed table and has no other source for them.
 const externals = [
   'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client',
   '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-ui-attachment',
-  '@deepseek-ai/dsh-client-schema-form',
-  '@deepseek-ai/dsh-client-runtime/client',
+  '@deepseek-ai/dsh-client-ui-dockkit',
 ]
 
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))

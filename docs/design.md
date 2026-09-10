@@ -1,10 +1,10 @@
 # dsh-chamber-mcp — design (final)
 
 Locked after recon A–F (docs/recon/*). Version targets: compile & verify against
-**dsh 0.1.2-rc.1** (the version chamber runs; types under the anchor install are
-authoritative), runtime-verified additionally against **dsh 0.1.5-rc.1 /
-0.1.5-rc.2** (npm dist-tag `latest`) — see CHANGELOG 0.0.2. Reference sources:
-ref-dsh checkout (0.1.0-rc.5) for logic.
+**dsh 0.1.5-rc.1** (the pinned devDependency set and the CI guard; npm dist-tag
+`latest`), runtime-verified additionally against **dsh 0.1.2-rc.1** (the version
+chamber runs) — see CHANGELOG 0.0.2. Reference sources: ref-dsh checkout
+(0.1.0-rc.5) for logic.
 
 ## 1. Deliverable (package layout)
 
@@ -117,8 +117,9 @@ credential refs within one server → reject the write.
 - Deps: runtime `@modelcontextprotocol/sdk@^1.30.0`, `@deepseek-ai/schemastery@^3.18.2`,
   `zod@^4.4.3`; peers `@deepseek-ai/cordis@4.0.2` + `dsh-timeout` and the dsh-* type
   surfaces `@deepseek-ai/dsh-{tools,settings,credentials,workspace,session,agent,
-  subprocess,scope,llm,brand,util-values}@0.1.2-rc.1`;
-  client externals react 18.3.x etc. All pinned from installed anchor versions.
+  subprocess,scope,llm,brand,util-values}@0.1.5-rc.1`;
+  client externals = the official frozen platform table (react 18.3.x + cordis +
+  `dsh-client-{store,ui-slots,ui-primitives,ui-dockkit}`). All pinned exactly.
 - Host half emitted by tsc (NodeNext ESM, explicit `.js` relative imports); client half
   bundled by esbuild (CJS; externals = official platform table + cordis) wrapped in the
   `__ModuleLoader__.load({ id, factory })` shape; d.ts emitted for both entries.

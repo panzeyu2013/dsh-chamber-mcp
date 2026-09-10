@@ -92,19 +92,25 @@ Compatibility notes for consumers:
 - Peers (`@deepseek-ai/dsh-*`, cordis) are resolved from the dsh install's
   fallback farm; only `@modelcontextprotocol/sdk`, `@deepseek-ai/schemastery`
   and `zod` are real dependencies installed by pnpm.
-- Support window: dsh **0.1.2-rc.1** (the chamber anchor generation, still in
-  production) and **0.1.5-rc.1 / 0.1.5-rc.2** (npm `latest`), expressed by the
-  peer range `^0.1.2-rc.1 || ^0.1.5-rc.1`. A dsh upgrade that changes the typed
-  surface should trigger a compat release; CI typecheck against the installed
-  dsh set is the guard (devDependencies pin `0.1.2-rc.1`).
-- Auditing a new upstream line (the 0.1.5 pass, CHANGELOG 0.0.2): diff `src/`
-  of the peer packages between the two release tags (`dsh-v<old>`..`dsh-v<new>`
-  in the harness checkout), typecheck + test against the new package set, then
-  boot the real new CLI per §smoke capturing the per-workspace tool list, and
-  only then widen the peer range. The peer range is declarative only — profiles
-  install with `autoInstallPeers: false` and resolve these peers by name from
-  the dsh install's fallback farm — so a widened range never changes what is
-  installed.
+- Support window: dsh **0.1.5-rc.1 / 0.1.5-rc.2** (npm `latest`, the pinned
+  devDependency set and the CI guard) and **0.1.2-rc.1** (the chamber anchor
+  generation, still in production), expressed by the peer range
+  `^0.1.2-rc.1 || ^0.1.5-rc.1`. A dsh upgrade that changes the typed surface
+  should trigger a compat release; CI typecheck against the installed dsh set
+  is the guard (devDependencies pin `0.1.5-rc.1`).
+- Auditing a new upstream line (the 0.1.5 migration, CHANGELOG 0.0.2): diff
+  `src/` of the peer packages between the two release tags (`dsh-v<old>`..
+  `dsh-v<new>` in the harness checkout), bump the devDependency pins, typecheck
+  + test against the new set, then boot the real new CLI per §smoke capturing
+  the per-workspace tool list AND the browser half's registration trace, and
+  only then widen the peer range. Two traps this pass found: a pinned package
+  can silently leave the release train (0.1.2-era `dsh-client-runtime`,
+  `dsh-client-schema-form`, `dsh-client-web-react` never shipped past
+  `0.1.1-rc.2`/`0.1.0-rc.7`), and client service/type ownership moves between
+  packages (`ctx.slots` is declared by `dsh-client-ui-renderer` in 0.1.5, not
+  by the client runtime). Grep the installed tree for each injected service
+  name and each slot key rather than assuming the 0.1.2 owner still provides
+  them.
 
 ## Smoke (§smoke) — what the self-hosted job runs
 

@@ -81,11 +81,12 @@ UI cannot read them back).
 
 ## Compatibility
 
-- Target/verified: dsh **0.1.2-rc.1** (the generation dsh-chamber currently
-  runs) **and 0.1.5-rc.1 / 0.1.5-rc.2** (npm `latest`). Compile-time API
-  surface: `@deepseek-ai/dsh-*@0.1.2-rc.1`; the peer ranges accept both
-  generations (`^0.1.2-rc.1 || ^0.1.5-rc.1`) and every called API is
-  byte-identical or additively changed between them.
+- Target/verified: dsh **0.1.5-rc.1 / 0.1.5-rc.2** (npm `latest`) is the
+  compile-time anchor — `devDependencies` pin `@deepseek-ai/dsh-*@0.1.5-rc.1`
+  and CI guards that set. dsh **0.1.2-rc.1** (the generation dsh-chamber
+  currently runs) is also supported and live-verified; the peer ranges accept
+  both (`^0.1.2-rc.1 || ^0.1.5-rc.1`) and every API this plugin calls is
+  byte-identical or additively changed between the two generations.
 - Requirement model: every configured server defaults on for all of this dsh's
   workspaces; only explicit per-workspace records turn one off.
 - Sessions outside any registered workspace (plain cwd sessions) never receive

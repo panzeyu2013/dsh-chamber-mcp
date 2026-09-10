@@ -1,18 +1,19 @@
 /**
  * Local, minimal workspace-list surface for the section.
  *
- * The runtime's `useWorkspaces` standard hook delivers `WorkspaceListState`
- * (runtime/client). Its `items` members are typed through cross-package
- * re-exports (`WorkspaceView` from dsh-api-remotes/client) that resolve to
- * `any` in this dev tree (see docs/ui-notes.md), so the section narrows them
- * to the fields it actually reads through a single targeted cast. The list
- * lifecycle (state/phase) is real and drives the loading/error/empty gating
- * of the per-card workspace rows (UX-18).
+ * The framework's global `useWorkspaces` standard hook delivers a
+ * `WorkspaceSnapshot` (0.1.5: `@deepseek-ai/dsh-api-workspace-controller/client`,
+ * which also declares the `ctx.workspaces` service this plugin injects; the
+ * 0.1.2-era `dsh-client-runtime` is off the upstream release train and is no
+ * longer a dependency). The section narrows each row to the fields it actually
+ * renders through {@link WorkspaceItem}, which `WorkspaceView` structurally
+ * satisfies — no cast is needed. The list lifecycle (state/phase) is real and
+ * drives the loading/error/empty gating of the per-card workspace rows (UX-18).
  */
 
-import type { WorkspaceListState } from '@deepseek-ai/dsh-client-runtime/client'
+import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
 
-/** Fields of one workspace row this UI consumes. */
+/** Fields of one workspace row this UI consumes (a subset of `WorkspaceView`). */
 export interface WorkspaceItem {
   workspaceId: string
   path: string
@@ -21,7 +22,7 @@ export interface WorkspaceItem {
 }
 
 /** Selector-hook shape over the workspace list state. */
-export type WorkspaceListHook = <T>(selector: (state: WorkspaceListState) => T) => T
+export type WorkspaceListHook = <T>(selector: (state: WorkspaceSnapshot) => T) => T
 
 /** What the per-card workspace-row area may show right now. */
 export type WorkspaceListStatus = 'ready' | 'loading' | 'error'
@@ -32,15 +33,18 @@ export type WorkspaceListStatus = 'ready' | 'loading' | 'error'
  * `phase: 'ready'`) is still arriving, everything else is settled. Cards may
  * show "no workspaces" only from a settled list (never during load/error).
  */
-export function workspaceListStatusOf(state: WorkspaceListState): WorkspaceListStatus {
+export function workspaceListStatusOf(state: WorkspaceSnapshot): WorkspaceListStatus {
   if (state.state === 'error') return 'error'
   if (state.state === 'loading' || state.phase !== 'ready') return 'loading'
   return 'ready'
 }
 
-/** Narrow the hook's items to the row fields actually rendered. */
-export function workspaceItemsOf(state: WorkspaceListState): readonly WorkspaceItem[] {
-  // WorkspaceListState is fully typed here; only the item element type rides
-  // an unresolved re-export chain and collapses to `any` in this tree.
-  return state.items as unknown as readonly WorkspaceItem[]
+/**
+ * Narrow the hook's items to the row fields actually rendered. `WorkspaceView`
+ * carries branded `workspaceId`/`sessionIds` plus timestamps this UI does not
+ * read; both brands are string-based, so the narrower row type accepts it
+ * directly.
+ */
+export function workspaceItemsOf(state: WorkspaceSnapshot): readonly WorkspaceItem[] {
+  return state.items
 }
