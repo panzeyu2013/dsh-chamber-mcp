@@ -7,11 +7,15 @@
  *
  * Asserts: hooks fire on namespace writes; the validate hook rejects a
  * duplicate-serverName write host-side; resolved documents merge schema
- * defaults; the user layer persists to the document file.
+ * defaults; the user layer persists to the document file; and — with the
+ * watcher on, as in a real deployment — a hand-written document is loaded at
+ * boot, an external edit is published live, and an edit that violates the
+ * cross-field rules is NOT published (the running instance keeps the last good
+ * document, per the provider's "boot fails loud, reload keeps last good" rule).
  */
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -27,9 +31,15 @@ async function tempDocPath(): Promise<string> {
   return join(dir, 'settings.yaml')
 }
 
-async function boot(path: string): Promise<Context> {
+/**
+ * Boot the real provider over a temp document. `watch` stays off for the
+ * deterministic write tests and is turned on only by the hot-reload test
+ * (watching is the deployment default; off keeps the other tests free of
+ * watcher timing).
+ */
+async function boot(path: string, options: { watch?: boolean } = {}): Promise<Context> {
   const ctx = new Context()
-  const fiber = ctx.plugin(FileSettingsProvider, { path, watch: false })
+  const fiber = ctx.plugin(FileSettingsProvider, { path, watch: options.watch ?? false })
   cleanups.push(async () => { await fiber.dispose() })
   await fiber
   return ctx
@@ -38,6 +48,32 @@ async function boot(path: string): Promise<Context> {
 afterEach(async () => {
   while (cleanups.length > 0) await cleanups.pop()!()
 })
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Poll until `condition` holds (watcher settle is debounce + fs event). */
+async function waitUntil(condition: () => boolean, what: string, timeoutMs = 5000): Promise<void> {
+  const start = Date.now()
+  while (!condition()) {
+    if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for ${what}`)
+    await sleep(50)
+  }
+}
+
+/** A hand-written document: the shape a user edits outside the UI. */
+const HAND_WRITTEN = `# hand-written document
+mcp-scope:
+  servers:
+    - serverName: byhand
+      transport: stdio
+      command: node
+      args: [server.js]
+      cwd: ""
+      envKeys: [HAND_TOKEN]
+  overrides:
+    ws-b:
+      byhand: true
+`
 
 /** Mirror of the plugin entry's installSection wiring (same validate hook). */
 function installNamespace(ctx: Context, hooks: {
@@ -135,6 +171,56 @@ describe('mcp-scope settings namespace (real file-backed provider)', () => {
     expect(text).toMatch(/mcp-scope:/)
     expect(text).toMatch(/github/)
     expect(text).toMatch(/streamable-http/)
+  })
+
+  it('loads a hand-written document at boot, hot-reloads external edits, and refuses an invalid one', async () => {
+    const path = await tempDocPath()
+    writeFileSync(path, HAND_WRITTEN)
+    const ctx = await boot(path, { watch: true })
+    let currentSource: () => McpScopeDoc = () => EMPTY_DOC
+    let changes = 0
+    installNamespace(ctx, {
+      setSource: (source) => {
+        currentSource = source
+      },
+      onChange: () => {
+        changes += 1
+      },
+    })
+
+    // Boot load: the document that was on disk is the resolved document.
+    expect(currentSource().servers.map((s) => s.serverName)).toEqual(['byhand'])
+    expect(currentSource().overrides).toEqual({ 'ws-b': { byhand: true } })
+
+    // External edit while the instance runs: published without a restart.
+    const beforeEdit = changes
+    writeFileSync(path, HAND_WRITTEN.replace('byhand', 'renamed').replace('    ws-b:\n      byhand: true', '    ws-b: {}'))
+    await waitUntil(() => changes > beforeEdit, 'external edit to be published')
+    expect(currentSource().servers.map((s) => s.serverName)).toEqual(['renamed'])
+    expect(currentSource().overrides).toEqual({ 'ws-b': {} })
+
+    // A service write is a leaf-level YAML diff: the hand-written comment and
+    // the untouched nodes survive.
+    await ctx.settings.update('mcp-scope', {
+      servers: [
+        ...currentSource().servers,
+        { serverName: 'fromui', transport: 'streamable-http', url: 'https://mcp.example.test/x' },
+      ],
+      overrides: currentSource().overrides,
+    })
+    const text = readFileSync(path, 'utf8')
+    expect(text).toContain('# hand-written document')
+    expect(text).toContain('fromui')
+    expect(text).toContain('streamable-http')
+
+    // An external edit that breaks a cross-field rule (duplicate serverName) is
+    // NOT published: the running instance keeps the last good document.
+    const beforeInvalid = changes
+    const lastGood = currentSource()
+    writeFileSync(path, `mcp-scope:\n  servers:\n    - {serverName: dup, transport: stdio, command: node}\n    - {serverName: dup, transport: stdio, command: node}\n`)
+    await sleep(600)
+    expect(changes).toBe(beforeInvalid)
+    expect(currentSource()).toEqual(lastGood)
   })
 
   it('resolves defaults below the user layer and reports revision bumps', async () => {

@@ -142,6 +142,36 @@ describe('bridge manager lifecycle', () => {
     }
   })
 
+  it('runs several servers concurrently — one supervisor each — and removal touches only the removed one (MULTI-1)', async () => {
+    const { manager, lines, setDoc, dispose } = await boot()
+    try {
+      const doc = (...names: string[]): McpScopeDoc => ({ servers: names.map((name) => stdioServer(name)), overrides: {} })
+
+      // Three servers, three real child processes, tracked independently.
+      setDoc(doc('alpha', 'beta', 'gamma'))
+      manager.reconcile()
+      await waitFor(
+        () => started(lines, 'alpha') + started(lines, 'beta') + started(lines, 'gamma') === 3,
+        'three servers started',
+      )
+
+      // A fourth joins while the other three are live (no teardown of them).
+      setDoc(doc('alpha', 'beta', 'gamma', 'delta'))
+      manager.reconcile()
+      await waitFor(() => started(lines, 'delta') === 1, 'fourth server started')
+      expect(started(lines, 'alpha') + started(lines, 'beta') + started(lines, 'gamma')).toBe(3)
+
+      // Dropping one stops exactly that one; the survivors are not restarted.
+      setDoc(doc('alpha', 'gamma', 'delta'))
+      manager.reconcile()
+      await waitFor(() => stopped(lines, 'beta') === 1, 'removed server stopped')
+      expect(stopped(lines, 'alpha') + stopped(lines, 'gamma') + stopped(lines, 'delta')).toBe(0)
+      expect(started(lines, 'alpha') + started(lines, 'gamma') + started(lines, 'delta')).toBe(3)
+    } finally {
+      await dispose()
+    }
+  })
+
   it('ignores credential events for refs no server uses', async () => {
     const { ctx, manager, lines, setDoc, dispose } = await boot()
     try {

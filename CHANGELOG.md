@@ -18,6 +18,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vocabulary — so the section reads as part of the panel in both themes
   (closes review finding FE-5; mapping table in `docs/ui-notes.md` §6).
 
+### Added
+
+- **Concurrency, hot-reload and hand-editing coverage.** New regression tests
+  pin what was previously design-level only: several servers running at once
+  (one supervisor each, a server joining while others are live, removal
+  touching only the removed one) and two servers' tools coexisting in one
+  workspace scope — including the same raw tool name — with per-(workspace,
+  server) gating; plus the settings document's hand-editing contract (a
+  hand-written document loads at boot, an external edit is published live, an
+  edit that breaks the cross-field rules is not published and the last good
+  document stays in effect). README gains a "Where the configuration lives"
+  section: document path and YAML shape, credential refs vs values, and the
+  hand-editing rules.
+
 ### Fixed
 
 - Credential pills, cards and the form no longer widen the settings column when

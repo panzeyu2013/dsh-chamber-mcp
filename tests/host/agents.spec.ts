@@ -224,6 +224,46 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     }
   })
 
+  it('keeps two servers side by side in one scope — including a shared tool name — and gates them independently (MULTI-2)', async () => {
+    const h = await mount()
+    try {
+      const wsA = await h.addWorkspace('a')
+      const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.createAgent(agentA)
+
+      // Public names are namespaced by server, so two servers exposing the same
+      // RAW tool name ("search") stay distinct registrations.
+      const ALPHA_SEARCH = 'mcp__alpha__search'
+      const ALPHA_ONLY = 'mcp__alpha__only'
+      const BETA_SEARCH = 'mcp__beta__search'
+      const BETA_ONLY = 'mcp__beta__only'
+      h.push('alpha', 1, new Map<string, ToolDefinition>([[ALPHA_SEARCH, def(ALPHA_SEARCH)], [ALPHA_ONLY, def(ALPHA_ONLY)]]))
+      h.push('beta', 1, new Map<string, ToolDefinition>([[BETA_SEARCH, def(BETA_SEARCH)], [BETA_ONLY, def(BETA_ONLY)]]))
+
+      for (const name of [ALPHA_SEARCH, ALPHA_ONLY, BETA_SEARCH, BETA_ONLY]) {
+        expect(h.ctx.tools.get(name, agentA), name).toBeDefined()
+      }
+      expect(h.ctx.tools.get(ALPHA_SEARCH, agentA)).not.toBe(h.ctx.tools.get(BETA_SEARCH, agentA))
+
+      // Switching ONE server off for this workspace leaves the other's tools.
+      h.overrides = { [wsA.id]: { alpha: true } }
+      h.applier.reconcile()
+      expect(h.ctx.tools.get(ALPHA_SEARCH, agentA)).toBeUndefined()
+      expect(h.ctx.tools.get(ALPHA_ONLY, agentA)).toBeUndefined()
+      expect(h.ctx.tools.get(BETA_SEARCH, agentA)).toBeDefined()
+      expect(h.ctx.tools.get(BETA_ONLY, agentA)).toBeDefined()
+
+      // …and switching it back on restores exactly its own tools.
+      h.overrides = {}
+      h.applier.reconcile()
+      for (const name of [ALPHA_SEARCH, ALPHA_ONLY, BETA_SEARCH, BETA_ONLY]) {
+        expect(h.ctx.tools.get(name, agentA), name).toBeDefined()
+      }
+    } finally {
+      h.cleanup()
+    }
+  })
+
   it('re-applies on settings reconcile (enable/disable flip) and revokes on empty sync', async () => {
     const h = await mount()
     try {

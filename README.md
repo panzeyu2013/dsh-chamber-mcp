@@ -67,6 +67,49 @@ declare explicitly; servers connect at instance start (host activation
 lifecycle, like the official client) and reconnect with the official backoff
 policy.
 
+## Where the configuration lives
+
+The plugin stores nothing of its own: it registers the `mcp-scope` **settings
+namespace**, so the document lives wherever that instance's settings provider
+puts it. With the default file provider that is one document for every
+namespace — `$DSH_HOME/settings.yaml`, the extension picking the format
+(`.yaml`, `.yml`, `.json`):
+
+```yaml
+mcp-scope:
+  servers:                        # one entry per server; serverName is the identity
+    - serverName: github
+      transport: streamable-http  # or stdio: command/args/cwd/envKeys
+      url: https://mcp.example.com/x
+      headers:
+        - name: Authorization
+          ref: GITHUB_TOKEN       # a credential REF, never a value
+  overrides:                      # presence = that workspace is OFF (default on)
+    ws-2f1c:
+      github: true
+```
+
+- Credential **values** never ride this document — only ref names. The values
+  live in the credentials domain (default on-machine provider:
+  `$DSH_HOME/.credentials.yaml`), written write-only from the UI.
+- **Hand-editing works.** The file provider watches the document by default
+  (`watch: true`, 100 ms settle), so adding or removing a server, or flipping an
+  override, with any editor takes effect live: the plugin reconciles on the
+  published change and starts/stops/restarts only the affected servers — no
+  instance restart. Writes made through the UI are leaf-level YAML diffs, so
+  comments, anchors and formatting survive on every untouched node.
+- A hand-edit must satisfy the same rules the UI enforces: a unique
+  `serverName` (`[A-Za-z0-9_-]{1,32}`, and not `__proto__` / `constructor` /
+  `prototype`), a required `command` (stdio) or `url` (http), no duplicate env
+  keys or header names, credential refs matching `[A-Za-z_][A-Za-z0-9_]*`, and
+  `overrides` values of exactly `true`.
+- An edit that breaks those rules is **not published**: the running instance
+  keeps the last good document (and warns) while the file on disk holds the bad
+  text — fix the file to converge. An unparsable document fails the load at boot
+  (loud); once running, an unreadable or unparsable edit keeps the last good
+  sections. Deleting the file resets every namespace to its defaults, and a
+  section whose plugin is not loaded is never dropped.
+
 ## Uninstall
 
 ```sh
