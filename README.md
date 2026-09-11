@@ -102,7 +102,7 @@ UI cannot read them back).
 ```sh
 npm install            # dev deps (all @deepseek-ai/* pinned to one dsh generation)
 npm run typecheck      # src + tests
-npm test               # vitest suite (133 tests)
+npm test               # vitest suite (148 tests)
 npm run check          # full gate: typecheck + tests + build + package verify
 npm run verify:package # pack → contents whitelist → consumer d.ts check → determinism
 npm run pack:tgz       # build + .smoke/dsh-chamber-mcp-<ver>.tgz

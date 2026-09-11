@@ -11,6 +11,12 @@
  * control is `type="button"`, and the server-name field autofocuses on open.
  * Outcome feedback is owned by the form (a localized role="alert" failure
  * banner); success closes through `onClose` and is announced by the section.
+ *
+ * Chrome comes from the shared style seat (`./styles.ts`): the form is the
+ * settings panel's editing surface (module fill + r12), its fields use the
+ * official plugin-form input vocabulary, the transport choice is the Pill
+ * primitive's pill over real radios, and the footer is the editor action row
+ * (dismiss left, full-size commit capsule right).
  */
 
 import { useEffect, useRef, useState, type FormEvent } from 'react'
@@ -24,6 +30,7 @@ import {
 import type { SettingsKey } from './locales.js'
 import { failureText, type SaveFailure, type SaveOutcome, type ServerSaveInput } from './controller.js'
 import type { SectionT } from './section.js'
+import { cx, styles } from './styles.js'
 
 /** All staged input of one add/edit flow. */
 export interface AddDraft {
@@ -246,9 +253,10 @@ function Field(props: {
   autoFocus?: boolean
   onChange(value: string): void
 }): JSX.Element {
+  const invalid = props.problem !== undefined
   return (
-    <div style={{ marginBottom: 6 }}>
-      <label htmlFor={props.id} style={{ display: 'block', fontSize: 13, marginBottom: 2 }}>
+    <div className={styles.field}>
+      <label className={styles.fieldLabel} htmlFor={props.id}>
         {props.label}
       </label>
       <input
@@ -260,20 +268,39 @@ function Field(props: {
         disabled={props.disabled}
         placeholder={props.placeholder}
         autoFocus={props.autoFocus}
+        aria-invalid={invalid || undefined}
         onChange={(event) => props.onChange(event.target.value)}
-        style={{ width: '100%', boxSizing: 'border-box' }}
+        className={cx(styles.input, invalid && styles.inputInvalid)}
       />
-      {props.hint !== undefined && (
-        <span style={{ fontSize: 12, opacity: 0.7 }}>{props.hint}</span>
-      )}
-      {props.problem !== undefined && (
-        <span style={{ fontSize: 12, color: '#c0392b', display: 'block' }}>{props.problem}</span>
-      )}
+      {props.hint !== undefined && <span className={styles.fieldHint}>{props.hint}</span>}
+      {props.problem !== undefined && <span className={styles.fieldProblem}>{props.problem}</span>}
     </div>
   )
 }
 
-const rowActionStyle = { flex: 1, boxSizing: 'border-box' as const }
+/** One transport choice: a native radio under the pill it paints. */
+function TransportChoice(props: {
+  id: string
+  label: string
+  checked: boolean
+  disabled: boolean
+  onSelect(): void
+}): JSX.Element {
+  return (
+    <label className={styles.choice} htmlFor={props.id}>
+      <input
+        id={props.id}
+        type="radio"
+        name="mcp-scope-transport"
+        className={styles.choiceInput}
+        checked={props.checked}
+        disabled={props.disabled}
+        onChange={props.onSelect}
+      />
+      <span className={styles.choicePill}>{props.label}</span>
+    </label>
+  )
+}
 
 export function AddServerForm(props: AddServerFormProps): JSX.Element {
   const { t, writable } = props
@@ -360,16 +387,12 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
   const headerProblems = reveal ? problems.headers : problems.headers.map(() => undefined)
 
   return (
-    <form
-      aria-label={t(props.titleKey)}
-      onSubmit={handleSubmit}
-      style={{ border: '1px dashed rgba(127,127,127,0.5)', borderRadius: 8, padding: 12, marginBottom: 10 }}
-    >
-      <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>{t(props.titleKey)}</h3>
+    <form aria-label={t(props.titleKey)} onSubmit={handleSubmit} className={styles.form}>
+      <h3 className={styles.formTitle}>{t(props.titleKey)}</h3>
 
       {failure !== null && (
-        <p role="alert" style={{ margin: '0 0 8px', padding: '6px 10px', borderRadius: 6, background: 'rgba(192,57,43,0.1)', border: '1px solid rgba(192,57,43,0.4)', fontSize: 13 }}>
-          {failureText(t, failure)}
+        <p role="alert" className={styles.noticeError}>
+          <span className={styles.noticeText}>{failureText(t, failure)}</span>
         </p>
       )}
 
@@ -384,28 +407,24 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
         onChange={(name) => patch({ name })}
       />
 
-      <div role="radiogroup" aria-label={t('add.transport')} style={{ marginBottom: 6 }}>
-        <span style={{ display: 'block', fontSize: 13, marginBottom: 2 }}>{t('add.transport')}</span>
-        <label style={{ marginRight: 12, fontSize: 13 }}>
-          <input
-            type="radio"
-            name="mcp-scope-transport"
+      <div role="radiogroup" aria-label={t('add.transport')} className={styles.field}>
+        <span className={styles.fieldLabel}>{t('add.transport')}</span>
+        <div className={styles.choices}>
+          <TransportChoice
+            id="mcp-scope-transport-stdio"
+            label={t('transport.stdio')}
             checked={draft.transport === 'stdio'}
             disabled={disabled}
-            onChange={() => patch({ transport: 'stdio' })}
-          />{' '}
-          {t('transport.stdio')}
-        </label>
-        <label style={{ fontSize: 13 }}>
-          <input
-            type="radio"
-            name="mcp-scope-transport"
+            onSelect={() => patch({ transport: 'stdio' })}
+          />
+          <TransportChoice
+            id="mcp-scope-transport-http"
+            label={t('transport.http')}
             checked={draft.transport === 'streamable-http'}
             disabled={disabled}
-            onChange={() => patch({ transport: 'streamable-http' })}
-          />{' '}
-          {t('transport.http')}
-        </label>
+            onSelect={() => patch({ transport: 'streamable-http' })}
+          />
+        </div>
       </div>
 
       {draft.transport === 'stdio' ? (
@@ -420,10 +439,10 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
             onChange={(command) => patch({ command })}
           />
 
-          <div style={{ marginBottom: 6 }}>
-            <span style={{ display: 'block', fontSize: 13, marginBottom: 2 }}>{t('add.args')}</span>
+          <div className={styles.rowsGroup}>
+            <span className={styles.fieldLabel}>{t('add.args')}</span>
             {draft.args.map((arg, index) => (
-              <div key={index} style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+              <div key={index} className={styles.row}>
                 <input
                   aria-label={`${t('add.args')} ${index + 1}`}
                   type="text"
@@ -432,10 +451,11 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
                   onChange={(event) =>
                     patch({ args: draft.args.map((a, i) => (i === index ? event.target.value : a)) })
                   }
-                  style={rowActionStyle}
+                  className={cx(styles.input, styles.rowInput)}
                 />
                 <button
                   type="button"
+                  className={cx(styles.button, styles.buttonOutline)}
                   disabled={disabled || draft.args.length <= 1}
                   onClick={() => patch({ args: draft.args.filter((_, i) => i !== index) })}
                 >
@@ -443,9 +463,16 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
                 </button>
               </div>
             ))}
-            <button type="button" disabled={disabled} onClick={() => patch({ args: [...draft.args, ''] })}>
-              {t('add.argAdd')}
-            </button>
+            <div className={styles.row}>
+              <button
+                type="button"
+                className={cx(styles.button, styles.buttonOutline)}
+                disabled={disabled}
+                onClick={() => patch({ args: [...draft.args, ''] })}
+              >
+                {t('add.argAdd')}
+              </button>
+            </div>
           </div>
 
           <Field
@@ -456,43 +483,58 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
             onChange={(cwd) => patch({ cwd })}
           />
 
-          <div style={{ marginBottom: 6 }}>
-            <span style={{ display: 'block', fontSize: 13, marginBottom: 2 }}>{t('add.envKey')}</span>
-            <p style={{ margin: '0 0 4px', fontSize: 12, opacity: 0.7 }}>{t('add.envSectionHint')}</p>
-            {draft.env.map((row, index) => (
-              <div key={index} style={{ display: 'flex', gap: 6, marginBottom: 4, alignItems: 'center' }}>
-                <input
-                  aria-label={`${t('add.envKey')} ${index + 1}`}
-                  type="text"
-                  value={row.key}
-                  disabled={disabled}
-                  onChange={(event) => patchEnv(index, { key: event.target.value })}
-                  style={rowActionStyle}
-                />
-                <input
-                  aria-label={`${t('add.secretValueLabel')} ${index + 1}`}
-                  type="password"
-                  autoComplete="new-password"
-                  value={row.value}
-                  disabled={disabled}
-                  placeholder={t('add.secretPlaceholder')}
-                  onChange={(event) => patchEnv(index, { value: event.target.value })}
-                  style={rowActionStyle}
-                />
-                <button
-                  type="button"
-                  disabled={disabled || draft.env.length <= 1}
-                  onClick={() => patch({ env: draft.env.filter((_, i) => i !== index) })}
-                >
-                  {t('add.envRemove')}
-                </button>
-              </div>
-            ))}
-            <button type="button" disabled={disabled} onClick={() => patch({ env: [...draft.env, { key: '', value: '' }] })}>
-              {t('add.envAdd')}
-            </button>
+          <div className={styles.rowsGroup}>
+            <span className={styles.fieldLabel}>{t('add.envKey')}</span>
+            <p className={styles.fieldHint}>{t('add.envSectionHint')}</p>
+            {draft.env.map((row, index) => {
+              // Every env-row problem is about the key, so the key input carries
+              // the invalid border: the list below names the problem, the border
+              // says which control it belongs to.
+              const keyInvalid = envProblems[index] !== undefined
+              return (
+                <div key={index} className={styles.row}>
+                  <input
+                    aria-label={`${t('add.envKey')} ${index + 1}`}
+                    type="text"
+                    value={row.key}
+                    disabled={disabled}
+                    aria-invalid={keyInvalid || undefined}
+                    onChange={(event) => patchEnv(index, { key: event.target.value })}
+                    className={cx(styles.input, styles.rowInput, keyInvalid && styles.inputInvalid)}
+                  />
+                  <input
+                    aria-label={`${t('add.secretValueLabel')} ${index + 1}`}
+                    type="password"
+                    autoComplete="new-password"
+                    value={row.value}
+                    disabled={disabled}
+                    placeholder={t('add.secretPlaceholder')}
+                    onChange={(event) => patchEnv(index, { value: event.target.value })}
+                    className={cx(styles.input, styles.rowInput)}
+                  />
+                  <button
+                    type="button"
+                    className={cx(styles.button, styles.buttonOutline)}
+                    disabled={disabled || draft.env.length <= 1}
+                    onClick={() => patch({ env: draft.env.filter((_, i) => i !== index) })}
+                  >
+                    {t('add.envRemove')}
+                  </button>
+                </div>
+              )
+            })}
+            <div className={styles.row}>
+              <button
+                type="button"
+                className={cx(styles.button, styles.buttonOutline)}
+                disabled={disabled}
+                onClick={() => patch({ env: [...draft.env, { key: '', value: '' }] })}
+              >
+                {t('add.envAdd')}
+              </button>
+            </div>
             {envProblems.some((p) => p !== undefined) && (
-              <ul style={{ margin: '4px 0 0', paddingLeft: 16, fontSize: 12, color: '#c0392b' }}>
+              <ul className={styles.problems}>
                 {envProblems.map((problem, index) =>
                   problem !== undefined ? (
                     <li key={index}>{t(problem)}</li>
@@ -519,57 +561,70 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
             onChange={(url) => patch({ url })}
           />
 
-          <div style={{ marginBottom: 6 }}>
-            <span style={{ display: 'block', fontSize: 13, marginBottom: 2 }}>{t('add.headerName')}</span>
-            <p style={{ margin: '0 0 4px', fontSize: 12, opacity: 0.7 }}>{t('add.headerSectionHint')}</p>
-            {draft.headers.map((row, index) => (
-              <div key={index} style={{ display: 'flex', gap: 6, marginBottom: 4, alignItems: 'center' }}>
-                <input
-                  aria-label={`${t('add.headerName')} ${index + 1}`}
-                  type="text"
-                  value={row.name}
-                  disabled={disabled}
-                  onChange={(event) => patchHeader(index, { name: event.target.value })}
-                  style={rowActionStyle}
-                  placeholder={t('add.headerNamePlaceholder')}
-                />
-                <input
-                  aria-label={`${t('add.credentialRef')} ${index + 1}`}
-                  type="text"
-                  value={row.ref}
-                  disabled={disabled}
-                  onChange={(event) => patchHeader(index, { ref: event.target.value })}
-                  style={rowActionStyle}
-                  placeholder={t('add.credentialRefPlaceholder')}
-                />
-                <input
-                  aria-label={`${t('add.secretValueLabel')} ${index + 1}`}
-                  type="password"
-                  autoComplete="new-password"
-                  value={row.value}
-                  disabled={disabled}
-                  placeholder={t('add.secretPlaceholder')}
-                  onChange={(event) => patchHeader(index, { value: event.target.value })}
-                  style={rowActionStyle}
-                />
-                <button
-                  type="button"
-                  disabled={disabled || draft.headers.length <= 1}
-                  onClick={() => patch({ headers: draft.headers.filter((_, i) => i !== index) })}
-                >
-                  {t('add.headerRemove')}
-                </button>
-              </div>
-            ))}
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={() => patch({ headers: [...draft.headers, { name: '', ref: '', value: '' }] })}
-            >
-              {t('add.headerAdd')}
-            </button>
+          <div className={styles.rowsGroup}>
+            <span className={styles.fieldLabel}>{t('add.headerName')}</span>
+            <p className={styles.fieldHint}>{t('add.headerSectionHint')}</p>
+            {draft.headers.map((row, index) => {
+              // The problem names the field it belongs to: a ref problem marks
+              // the ref input, every other one the header-name input.
+              const issue = headerProblems[index]
+              const nameInvalid = issue !== undefined && issue !== 'validation.refPattern'
+              const refInvalid = issue === 'validation.refPattern'
+              return (
+                <div key={index} className={styles.row}>
+                  <input
+                    aria-label={`${t('add.headerName')} ${index + 1}`}
+                    type="text"
+                    value={row.name}
+                    disabled={disabled}
+                    aria-invalid={nameInvalid || undefined}
+                    onChange={(event) => patchHeader(index, { name: event.target.value })}
+                    className={cx(styles.input, styles.rowInput, nameInvalid && styles.inputInvalid)}
+                    placeholder={t('add.headerNamePlaceholder')}
+                  />
+                  <input
+                    aria-label={`${t('add.credentialRef')} ${index + 1}`}
+                    type="text"
+                    value={row.ref}
+                    disabled={disabled}
+                    aria-invalid={refInvalid || undefined}
+                    onChange={(event) => patchHeader(index, { ref: event.target.value })}
+                    className={cx(styles.input, styles.rowInput, refInvalid && styles.inputInvalid)}
+                    placeholder={t('add.credentialRefPlaceholder')}
+                  />
+                  <input
+                    aria-label={`${t('add.secretValueLabel')} ${index + 1}`}
+                    type="password"
+                    autoComplete="new-password"
+                    value={row.value}
+                    disabled={disabled}
+                    placeholder={t('add.secretPlaceholder')}
+                    onChange={(event) => patchHeader(index, { value: event.target.value })}
+                    className={cx(styles.input, styles.rowInput)}
+                  />
+                  <button
+                    type="button"
+                    className={cx(styles.button, styles.buttonOutline)}
+                    disabled={disabled || draft.headers.length <= 1}
+                    onClick={() => patch({ headers: draft.headers.filter((_, i) => i !== index) })}
+                  >
+                    {t('add.headerRemove')}
+                  </button>
+                </div>
+              )
+            })}
+            <div className={styles.row}>
+              <button
+                type="button"
+                className={cx(styles.button, styles.buttonOutline)}
+                disabled={disabled}
+                onClick={() => patch({ headers: [...draft.headers, { name: '', ref: '', value: '' }] })}
+              >
+                {t('add.headerAdd')}
+              </button>
+            </div>
             {headerProblems.some((p) => p !== undefined) && (
-              <ul style={{ margin: '4px 0 0', paddingLeft: 16, fontSize: 12, color: '#c0392b' }}>
+              <ul className={styles.problems}>
                 {headerProblems.map((problem, index) =>
                   problem !== undefined ? <li key={index}>{t(problem)}</li> : null,
                 )}
@@ -579,12 +634,21 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
         </>
       )}
 
-      <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-        <button type="submit" disabled={disabled || invalid}>
-          {saving ? t('state.saving') : t('action.save')}
-        </button>
-        <button type="button" disabled={saving} onClick={props.onClose}>
+      <div className={styles.formActions}>
+        <button
+          type="button"
+          className={cx(styles.button, styles.buttonMd, styles.buttonOutline)}
+          disabled={saving}
+          onClick={props.onClose}
+        >
           {t('action.cancel')}
+        </button>
+        <button
+          type="submit"
+          className={cx(styles.button, styles.buttonMd, styles.buttonPrimary)}
+          disabled={disabled || invalid}
+        >
+          {saving ? t('state.saving') : t('action.save')}
         </button>
       </div>
     </form>

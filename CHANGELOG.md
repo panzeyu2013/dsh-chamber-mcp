@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Settings-page styling aligned with the dsh design system.** The MCP section
+  no longer renders raw controls with inline styles and literal colours: it
+  ships one token-only stylesheet (`src/client/styles.ts`, injected under the
+  official `style[data-plugin-css]` convention) whose values mirror the pinned
+  design system — `ui-primitives` Button/Tag/Pill/Switch geometry, the
+  settings-panel card and editing-surface fills, the official field
+  vocabulary — so the section reads as part of the panel in both themes
+  (closes review finding FE-5; mapping table in `docs/ui-notes.md` §6).
+
+### Fixed
+
+- Credential pills, cards and the form no longer widen the settings column when
+  a header name, credential ref or working directory is long: the pill shrinks
+  and ellipsizes (with `title` fallbacks) and path-like copy wraps.
+- Row-level validation now marks the offending input (error border +
+  `aria-invalid`), not just the problem list under it.
+
 ## [0.0.2] - 2026-09-10
 
 Upstream compatibility release: the plugin was migrated to the **dsh 0.1.5-rc.1**

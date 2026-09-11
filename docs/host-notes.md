@@ -17,10 +17,10 @@ design deviations made and why.
 | `src/schema.ts` | `DocumentSchema` (schemastery) — NEW module beyond the original list |
 | `src/index.ts` | plugin entry (exports exactly `name`/`inject`/`Config`/`apply`) |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index}.spec.ts` | 133 tests / 11 files, all green |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index}.spec.ts` | whole suite 148 tests / 12 files, all green |
 
 Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (84/84, 10 files).
+`node node_modules/vitest/vitest.mjs run` — both fully green (148 tests / 12 files).
 
 ## (a) API signatures that differ from recon docs
 

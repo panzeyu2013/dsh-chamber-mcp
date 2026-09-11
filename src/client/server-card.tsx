@@ -10,14 +10,21 @@
  * dismissed, and the removal confirm and the Clear control carry real
  * pending states. Async continuations never write state after unmount
  * (FE-11): success paths skip their trailing state writes entirely.
+ *
+ * Chrome comes from the shared style seat (`./styles.ts`): the card is the
+ * settings-panel card vocabulary (0.5px hairline + r16 + layer-3 fill), the
+ * transport tag is the Tag pill, the credential tones reuse the Tag palette,
+ * the rows' control is the Switch primitive's geometry over this plugin's own
+ * controlled checkbox, and every action is a `size="sm"` capsule button.
  */
 
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CredentialInfo } from '@deepseek-ai/dsh-credentials/types'
 import { isEnabled, credentialRefsOf, type McpScopeDoc, type ServerDef } from '../shared/model.js'
 import { failureText, type SaveFailure, type SaveOutcome } from './controller.js'
 import { countKey } from './locales.js'
 import type { SectionT } from './section.js'
+import { cx, styles } from './styles.js'
 import type { WorkspaceItem, WorkspaceListStatus } from './workspaces.js'
 
 export interface ServerCardProps {
@@ -38,26 +45,6 @@ export interface ServerCardProps {
   onRemove(name: string): Promise<SaveOutcome>
   onToggle(workspaceId: string, serverName: string, off: boolean): Promise<SaveOutcome>
   onUnsetCredential(ref: string): Promise<SaveOutcome>
-}
-
-const alertStyle: CSSProperties = {
-  margin: '0 0 8px',
-  padding: '6px 10px',
-  borderRadius: 6,
-  background: 'rgba(192,57,43,0.1)',
-  border: '1px solid rgba(192,57,43,0.4)',
-  fontSize: 13,
-  display: 'flex',
-  alignItems: 'center',
-}
-
-const codeLineStyle: CSSProperties = {
-  display: 'block',
-  fontSize: 12,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  marginTop: 6,
 }
 
 /** Badge state of one ref: describe answers authoritatively, absence ≠ unset. */
@@ -193,45 +180,48 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
   }
 
   return (
-    <article
-      style={{ border: '1px solid rgba(127,127,127,0.35)', borderRadius: 8, padding: '10px 12px', marginBottom: 10 }}
-      aria-busy={busy}
-    >
-      <header style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <strong id={`mcp-scope-card-${server.serverName}`} tabIndex={-1}>
+    <article className={styles.card} aria-busy={busy}>
+      <header className={styles.cardHead}>
+        <strong
+          id={`mcp-scope-card-${server.serverName}`}
+          className={cx(styles.cardName, styles.focusRing)}
+          tabIndex={-1}
+        >
           {server.serverName}
         </strong>
-        <span style={{ fontSize: 12, padding: '1px 6px', borderRadius: 10, border: '1px solid rgba(127,127,127,0.45)', color: 'var(--text-2, #555)' }}>
-          {transportLabel}
-        </span>
-        {summaryBits.length > 0 && <span style={{ fontSize: 12, opacity: 0.8 }}>{summaryBits.join(' · ')}</span>}
-        <span style={{ flex: 1 }} />
+        <span className={styles.tag}>{transportLabel}</span>
+        {summaryBits.length > 0 && <span className={styles.cardMeta}>{summaryBits.join(' · ')}</span>}
         {writable && !confirmingRemove && (
-          <>
+          <div className={styles.cardActions}>
             <button
               ref={removeButtonRef}
               type="button"
+              className={cx(styles.button, styles.buttonDanger)}
               onClick={() => setConfirmingRemove(true)}
               disabled={disabled}
-              style={{ marginRight: 0 }}
             >
               {t('server.remove')}
             </button>
-            <button type="button" onClick={props.onEdit} disabled={disabled}>
+            <button
+              type="button"
+              className={cx(styles.button, styles.buttonOutline)}
+              onClick={props.onEdit}
+              disabled={disabled}
+            >
               {t('server.edit')}
             </button>
-          </>
+          </div>
         )}
       </header>
 
       {failure !== null && (
-        <div role="alert" style={alertStyle}>
-          <span style={{ flex: 1 }}>{failureText(t, failure)}</span>
+        <div role="alert" className={styles.noticeError}>
+          <span className={styles.noticeText}>{failureText(t, failure)}</span>
           <button
             type="button"
             aria-label={t('action.dismiss')}
+            className={styles.iconButton}
             onClick={() => setFailure(null)}
-            style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
           >
             ×
           </button>
@@ -239,16 +229,22 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
       )}
 
       {confirmingRemove && (
-        <div style={{ marginTop: 8, padding: 8, borderRadius: 6, background: 'rgba(127,127,127,0.08)' }}>
-          <p style={{ margin: 0 }}>
+        <div className={styles.confirm}>
+          <p className={styles.confirmText}>
             <strong>{t('server.removeConfirmTitle')}</strong> {t('server.removeConfirmBody')}
           </p>
-          <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
-            <button type="button" onClick={() => void handleRemove()} disabled={disabled}>
+          <div className={styles.confirmActions}>
+            <button
+              type="button"
+              className={cx(styles.button, styles.buttonDanger)}
+              onClick={() => void handleRemove()}
+              disabled={disabled}
+            >
               {removing ? t('state.saving') : t('action.confirm')}
             </button>
             <button
               type="button"
+              className={cx(styles.button, styles.buttonOutline)}
               onClick={() => {
                 setFailure(null)
                 setConfirmingRemove(false)
@@ -264,35 +260,45 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
 
       {/* Definition details (UX-04): what the server actually runs / points at. */}
       {commandLine !== '' && (
-        <code style={codeLineStyle} title={commandLine}>
+        <code className={styles.code} title={commandLine}>
           {commandLine}
         </code>
       )}
       {server.transport === 'streamable-http' && (
-        <code style={codeLineStyle} title={server.url}>
+        <code className={styles.code} title={server.url}>
           {server.url}
         </code>
       )}
       {server.transport === 'stdio' && server.cwd !== undefined && server.cwd !== '' && (
-        <p style={{ margin: '2px 0 0', fontSize: 12, opacity: 0.7 }}>
-          {t('server.cwd', { path: server.cwd })}
-        </p>
+        <p className={styles.hint}>{t('server.cwd', { path: server.cwd })}</p>
       )}
 
       {refs.length > 0 && (
-        <ul style={{ listStyle: 'none', margin: '8px 0 0', padding: 0, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        <ul className={styles.badges}>
           {badgeRowsOf(server).map((row) => {
             const state = badgeState(credentials, row.ref)
             const view = credentials[row.ref]
             const clearable = writable && state === 'configured' && view?.writable !== false
             const clearPending = clearingRef === row.ref
             return (
-              <li key={row.key} style={{ fontSize: 12, border: '1px solid rgba(127,127,127,0.3)', borderRadius: 6, padding: '2px 8px', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <code>{row.label}</code>
-                {row.ref !== row.label && (
-                  <code style={{ opacity: 0.6, fontSize: 11 }}>{row.ref}</code>
+              <li
+                key={row.key}
+                className={cx(
+                  styles.badge,
+                  state === 'configured' ? styles.badgeOk : state === 'unset' ? styles.badgeWarn : undefined,
                 )}
-                <span style={{ opacity: 0.85 }}>
+              >
+                {/* `title` is the fallback for the text the pill truncates
+                    when a long header name or ref has to fit the card. */}
+                <code className={styles.badgeKey} title={row.label}>
+                  {row.label}
+                </code>
+                {row.ref !== row.label && (
+                  <code className={styles.badgeRef} title={row.ref}>
+                    {row.ref}
+                  </code>
+                )}
+                <span>
                   {state === 'configured'
                     ? t('secret.configured')
                     : state === 'unset'
@@ -302,7 +308,7 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
                 {clearable && (
                   <button
                     type="button"
-                    style={{ fontSize: 12, padding: '0 4px' }}
+                    className={styles.linkButton}
                     title={t('secret.clearHint')}
                     disabled={disabled}
                     onClick={() => void handleClear(row.ref)}
@@ -316,43 +322,44 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
         </ul>
       )}
 
-      <div style={{ marginTop: 8 }}>
-        <p style={{ margin: '0 0 4px', fontSize: 12, opacity: 0.75 }}>{t('server.defaultOn')}</p>
-        {workspaceStatus === 'loading' && (
-          <p style={{ margin: 0, fontSize: 12, opacity: 0.65 }}>{t('workspaces.loading')}</p>
-        )}
-        {workspaceStatus === 'error' && (
-          <p style={{ margin: 0, fontSize: 12, opacity: 0.65 }}>{t('workspaces.error')}</p>
-        )}
-        {rowsReady && workspaces.length === 0 && (
-          <p style={{ margin: 0, fontSize: 12, opacity: 0.65 }}>{t('workspaces.empty')}</p>
-        )}
+      <div className={styles.wsBlock}>
+        <p className={styles.hint}>{t('server.defaultOn')}</p>
+        {workspaceStatus === 'loading' && <p className={styles.hint}>{t('workspaces.loading')}</p>}
+        {workspaceStatus === 'error' && <p className={styles.hint}>{t('workspaces.error')}</p>}
+        {rowsReady && workspaces.length === 0 && <p className={styles.hint}>{t('workspaces.empty')}</p>}
         {rowsReady && workspaces.length > 0 && (
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+          <ul className={styles.wsList}>
             {workspaces.map((ws) => {
               const off = !isEnabled(doc.overrides, ws.workspaceId, server.serverName)
               const pending = pendingWs === ws.workspaceId
+              const id = `mcp-scope-${server.serverName}-${ws.workspaceId}`
               return (
-                <li key={ws.workspaceId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '1px 0' }}>
-                  <input
-                    id={`mcp-scope-${server.serverName}-${ws.workspaceId}`}
-                    type="checkbox"
-                    role="switch"
-                    checked={!off}
-                    disabled={disabled || pending}
-                    onChange={(event) => void handleToggle(ws.workspaceId, event.target.checked)}
-                  />
-                  <label htmlFor={`mcp-scope-${server.serverName}-${ws.workspaceId}`} style={{ flex: 1, fontSize: 13 }}>
+                <li key={ws.workspaceId} className={styles.wsRow}>
+                  <span className={styles.switchBox}>
+                    <input
+                      id={id}
+                      type="checkbox"
+                      role="switch"
+                      className={styles.switchInput}
+                      checked={!off}
+                      disabled={disabled || pending}
+                      onChange={(event) => void handleToggle(ws.workspaceId, event.target.checked)}
+                    />
+                    <span className={styles.switch} aria-hidden="true">
+                      <span className={styles.switchThumb} />
+                    </span>
+                  </span>
+                  <label htmlFor={id} className={styles.wsLabel}>
                     {ws.title}
                   </label>
-                  <span style={{ fontSize: 12, opacity: 0.7 }}>{off ? t('row.off') : t('row.on')}</span>
+                  <span className={styles.wsState}>{off ? t('row.off') : t('row.on')}</span>
                 </li>
               )
             })}
           </ul>
         )}
         {rowsReady && workspaces.length > 0 && (
-          <p style={{ margin: '4px 0 0', fontSize: 12, opacity: 0.6 }}>{t('server.newWorkspaceDefault')}</p>
+          <p className={styles.hint}>{t('server.newWorkspaceDefault')}</p>
         )}
       </div>
     </article>

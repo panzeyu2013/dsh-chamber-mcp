@@ -32,6 +32,7 @@ import {
   type RemoteResultLike,
 } from './controller.js'
 import { McpScopeSection } from './section.js'
+import { mountStyles } from './styles.js'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -116,6 +117,12 @@ export const inject = ['slots', 'locale', 'remote', 'remote.credentials', 'setti
  * local structural patch is needed.
  */
 export function apply(ctx: Context): void {
+  // (0) stylesheet: one <style data-plugin-css> tag appended to the document
+  // (the official bundles' own convention — the built client may require
+  // nothing but react, so the sheet ships as a string). Fiber-owned, so an
+  // unload removes the tag it created.
+  ctx.effect(() => mountStyles(), 'mcp-scope: styles')
+
   // (a) dictionaries — one registration, both built-in locales.
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'mcp-scope: dictionaries')
   const t = ctx.locale.bind(NS)
