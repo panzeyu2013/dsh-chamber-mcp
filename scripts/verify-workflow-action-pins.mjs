@@ -3,13 +3,16 @@
  * Workflow action-pin & structural verification (chamber norm, ported).
  *
  * - Every external action `uses:` must be EITHER a full 40-hex commit SHA
- *   (with a `# vX.Y.Z` comment) OR listed in the checked-in allowlist below.
- *   The allowlist exists only because this repository is still developed
- *   without network access to GitHub (SHA resolution needs `git ls-remote`);
- *   replace it with full SHAs the moment the repo is public — the file header
- *   comment in each workflow must then be updated too. Upstream dsh itself
- *   pins moving majors; chamber pins SHAs — this script enforces chamber's
- *   rule once SHAs are resolvable and keeps drift visible until then.
+ *   (with a `# vX.Y.Z` comment) OR listed in the allowlist below. All actions
+ *   are SHA-pinned as of 2026-09-12 (`actions/checkout@v5.1.0`,
+ *   `actions/setup-node@v5.0.0`, `actions/upload-artifact@v6.0.0`,
+ *   `softprops/action-gh-release@v3.0.3`), so the allowlist is empty and exists
+ *   only as the mechanism for a temporary, explicitly justified exception.
+ *   Pins are bumped by hand (Dependabot is disabled by maintainer choice):
+ *   resolve the tag with `git ls-remote <repo> refs/tags/<tag>^{}` or the GitHub
+ *   API, then update BOTH workflows in one commit and re-run this script. Upstream
+ *   dsh pivots moving majors; chamber pins SHAs — this script enforces chamber's
+ *   rule and keeps drift visible.
  * - Structural release invariants (chamber release.yml postmortems):
  *   release.yml carries concurrency.group release-publish with
  *   cancel-in-progress:false; every GitHub-Release mutation step appears
@@ -27,13 +30,10 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const workflowsDir = join(root, '.github', 'workflows')
 
-/** Moving-major exceptions until SHA resolution is possible (see header). */
-const ALLOWED_MAJORS = new Map([
-  ['actions/checkout@v5', { sha: null, note: 'TODO: pin 40-hex SHA once the repo is public' }],
-  ['actions/setup-node@v5', { sha: null, note: 'TODO: pin 40-hex SHA once the repo is public' }],
-  ['actions/upload-artifact@v6', { sha: null, note: 'TODO: pin 40-hex SHA once the repo is public' }],
-  ['softprops/action-gh-release@v3', { sha: null, note: 'TODO: pin 40-hex SHA once the repo is public' }],
-])
+/** Moving-major exceptions. EMPTY since 2026-09-12: every action is pinned to a
+ * 40-hex commit SHA now that the repository (and GitHub API) is reachable. Keep
+ * the mechanism for a temporary, explicitly justified exception. */
+const ALLOWED_MAJORS = new Map()
 
 const shaPattern = /^[0-9a-f]{40}$/
 const usesPattern = /uses:\s*(.+?)(\s+#.*)?$/

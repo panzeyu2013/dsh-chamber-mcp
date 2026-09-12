@@ -9,7 +9,7 @@
  * Fails loudly when the released version has no section, so a tag can never
  * ship without changelog notes. `Unreleased` is ignored.
  */
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -42,22 +42,29 @@ function headingOf(line) {
 let capture = false
 let collected = []
 let sectionDate
+let inFence = false
 for (const line of lines) {
-  const heading = headingOf(line)
-  if (heading !== undefined && heading.level <= 2) {
-    if (capture) break // next top-level section ends the capture
-    if (heading.level === 2 && heading.key === version) {
-      capture = true
-      sectionDate = heading.date
-      continue // skip the header line itself
+  // A fenced code block may contain a line that looks like a heading; the
+  // capture boundaries must ignore everything inside a fence (MECH-06a).
+  const fenceDelimiter = /^\s*(?:```|~~~)/.test(line)
+  if (!inFence) {
+    const heading = headingOf(line)
+    if (heading !== undefined && heading.level <= 2) {
+      if (capture) break // next top-level section ends the capture
+      if (heading.level === 2 && heading.key === version) {
+        capture = true
+        sectionDate = heading.date
+        continue // skip the header line itself
+      }
     }
   }
   if (capture) {
     // Trailing HTML comments (e.g. the comparison-link footer) are file
-    // scaffolding, not release notes.
-    if (line.trimStart().startsWith('<!--')) break
+    // scaffolding, not release notes — unless the marker sits inside a fence.
+    if (!inFence && line.trimStart().startsWith('<!--')) break
     collected.push(line)
   }
+  if (fenceDelimiter) inFence = !inFence
 }
 
 if (!capture) {
@@ -78,6 +85,7 @@ if (sectionDate === undefined || sectionDate === '') {
 body = `## ${version}${sectionDate !== undefined ? ` - ${sectionDate}` : ''}\n\n${body}\n`
 
 if (outFile !== undefined) {
+  mkdirSync(dirname(outFile), { recursive: true })
   writeFileSync(outFile, body)
   console.log(`release notes for ${version} written to ${outFile}`)
 } else {

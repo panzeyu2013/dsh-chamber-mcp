@@ -26,13 +26,16 @@ pnpm on PATH are toolchain requirements for building this repo and for the dsh
 CLI driving pnpm — not requirements of the installed plugin itself.
 
 Releases ship as a GitHub Release whose asset is the packed tarball
-(`npm publish` is temporarily disabled). Install per instance:
+(`npm publish` is temporarily disabled). Pick the asset from the Releases page —
+the newest published release is **v0.0.1**; `0.0.2` is prepared on `main` but not
+tagged yet. Install per instance:
 
 ```sh
 # into the web profile of a specific dsh instance (per-instance management)
 dsh plugin --profile web add \
-  https://github.com/<owner>/dsh-chamber-mcp/releases/download/v0.0.1/dsh-chamber-mcp-0.0.1.tgz
-# or, after building locally:  add file:./dsh-chamber-mcp-0.0.1.tgz
+  https://github.com/<owner>/dsh-chamber-mcp/releases/download/v<version>/dsh-chamber-mcp-<version>.tgz
+# or build locally first:  npm run pack:tgz
+#   dsh plugin --profile web add file:./.smoke/dsh-chamber-mcp-<version>.tgz
 # restart the instance (the profile bundle list changed)
 ```
 
@@ -122,6 +125,29 @@ from `$DSH_HOME/settings.yaml` and the related refs from
 `$DSH_HOME/.credentials.yaml` (manual, documented; values are write-only so the
 UI cannot read them back).
 
+## Relationship to the official dsh MCP client
+
+dsh already ships `@deepseek-ai/dsh-mcp-client`, and this plugin deliberately
+mirrors its bridge contract. It exists because the official client covers only
+part of what "manage MCP servers for this dsh" means:
+
+| | official `dsh-mcp-client` | this plugin |
+|---|---|---|
+| Where servers are configured | the Cordis composition (`cordis.patch.yml`, `dsh web --patch`) — one loader row per server | the dsh **Settings UI**, stored in the `mcp-scope` settings namespace |
+| Secret handling | literals (or `!!js process.env.X`) in that config file | **credential refs**; values live in the credentials domain and never ride the settings document or any API response |
+| Who sees the tools | whatever context the row is composed in — host-level rows land in the **global layer**, so every agent/session sees them | **only the tool scopes of enabled workspaces**; disabling a workspace removes the server's tools from that workspace's model-visible set |
+| Enable/disable, add/remove | edit the config file and reload | per-workspace switches + add/remove in the UI, plus live hand-editing of the document |
+| MCP capabilities bridged | tools only | tools only (same) |
+| Naming / env scrub / reconnect / generation swap | `mcp__<serverName>__<tool>`, scrubbed child env, backoff reconnect, `tools/list_changed` re-sync | the same contract, verified against it |
+| Image results | bridged to attachments when the model accepts images | **degraded to text placeholders** — a deliberate scope cut (see `docs/host-notes.md`) |
+
+Stock dsh has no MCP management surface to reuse: the Plugins → *Plugin
+configuration* tab renders a card only for a settings namespace a plugin
+registers (the official client registers none), the plugin list is read-only, and
+`dsh-workspace` is a project-grouping registry that registers no tools — so no
+upstream mechanism maps a workspace to a tool set. Evidence:
+`docs/recon/mcp-client-official.md`.
+
 ## Compatibility
 
 - Target/verified: dsh **0.1.5-rc.1 / 0.1.5-rc.2** (npm `latest`) is the
@@ -145,7 +171,7 @@ UI cannot read them back).
 ```sh
 npm install            # dev deps (all @deepseek-ai/* pinned to one dsh generation)
 npm run typecheck      # src + tests
-npm test               # vitest suite (148 tests)
+npm test               # vitest suite (151 tests)
 npm run check          # full gate: typecheck + tests + build + package verify
 npm run verify:package # pack → contents whitelist → consumer d.ts check → determinism
 npm run pack:tgz       # build + .smoke/dsh-chamber-mcp-<ver>.tgz
@@ -158,9 +184,11 @@ Release whose asset is the packed `dsh-chamber-mcp-<version>.tgz`; npm publish
 is temporarily disabled). See `docs/RELEASE.md` for the release checklist and
 smoke-runner requirements.
 
-Docs: `docs/design.md` (architecture), `docs/recon/` (evidence reports),
-`docs/milestones/M0.md` + `M1.md` (smoke evidence), `docs/host-notes.md` /
-`docs/ui-notes.md` (API findings & deviations), `docs/review/` (round-2
-six-axis review reports + `SUMMARY.md` disposition matrix). Smoke drivers
-under `scripts/smoke/` boot scratch 0.1.2-rc.1 instances and drive the real
-RPC surface.
+Docs: `docs/design.md` (architecture), `docs/acceptance.md` (requirement/cut
+matrix), `docs/recon/` (evidence reports, framed as of reconnaissance time),
+`docs/milestones/M0.md` + `M1.md` (smoke evidence + raw transcripts),
+`docs/host-notes.md` / `docs/ui-notes.md` (API findings & intentional
+deviations), `docs/review/` (round-1, `round2/`, `prerelease/` and
+`deploy-issue/` audits — historical — plus `SUMMARY.md` and **`STATUS.md`**, the
+consolidated disposition at HEAD). Smoke drivers under `scripts/smoke/` boot
+scratch 0.1.2-rc.1 instances and drive the real RPC surface.

@@ -17,6 +17,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   settings-panel card and editing-surface fills, the official field
   vocabulary — so the section reads as part of the panel in both themes
   (closes review finding FE-5; mapping table in `docs/ui-notes.md` §6).
+- **Workflow actions are pinned to commit SHAs.** Every `uses:` in `ci.yml` and
+  `release.yml` now names a 40-hex commit (`actions/checkout@v5.1.0`,
+  `actions/setup-node@v5.0.0`, `actions/upload-artifact@v6.0.0`,
+  `softprops/action-gh-release@v3.0.3`) instead of a moving major, and the
+  temporary allowlist in `scripts/verify-workflow-action-pins.mjs` is empty —
+  the condition that script documented ("replace it once SHA resolution is
+  possible") is met. Pins are bumped by hand (Dependabot stays disabled).
+- **Documentation consolidation.** Every audit and evidence page now carries an
+  as-of/status frame, and `docs/review/STATUS.md` records the consolidated
+  disposition plus the claims an earlier audit got wrong (a `dependabot.yml` that
+  never existed, stale test counts, outdated recon API shapes). Release and
+  install examples are version-generic instead of pinned to a past release, and
+  `README.md` gains a *Relationship to the official dsh MCP client* section.
+  `.github/workflows/release.yml` drops `--legacy-peer-deps`, so the release gate
+  resolves exactly like CI.
 
 ### Added
 
@@ -39,6 +54,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and ellipsizes (with `title` fallbacks) and path-like copy wraps.
 - Row-level validation now marks the offending input (error border +
   `aria-invalid`), not just the problem list under it.
+- **The live-smoke driver works end to end again.** `scripts/smoke/m0.mjs`
+  referenced an undeclared `PKG_NAME` (the M0 driver died at startup) and now
+  derives name/version from `package.json`; `scripts/smoke/m1.mjs` recorded the
+  plugin install as `exit=undefined` because it read `.status` off an
+  `execFileSync` stdout string — it now uses `spawnSync`, records a real exit
+  status, and fails the run when it is non-zero; the stdio fixture
+  (`scripts/smoke/fixture/echo-server.mjs`) no longer hard-codes the authoring
+  box's absolute SDK path, so `npm run test:smoke` is runnable outside that one
+  checkout.
+- `scripts/release-notes.mjs` tracks fenced code blocks, so a `## ` line inside a
+  fence can no longer truncate the composed release body, and `--out` creates
+  missing parent directories instead of failing with a raw ENOENT.
+
+### Security
+
+- **Smoke transcripts can no longer capture a dsh launch token.**
+  `scripts/smoke/instance.mjs` masks `token=…` where child output is echoed or
+  logged (`dsh web` prints a fresh per-process token on every boot, and that
+  token authenticates the instance's whole Host API and WebSocket surface). The
+  two values that had reached the repository are fully purged: the committed
+  transcript is redacted, the 23 gitignored `.smoke/**/*.log` transcripts were
+  scrubbed, and history was rewritten so no commit or object in this clone still
+  contains them, and the rewritten history was force-pushed (`main` bdbb6b3 →
+  fb5255d, tag `v0.0.1` 4e1962a → 8e32806) so the public remote serves the purged
+  history — verified from a fresh clone. See `docs/review/STATUS.md`
+  §"Launch-token purge".
 
 ## [0.0.2] - 2026-09-10
 
@@ -231,5 +272,5 @@ injected into the tool scopes of enabled workspaces only.
 Release notes are composed from the section of the released version, so each
 release must add a dated section here before tagging (scripts/release-notes.mjs).
 Once a public repository URL exists, append comparison links, e.g.:
-[0.1.0]: https://github.com/<owner>/dsh-chamber-mcp/compare/v0.0.0...v0.1.0
+[<next-version>]: https://github.com/<owner>/dsh-chamber-mcp/compare/v<previous>...v<next-version>
 -->

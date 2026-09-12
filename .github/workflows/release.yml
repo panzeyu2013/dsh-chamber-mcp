@@ -6,9 +6,9 @@ name: Release
 #
 # ⚠ npm publishing is TEMPORARILY DISABLED — releases currently ship the
 # packed `dsh-chamber-mcp-<version>.tgz` as the GitHub Release asset; users
-# install it directly, e.g.:
+# install it directly, e.g. (substitute the release's own <version>):
 #   dsh plugin --profile web add \
-#     https://github.com/<owner>/dsh-chamber-mcp/releases/download/v0.0.1/dsh-chamber-mcp-0.0.1.tgz
+#     https://github.com/<owner>/dsh-chamber-mcp/releases/download/v<version>/dsh-chamber-mcp-<version>.tgz
 #
 # To re-enable npm publishing later: uncomment the "Publish to npm" step
 # below, add the repository secret NPM_TOKEN, and restore `id-token: write`
@@ -58,21 +58,23 @@ jobs:
     permissions:
       contents: write # create the GitHub Release + attach assets
     steps:
-      - uses: actions/checkout@v5 # TODO: pin 40-hex SHA once the repo is public
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Verify workflow action pins & release structure
         run: node scripts/verify-workflow-action-pins.mjs
 
       - name: Setup Node 24
-        uses: actions/setup-node@v5 # TODO: pin 40-hex SHA once the repo is public
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
           cache: npm
 
       - name: Install dependencies
-        # --legacy-peer-deps: see ci.yml for the rationale (devDep matrix
-        # spans dsh version lines; runtime peers resolve from the dsh install).
-        run: npm ci --no-audit --no-fund --legacy-peer-deps
+        # No --legacy-peer-deps: after the 0.1.5 migration every @deepseek-ai
+        # devDep is pinned to the SAME generation, so npm resolves the peer graph
+        # unaided — the release gate must resolve exactly like the CI gate in
+        # ci.yml (see its comment for the full rationale).
+        run: npm ci --no-audit --no-fund
 
       - name: Assert lockfile not rewritten
         run: git diff --exit-code -- package-lock.json
@@ -136,7 +138,7 @@ jobs:
 
       - name: Create GitHub Release with tgz asset
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true') }}
-        uses: softprops/action-gh-release@v3 # TODO: pin 40-hex SHA once the repo is public
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           name: dsh-chamber-mcp v${{ env.PKG_VERSION }}
           body_path: .smoke/release-notes.md
@@ -146,7 +148,7 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Attach packed tarball artifact
-        uses: actions/upload-artifact@v6 # TODO: pin 40-hex SHA once the repo is public
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: dsh-chamber-mcp-tgz
           path: .smoke/verify/dist/*.tgz*

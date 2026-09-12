@@ -23,7 +23,7 @@ jobs:
       matrix:
         node: ['24']
     steps:
-      - uses: actions/checkout@v5 # TODO: pin 40-hex SHA once the repo is public
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Verify workflow action pins & release structure
         run: node scripts/verify-workflow-action-pins.mjs
@@ -35,7 +35,7 @@ jobs:
         # ("No jobs were run", zero-job runs, no logs). setup-node's npm
         # cache already caches the default ~/.npm cache dir, so no override
         # is needed.
-        uses: actions/setup-node@v5 # TODO: pin 40-hex SHA once the repo is public
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -70,7 +70,7 @@ jobs:
         run: npm run verify:package
 
       - name: Upload packed tarball
-        uses: actions/upload-artifact@v6 # TODO: pin 40-hex SHA once the repo is public
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: dsh-chamber-mcp-${{ matrix.node }}-${{ github.sha }}
           path: .smoke/verify/dist/*.tgz
@@ -86,10 +86,10 @@ jobs:
     runs-on: [self-hosted, dsh-smoke]
     if: github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v5 # TODO: pin 40-hex SHA once the repo is public
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Setup Node 24
-        uses: actions/setup-node@v5 # TODO: pin 40-hex SHA once the repo is public
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
           cache: npm
