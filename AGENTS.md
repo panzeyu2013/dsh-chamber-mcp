@@ -2,8 +2,11 @@
 
 `dsh-chamber-mcp` is a standalone third-party dsh plugin (settings-namespace MCP
 servers with per-workspace per-agent tool-scope injection). Releases: GitHub Releases carrying the packed tgz + `.sha256` (npm publish
-temporarily disabled). Current release: v0.0.2 of `dsh-chamber-mcp` (internal
-settings namespace/loader id: `mcp-scope`).
+temporarily disabled). **Published release: v0.0.1**; the working tree is the
+**0.0.2** line — version set and a dated CHANGELOG section are in place, but no
+`v0.0.2` tag has been pushed yet, so `v0.0.1` remains the newest tag and Release
+(verify with `git ls-remote --tags origin` before quoting a released version).
+Internal settings namespace/loader id: `mcp-scope`.
 
 Upstream generation: devDependencies pin the **dsh 0.1.5-rc.2** package set —
 the generation a `dsh@0.1.5-rc.1` install actually resolves to, and now the
@@ -23,8 +26,14 @@ across both and both are live-verified. Migrating the pin: `docs/RELEASE.md`.
   entry import → determinism), `release-notes.mjs` (CHANGELOG section → body),
   `verify-workflow-action-pins.mjs` (chamber norm), `smoke/` (live M0/M1
   drivers against a chamber-anchored dsh instance).
-- `docs/` — design, recon evidence, milestones (M0/M1 incl. live R3 capture),
-  review rounds, RELEASE runbook, README index.
+- `docs/` — `design.md` (architecture), `acceptance.md` (requirement/cut
+  matrix), `recon/` (evidence reports), `milestones/` (M0/M1 + raw transcripts
+  incl. the live R3 capture), `host-notes.md` / `ui-notes.md` (API findings &
+  intentional deviations), `review/` (round-1, `round2/`, `prerelease/`,
+  `deploy-issue/` audits — historical, point-in-time — plus `SUMMARY.md` and
+  `STATUS.md`, the consolidated disposition at HEAD), `RELEASE.md` runbook,
+  `README.md` index. Evidence pages may name authoring-machine paths
+  (`/root/...`, `.smoke/`); that is recorded policy, not repo content.
 
 ## Invariants (do not break)
 
@@ -40,6 +49,8 @@ across both and both are live-verified. Migrating the pin: `docs/RELEASE.md`.
   values with CR/LF/NUL are rejected at the transport.
 - Version identity: package.json == package-lock `packages[""]` == the dated
   CHANGELOG section == the release tag. No release without a changelog entry.
+  (At HEAD the first three hold for `0.0.2`; the `v0.0.2` tag is the outstanding
+  step — do not describe it as released until it exists on the remote.)
 
 ## What must pass before tagging
 

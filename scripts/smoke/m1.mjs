@@ -2,7 +2,7 @@
 // capture the model-facing tools[] each request carries (mock LLM).
 // Evidence -> llm-requests.jsonl lines: workspace label is NOT on the wire, so we
 // prompt sequentially and record order: first prompt = on-workspace, second = off-workspace.
-import { spawn, execFileSync } from 'node:child_process'
+import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, existsSync, rmSync, writeFileSync, appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -45,9 +45,14 @@ try {
   // 1) install the plugin the user way, then reboot (first boot initializes the profile)
   await inst.boot()
   await inst.stop()
-  const add = execFileSync('/root/.nvm/versions/node/v22.22.3/bin/dsh',
+  // spawnSync (not execFileSync) so the install really reports an exit status:
+  // execFileSync resolves to the child's stdout, and `.status` on that string is
+  // undefined — the transcript used to record "exit=undefined" for a step whose
+  // success the install evidence depends on.
+  const add = spawnSync('/root/.nvm/versions/node/v22.22.3/bin/dsh',
     ['plugin', '--profile', 'web', 'add', `file:${TGZ}`],
     { env: { ...process.env, PATH: '/root/.nvm/versions/node/v22.22.3/bin:' + (process.env.PATH ?? ''), DSH_HOME: HOME, HOME: join(SMOKE, 'homedir') }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  if (add.status !== 0) throw new Error(`dsh plugin --profile web add failed (status ${add.status}): ${(add.stderr ?? '').trim()}`)
   say('dsh plugin add exit=' + add.status)
   const bundles = JSON.parse(readFileSync(join(HOME, 'profiles', 'web', 'package.json'), 'utf8')).dsh.profile.bundles
   say('bundles: ' + bundles.join(', '))

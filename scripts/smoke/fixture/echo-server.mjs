@@ -6,14 +6,22 @@
 // next to this script (cwd-independent), including whether the credential env landed.
 import { appendFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-// NOTE: absolute path on purpose — the SDK's exports map re-maps the bare
-// subpath (dist/esm/dist/esm), while a direct file URL resolves correctly.
-import { McpServer } from '/root/projects/dsh-mcp-scope/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js'
-import { StdioServerTransport } from '/root/projects/dsh-mcp-scope/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+const HERE = dirname(fileURLToPath(import.meta.url))
+const REPO = join(HERE, '..', '..', '..')
+
+// NOTE: the SDK is imported as a direct FILE URL on purpose — its exports map
+// re-maps the bare subpath (dist/esm/dist/esm), while a direct file URL resolves
+// correctly. The path is computed from this script's own location so the fixture
+// works from any checkout directory (it used to hard-code the authoring box's
+// absolute `/root/projects/...` path).
+const sdkFile = (p) => pathToFileURL(join(REPO, 'node_modules', '@modelcontextprotocol', 'sdk', 'dist', 'esm', p)).href
+const { McpServer } = await import(sdkFile('server/mcp.js'))
+const { StdioServerTransport } = await import(sdkFile('server/stdio.js'))
 
 // Marker next to the fixture would dirty a tracked dir; write into .smoke/logs instead.
-const MARKER = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '.smoke', 'logs', 'fixture-events.log')
+const MARKER = join(REPO, '.smoke', 'logs', 'fixture-events.log')
 const mark = (event, extra = {}) => {
   try {
     appendFileSync(MARKER, JSON.stringify({ ts: Date.now(), event, tokenPresent: (process.env.MCP_SCOPE_TEST_TOKEN ?? '') !== '', ...extra }) + '\n')

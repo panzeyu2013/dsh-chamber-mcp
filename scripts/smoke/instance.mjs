@@ -19,6 +19,22 @@ export const NODE = process.env.DSH_SMOKE_NODE ?? process.execPath
 
 export function log(...parts) { console.log(new Date().toISOString().slice(11, 19), ...parts) }
 
+/**
+ * Mask launch-token values in anything the driver echoes or writes.
+ *
+ * `dsh web` prints its startup URL carrying a FRESH process token on every
+ * boot, and this driver forwards child output verbatim. Unmasked, every smoke
+ * run commits a live GUI credential (it authenticates the instance's whole
+ * Host API and WebSocket surface) into the evidence transcripts. The raw chunk
+ * still reaches the URL parser below — only the transcript is masked.
+ *
+ * @param text - child output about to be echoed or written to an evidence log.
+ * @returns the same text with every `token=<value>` replaced by `token=[redacted]`.
+ */
+export function maskSecrets(text) {
+  return String(text).replace(/([?&\s]|^)token=[A-Za-z0-9._~-]+/gim, '$1token=[redacted]')
+}
+
 export class Instance {
   constructor({ home, port, label = 'smoke' }) {
     this.home = home
@@ -47,8 +63,8 @@ export class Instance {
       env, stdio: ['ignore', 'pipe', 'pipe'],
     })
     let stdout = ''
-    this.child.stdout.on('data', (d) => { stdout += d; process.stdout.write(`[${this.label}:out] ${d}`) })
-    this.child.stderr.on('data', (d) => process.stdout.write(`[${this.label}:err] ${d}`))
+    this.child.stdout.on('data', (d) => { stdout += d; process.stdout.write(`[${this.label}:out] ${maskSecrets(d)}`) })
+    this.child.stderr.on('data', (d) => process.stdout.write(`[${this.label}:err] ${maskSecrets(d)}`))
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
       if (this.child.exitCode !== null) throw new Error(`instance ${this.label} exited early (${this.child.exitCode})`)

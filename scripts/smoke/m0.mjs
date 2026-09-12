@@ -9,7 +9,9 @@ import { Instance, SMOKE, ROOT, NODE, log } from './instance.mjs'
 
 const PORT = 32131
 const HOME = join(SMOKE, 'm0-home')
-const PKG_VERSION = JSON.parse(readFileSync(join(ROOT,'package.json'),'utf8')).version
+const PKG_META = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+const PKG_NAME = PKG_META.name
+const PKG_VERSION = PKG_META.version
 const TGZ = join(SMOKE, `${PKG_NAME}-${PKG_VERSION}.tgz`)
 // Self-contained: pack the plugin tarball when it is not present yet (npm
 // cache redirected into .smoke so a read-only HOME cannot break the pack).
