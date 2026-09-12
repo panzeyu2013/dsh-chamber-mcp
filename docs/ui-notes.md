@@ -1,10 +1,17 @@
 # Client-UI implementation notes (dsh-chamber-mcp browser half)
 
+> **As of 2026-09-12 (HEAD, package 0.0.2, suite 151/12).** Written during
+> implementation against the **0.1.2-rc.1** runtime; the pinned devDependency
+> generation is now **0.1.5-rc.2** (the client half was re-pointed at the 0.1.5
+> client contracts — see CHANGELOG 0.0.2). Deviations recorded below were
+> re-checked against the current `src/client/` where noted.
+
 Author: client-UI subagent. Companion to `docs/design.md` §5 and
-`docs/recon/ui-contracts.md`. Compiled against the repo's installed
+`docs/recon/ui-contracts.md`. Originally compiled against the repo's installed
 0.1.2-rc.1/0.1.1-rc.2 dev tree plus the gateway anchor install
 (`/root/.dsh-chamber/gateway/dsh-anchor/node_modules/@deepseek-ai`) where the
-repo tree does not ship the runtime packages.
+repo tree did not ship the runtime packages; at HEAD the repo tree installs the
+whole pinned `@deepseek-ai/*` 0.1.5-rc.2 set.
 
 ## 1. Files created (this half)
 
@@ -26,8 +33,8 @@ Also edited (build-gate fixes, see §4): `tsconfig.json` (added `DOM` lib),
 ## 2. Test results
 
 `node node_modules/vitest/vitest.mjs run` → **client suites: locales (4),
-controller (44), styles (8) + jsdom section-render flows (10)** (the repo-wide
-suite is 146 tests / 12 files — see README):
+controller (44), styles (10) + jsdom section-render flows (10)** (the repo-wide
+suite is 151 tests / 12 files — see README):
 - `styles.spec.tsx`: the style-token gate of §6.4 (token allowlist, no literal
   colours, 0.5px hairlines, full-round pairing, class/CSS coverage, tag mount)
   plus render checks that the card and the form consume the class map.
@@ -105,21 +112,24 @@ pre-Remote world. On the installed 0.1.2-rc.1 runtime:
   folds the Typert `RemoteResult` union (`{ok:true,value} | {ok:false,error}`)
   into thrown errors (remote failures never throw on their own). The local
   `McpRemoteWire` interface in `src/client/index.ts` re-states that surface
-  because the repo dev tree does not install `dsh-api-gateway` /
-  `dsh-api-settings-controller` (their d.ts imports are unresolvable there,
-  `skipLibCheck` collapses `ctx.remote` to `any`); anchor d.ts are
-  authoritative for the runtime shape.
+  because `@deepseek-ai/dsh-api-settings-controller` (which generates the
+  settings/credentials remote namespaces) is still absent from the dev tree, so
+  those d.ts imports are unresolvable there and `skipLibCheck` collapses
+  `ctx.remote`; the anchor's generated d.ts remain authoritative for the runtime
+  shape. (`@deepseek-ai/dsh-api-gateway`, named in the original rationale, **is**
+  present in `node_modules` at HEAD as a transitive dependency — that half of the
+  reason no longer holds.)
 
-### 3.4 `ctx.effect` typing is lost in the npm d.ts tree (relative augmentation)
-cordis 4.0.2 augments its own `Context` with `effect` via a RELATIVE module
-augmentation (`declare module './context.ts'` in `fiber.d.ts`). Against the
-shipped d.ts-only package that specifier resolves to no file under NodeNext,
-so the merge silently never applies for consumers — `ctx.effect` errors with
-"did you mean the static member". Cross-package absolute augmentations
-(`ctx.locale`, `ctx.settingsScope`, `ctx.slots`, `ctx.remote`) merge fine.
-Runtime is unaffected (effect is mixed onto the proxied context). Fix: one
-localized structural `FiberAwareContext` intersection in `src/client/index.ts`
-(commented), nothing else touches it.
+### 3.4 `ctx.effect` typing — RESOLVED (no local patch remains)
+cordis augments its own `Context` with `effect` via a RELATIVE module
+augmentation (`declare module './context.ts'` in `fiber.d.ts`), which against a
+shipped d.ts-only package resolves to no file under NodeNext and silently never
+merges. The original mitigation was a localized structural `FiberAwareContext`
+intersection in `src/client/index.ts`; the 0.1.5 client-contract re-point made
+that unnecessary, and **that symbol no longer exists anywhere in `src/`** —
+`src/client/index.ts` now records that no local structural patch is needed and
+calls `ctx.effect(...)` directly. Runtime was never affected (effect is mixed
+onto the proxied context).
 
 ### 3.5 Settings path-op contract (mutate)
 `SettingsPathOpView = {op:'set', path: string[], value: JsonValue} |
@@ -135,12 +145,15 @@ recovery re-read, and the controller additionally re-publishes (conflict
 text shown; snapshot stays fresh).
 
 ### 3.6 Workspace enumeration
-Global standard hook `useWorkspaces` is present on every root-slot component
-(merge in `dsh-client-runtime/client`); the hook/state typing is again
-`any`-degraded for `WorkspaceListState.items` (its `WorkspaceView` re-export
-chain crosses packages absent from this dev tree), so `workspaces.ts` narrows
-rows to the used fields through one targeted cast. `workspaceId` is a
-branded string on the wire; treat as string for path ops (the shared model
+Global standard hook `useWorkspaces` is present on every root-slot component.
+At HEAD the merge comes from
+`@deepseek-ai/dsh-api-workspace-controller/client` (0.1.5 — the package that also
+declares the `ctx.workspaces` service this plugin injects); the 0.1.2-era
+`dsh-client-runtime` is off the upstream release train and is no longer a
+dependency or a cast site. `src/client/workspaces.ts` narrows each row to the
+fields it renders through its own `WorkspaceItem` interface, which
+`WorkspaceView` structurally satisfies — **no cast is needed**. `workspaceId` is
+a branded string on the wire; treat as string for path ops (the shared model
 indexes plain strings).
 
 ## 4. Build-gate config fixes applied (and why)
@@ -184,10 +197,13 @@ indexes plain strings).
   rendered string (labels, hints, validation, error banners, confirm copy)
   comes from the dictionaries — no hardcoded UI English. Namespace key union
   is compile-checked at both the register site and every `t()` call.
-- Remaining runtime unknowns for M0: (1) whether the settings scope's decode
+- Remaining runtime unknowns: (1) whether the settings scope's decode
   hook sees `{servers:[], overrides:{}}` defaults when the host registered no
   user layer (we treat `value === undefined` as empty doc, fine either way);
-  (2) exact settings-conflict remote error shape (see above); (3) whether
+  (2) ~~exact settings-conflict remote error shape~~ — **RESOLVED**: the host
+  refuses the write and the controller reports it as a conflict, never as
+  success (`applyOps` read-back), and the captured error is in `docs/milestones/M0.md`
+  §②; (3) whether
   HMR/unload ordering ever races the remote `$on` disposers with
   `controller.start()` (all disposers are fiber-owned through one effect).
 
@@ -241,8 +257,10 @@ from the pinned generation, which §6.3 pins property by property.
 
 ### 6.3 Alignment table (checked, not asserted)
 
-Every value below was read from the pinned dsh sheets
-(`vendor/harness-checkout/packages/client/…`) and then verified against the
+Every value below was read from the pinned dsh sheets (vendored upstream
+packages at the authoring machine's
+`/root/projects/dsh-chamber/vendor/harness-packages/@deepseek-ai` — not a path
+inside this repo) and then verified against the
 rendered surface: a Chromium audit of `getComputedStyle` in both themes
 (`.smoke/ui-preview/audit.mjs`) and a source-level property diff
 (`.smoke/ui-preview/align.py`). "same" = byte-equal declaration.
@@ -306,7 +324,7 @@ blind spot #1). Result for this revision: the loader registers
 `react/jsx-runtime`; `apply` registers three labeled effects with
 `mcp-scope: styles` first, then the dictionary and controller wiring, and one
 `settings.section` registration (`mcp-scope`, order 25, label from the
-namespace); the style effect puts the 14,020-byte sheet in the document with
+namespace); the style effect puts the 14,368-byte sheet in the document with
 the right tag attributes; the registered component renders the styled markup;
 and the effect's disposer removes the tag.
 
@@ -363,7 +381,7 @@ not cap, which the first pass had only exercised with friendly fixtures:
    live-mount count and is re-filled when its text is no longer current; the
    last disposer removes it (§6.1, both orderings covered in
    `tests/client/styles.spec.tsx`).
-3. **Doc drift (fixed).** The suite grew (133 → 148 tests, 11 → 12 files), so
+3. **Doc drift (fixed).** The suite grew (133 → 151 tests, 11 → 12 files), so
    the counts in `README.md` and `docs/host-notes.md` were refreshed.
    `docs/review/**` keeps its numbers: those are dated review records, not live
    claims.

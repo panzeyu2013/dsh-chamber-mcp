@@ -25,10 +25,13 @@ self-hosted live-smoke lane is reachable.
 
 A **live smoke job** (M0/M1 against a real chamber-anchored dsh 0.1.2-rc.1
 instance) is available as `workflow_dispatch` on a self-hosted runner tagged
-`dsh-smoke` (see §smoke). It never runs on ordinary runners — the anchor CLI
-lives on the smoke machine (`/root/.dsh-chamber/gateway/dsh-anchor`).
+`dsh-smoke` (see §smoke, which records where the anchor CLI lives). It never runs
+on ordinary runners.
 
-Dependabot keeps npm + actions dependencies reviewed (weekly/monthly).
+Dependency updates are **manual**: Dependabot is disabled by maintainer choice
+(there is no `.github/dependabot.yml`), so action pins and the pinned
+`@deepseek-ai/*` generation are bumped by hand and guarded by
+`npm run verify:workflows` + `npm run check`.
 
 ## Releasing a tgz GitHub Release (tag-driven)
 
@@ -46,21 +49,22 @@ Changelog-first flow (Keep a Changelog — see CHANGELOG.md):
 
 ```sh
 # 1. move the notes you accumulated under "## [Unreleased]" into a dated
-#    section, e.g. "## [0.0.1] - 2026-09-06", grouped by
+#    section, e.g. "## [<version>] - <YYYY-MM-DD>", grouped by
 #    Added / Changed / Deprecated / Removed / Fixed / Security
-# 2. bump package.json#version to the same 0.0.1
+# 2. bump package.json#version to the same <version>
 
-# 3. local release gate (same as CI)
-npm ci --no-audit --no-fund --legacy-peer-deps && npm run check
+# 3. local release gate (same as CI — no --legacy-peer-deps since the 0.1.5
+#    migration put every @deepseek-ai devDep on one generation)
+npm ci --no-audit --no-fund && npm run check
 
 # 4. optional but recommended: live smoke on the smoke machine
 npm run test:smoke          # M1 (R3 capture) + M0 evidence
 
 # 5. commit + tag + push
-git add -A && git commit -m "release: v0.0.1"
-git tag v0.0.1
+git add -A && git commit -m "release: v<version>"
+git tag v<version>
 git push origin main
-git push origin v0.0.1     # triggers .github/workflows/release.yml
+git push origin v<version>  # triggers .github/workflows/release.yml
 ```
 
 The workflow then:

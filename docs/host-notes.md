@@ -1,5 +1,11 @@
 # Host-half implementation notes (dsh-chamber-mcp)
 
+> **As of 2026-09-12 (HEAD, package 0.0.2, suite 151/12).** These notes were
+> written during implementation against the **0.1.2-rc.1** anchor; the pinned
+> devDependency generation is now **0.1.5-rc.2** (peers accept both). API claims
+> below were re-checked against the pinned generation where they are load-bearing
+> and are labelled where a generation matters.
+
 Evidence for the coordinator: exact service/API signatures relied on that
 differ from the recon docs, the test-mounting recipe (reproducible), and the
 design deviations made and why.
@@ -17,10 +23,10 @@ design deviations made and why.
 | `src/schema.ts` | `DocumentSchema` (schemastery) — NEW module beyond the original list |
 | `src/index.ts` | plugin entry (exports exactly `name`/`inject`/`Config`/`apply`) |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index}.spec.ts` | whole suite 148 tests / 12 files, all green |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index}.spec.ts` | whole suite 151 tests / 12 files, all green |
 
 Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (148 tests / 12 files).
+`node node_modules/vitest/vitest.mjs run` — both fully green (151 tests / 12 files).
 
 ## (a) API signatures that differ from recon docs
 
@@ -34,8 +40,12 @@ Run: `npm run typecheck` (both tsconfigs) and
    the resolved implementation into that fiber's `store`. Consequences:
    - `agent.ctx.tools.register()` works in production only because agent
      scope ctxs are created by `createScope(loopCtx, agent)` where the
-     agent-loop fiber injected `tools` (verified: `dsh-agent-loop` static
-     `inject = ['agents','sessions','llm','tools','systemPrompt']`).
+     agent-loop fiber injected `tools`. The citation originally given for this
+     (`dsh-agent-loop` static
+     `inject = ['agents','sessions','llm','tools','systemPrompt']`) is **not
+     reproducible at HEAD** — `@deepseek-ai/dsh-agent-loop` is not in the pinned
+     dependency set — so the surviving, reproducible evidence is the
+     real-registry, real-`dsh-scope` chain in `tests/host/agents.spec.ts`.
    - Tests must reproduce that chain (see recipe below).
    - `ctx.on` from inside a plugin fiber DOES reach root `ctx.emit` (listeners
      live in the shared events hook map keyed by ctx; untagged listeners are
@@ -43,11 +53,13 @@ Run: `npm run typecheck` (both tsconfigs) and
      plugin body that never ran (missing injects), not by event routing.
 2. **ToolRuntime mount**: `ToolRuntime` has `static inject = ['systemPrompt']`
    and its constructor calls `ctx.systemPrompt.tools(...)` unconditionally —
-   the real `@deepseek-ai/dsh-system-prompt@0.1.2-rc.1` must be mounted first
-   (added as a devDependency; official recipe `ctx.plugin(SystemPrompt)` then
+   the real `@deepseek-ai/dsh-system-prompt` must be mounted first
+   (added as a devDependency; the pin is the 0.1.5-rc.2 generation at HEAD;
+   official recipe `ctx.plugin(SystemPrompt)` then
    `ctx.plugin(ToolRuntime)`). `ctx.tools` only exists after that.
 3. **`SettingsProvider.installSection(owner, ns, schema, entry, hooks)`**
-   (0.1.2-rc.1 only): `setSource` hands a **LIVE thunk** — `current: () => T`
+   (present in both supported generations — re-checked in the pinned 0.1.5-rc.2
+   `dsh-settings` d.ts): `setSource` hands a **LIVE thunk** — `current: () => T`
    — that must be *stored*, not called once: it returns the authoritative
    value at every read. `onChange` fires after each committed change; the
    `validate` hook throwing refuses the write (SettingsConflictError-style,
@@ -145,7 +157,9 @@ flags and the full config is green at the time of writing.
    `resource_link` renders as `Resource link: <name> (<uri>)` (rc.1 wording);
    the canonical `{content, structuredContent?}` value keeps raw blocks.
 4. **Client identity** on the wire is `{name: 'dsh-chamber-mcp', version:
-   '0.0.1'}` (official sends `dsh-mcp-client`); server-facing semantics
+   <package.json version>}` — `src/server.ts` derives both from the package
+   manifest (so it reads `0.0.2` at HEAD, not the `0.0.1` this note originally
+   recorded); official sends `dsh-mcp-client`; server-facing semantics
    unchanged.
 5. **Reconnect policy is fixed at official defaults** (`500→30_000 ms`,
    `maxAttempts: 10`) — the document schema has no reconnect fields

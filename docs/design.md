@@ -4,7 +4,11 @@ Locked after recon A–F (docs/recon/*). Version targets: compile & verify again
 **dsh 0.1.5-rc.2** (the generation a `dsh@0.1.5-rc.1` install resolves to; the
 pinned devDependency set and the CI guard), runtime-verified additionally
 against **dsh 0.1.2-rc.1** (the version chamber runs) — see CHANGELOG 0.0.2.
-Reference sources: ref-dsh checkout (0.1.0-rc.5) for logic.
+Reference sources: the 0.1.0-rc.5 harness checkout for logic (originally the
+sibling `dsh-chamber/ref-dsh`; that tree now lives at
+`/root/projects/deepseek-harness`, and the 0.1.5 line is vendored at
+`/root/projects/dsh-chamber/vendor/harness-packages/@deepseek-ai` — paths of the
+authoring machine, not this repo).
 
 ## 1. Deliverable (package layout)
 
