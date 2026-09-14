@@ -1,6 +1,6 @@
 # Client-UI implementation notes (dsh-chamber-mcp browser half)
 
-> **As of 2026-09-12 (HEAD, package 0.0.2, suite 151/12).** Written during
+> **As of 2026-09-14 (working tree, package 0.0.2, suite 185/14).** Written during
 > implementation against the **0.1.2-rc.1** runtime; the pinned devDependency
 > generation is now **0.1.5-rc.2** (the client half was re-pointed at the 0.1.5
 > client contracts — see CHANGELOG 0.0.2). Deviations recorded below were
@@ -25,7 +25,8 @@ whole pinned `@deepseek-ai/*` 0.1.5-rc.2 set.
 | `src/client/add-form.tsx` | staged add form (transport switch, stdio/http fields, write-only secret rows, draft validation) |
 | `src/client/styles.ts` | style seat: the plugin's stylesheet, its class-name map, and the `data-plugin-css` tag mount (§6) |
 | `src/client/workspaces.ts` | minimal workspace-row narrowing (typed items) |
-| `tests/client/controller.spec.ts`, `tests/client/locales.spec.ts`, `tests/client/styles.spec.tsx` | vitest suites |
+| `src/client/tool-card/{names,icon,row,view,register}.ts(x)` | transcript lane: MCP tool identity from the session's request header, the keyed tool view, and its registration lifecycle (§7) |
+| `tests/client/controller.spec.ts`, `tests/client/locales.spec.ts`, `tests/client/styles.spec.tsx`, `tests/client/section-render.spec.tsx`, `tests/client/tool-card.spec.tsx`, `tests/client/tool-register.spec.ts` | vitest suites (6 files; the repo-wide suite is 14 files) |
 
 Also edited (build-gate fixes, see §4): `tsconfig.json` (added `DOM` lib),
 `tsconfig.tests.json` (override the inherited `tests` exclude).
@@ -33,17 +34,21 @@ Also edited (build-gate fixes, see §4): `tsconfig.json` (added `DOM` lib),
 ## 2. Test results
 
 `node node_modules/vitest/vitest.mjs run` → **client suites: locales (4),
-controller (44), styles (10) + jsdom section-render flows (10)** (the repo-wide
-suite is 151 tests / 12 files — see README):
+controller (44), styles (10), jsdom section-render flows (10), tool-card (21),
+tool-register (11)** (the repo-wide suite is 185 tests / 14 files — see README):
 - `styles.spec.tsx`: the style-token gate of §6.4 (token allowlist, no literal
   colours, 0.5px hairlines, full-round pairing, class/CSS coverage, tag mount)
   plus render checks that the card and the form consume the class map.
 - `locales.spec.ts`: same key set in en/zh; no empty/blank values;
   interpolation-placeholder parity per key; semantic spot checks (4 tests).
-- `controller.spec.ts`: `decodeDoc` malformed-snapshot hardening (4), `buildSaveOps`
-  (add server / edit env keys / remove cascade refs / remove cascade override
-  pruning / unchanged rows, 6), `toggleOp` (no-op, off→set, on→unset+row prune,
-  row kept, 4), shared-semantics alignment (2), `classifySaveError` (1).
+- `controller.spec.ts` (44): `decodeDoc` malformed-snapshot hardening (4),
+  `buildSaveOps` (identical docs / add server / append env key / remove env key
+  orphaning a ref / remove-server credential cascade / remove-server override
+  pruning / untouched override rows, 7), `toggleOp` (no-op, off→set,
+  on→unset+row prune, row kept, 4), `docsEqual` landed-write comparison (4),
+  `renameOverrideKey` (2), shared-semantics alignment (2),
+  `classifySaveError` (4), the save pipeline FE-4 (15) and the credential
+  refresh FE-6 (2).
 - Component rendering tests: jsdom `section-render.spec.tsx` drives real user
   flows (form submit, per-card banners, role=alert/status, pluralized copy,
   tri-state badges) against the components with framework props faked
@@ -78,7 +83,8 @@ suite is 151 tests / 12 files — see README):
   plain `{ getSnapshot, subscribe }` observable (uSES-safe stable snapshot
   between publishes) — no `dsh-client-store` value dependency.
 - `inject = ['slots','locale','remote','remote.credentials','settingsScope',
-  'workspaces']` exactly as assigned (round-2 FE-3: `connection` was dropped —
+  'workspaces','sessions']` exactly as assigned — `sessions` was added by the 0.0.2
+  transcript lane (`src/client/index.ts:124`; without it the lane stays off) (round-2 FE-3: `connection` was dropped —
   grep-proven unused; `remote.credentials` is the real credentials gateway,
   see 3.3).
 
@@ -319,14 +325,17 @@ every button keeps its name.
 `artifact.mjs` drives the **shipped** `lib/client.js` (the wrapped loader
 factory, not the sources) in a real browser through the lifecycle the M0 recon
 could not observe (`docs/review/deploy-issue/04-local-mount-evidence.md`,
-blind spot #1). Result for this revision: the loader registers
-`dsh-chamber-mcp`; the factory requires **only** `react` and
-`react/jsx-runtime`; `apply` registers three labeled effects with
-`mcp-scope: styles` first, then the dictionary and controller wiring, and one
-`settings.section` registration (`mcp-scope`, order 25, label from the
-namespace); the style effect puts the 14,368-byte sheet in the document with
-the right tag attributes; the registered component renders the styled markup;
-and the effect's disposer removes the tag.
+blind spot #1). Result of the recorded run (`.smoke/ui-preview/artifact.json`,
+2026-09-11): the loader registers `dsh-chamber-mcp`; the factory requires
+**only** `react` and `react/jsx-runtime`; `apply` registers three labeled
+effects with `mcp-scope: styles` first, then the dictionary and controller
+wiring, and one `settings.section` registration (`mcp-scope`, order 25, label
+from the namespace); the style effect puts the sheet in the document with the
+right tag attributes — **14,020 B in that run**, against **14,247 B** before the
+§7 transcript lane and **22,710 B** at the current working tree (the §7 lane
+block is 8,463 B); the
+registered component renders the styled markup; and the effect's disposer
+removes the tag.
 
 ### 6.5 Contrast, measured (and why nothing was "fixed")
 
@@ -398,8 +407,8 @@ not cap, which the first pass had only exercised with friendly fixtures:
 Not changed, and why: the pill/notice tone contrast (§6.5), the 16px card
 inset and 8px internal gap (PluginCard's values; `ui-settings-models` uses
 14px/12px — both official, one had to be chosen), the pill padding of 10px
-(Button `.sm`, not Pill's 8px), and the bundle growth. Measured against HEAD
-in a scratch build of the old tree: `lib/client.js` 75,485 → 93,286 B
+(Button `.sm`, not Pill's 8px), and the bundle growth. Measured in a scratch
+build of the pre-transcript-lane tree: `lib/client.js` 75,485 → 93,286 B
 (+17.8 KB), of which 14.4 KB is the stylesheet text and 3.4 KB the class
 plumbing and the invalid-state markup; the sheet stays unminified on purpose (it is read in devtools far
 more often than it is transferred, and a minifying step in `build.mjs` would
@@ -425,8 +434,9 @@ tree and the rendered geometry):
    `:not(:checked)` guard is what keeps the newer rule from out-shouting the
    selected state — verified by hovering both pills in a real browser).
 3. **Engine-level scan (new, `.smoke/ui-preview/scan-engine.mjs`).** Against
-   the preview page: 88 scoped rules; every one of the 25 referenced tokens
-   resolves in BOTH themes; no unsupported property and no dropped declaration;
+   the preview page (as of the round-2 run): 88 scoped rules and 25 referenced
+   tokens — the sheet is now 136 rules / 27 tokens — every token resolving in
+   BOTH themes; no unsupported property and no dropped declaration;
    `prefers-reduced-motion: reduce` turns the form's mount animation off and
    every transition to 0s; real Tab presses paint a ring on capsules
    (`box-shadow`), and on the radio pill / switch track through their sibling
@@ -455,3 +465,127 @@ tree and the rendered geometry):
      row 0, the env key is row 1), so the ref-validation path was never hit.
    The engine scan now ABORTS when the page carries no sheet, and the state
    pages inject their query as a page global.
+
+## 7. Transcript lane: the MCP tool row (0.0.2 line)
+
+The browser half also owns how MCP calls render in the conversation. The lane
+was deliberately built to need **no host API and no new runtime dependency**:
+the tool names come from the session's own event stream, and both glyphs are
+inline SVG.
+
+- **Slot contract.** `tool.call.toolview` is a *keyed, session-scoped* slot
+  dispatched by the EXACT wire tool name (`dsh-client-ui-tool`
+  `contract/slots.d.ts`): an unclaimed key falls back to the shipped generic
+  row, and reusing a key replaces that row — so registering is additive for our
+  own names and never touches the shipped ones. Registration goes through
+  `ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name, key,
+  locale: NS, priority: 1 }, View))`, the same seam `dsh-client-ui-skill` uses
+  for `skill` (plus the shadowing rank — see *Declaration choices*); the
+  disposer removes the row on teardown or HMR.
+- **Discovery — two sources, both required.** `ctx.sessions.list` names the
+  staged session (the framework's own doc: *"Staging IS the open signal — the
+  window opens ⟺ the session is on stage"*), whose binding's `eventSource`
+  window supplies MCP names from
+  - every `request/header` — `event.data.header.tools[]` (`.name`), the complete
+    model-facing tool array (`EpochHeader.tools` is an optional direct child of
+    `header`; the client-connection token fixture and
+    `ui-conversation`'s request inspector read the same path), and
+  - every `tool/call` — `event.data.name`, the call the event renders.
+
+  The second source is not redundant. The window is a **bounded, paginated tail
+  page** of the session log (`events.open({ maxMessages: 50 })`, host cut
+  `DEFAULT_MAX_MESSAGES = 50` over `user/message` + `assistant/message`), while
+  `request/header` is appended at loop-instance boundaries and *on change* — not
+  per turn — so a session that ran long enough can render MCP calls whose
+  describing header sits before `entries[0]`. A `tool/call` event is present
+  exactly when its row renders, so registering from the call events the window
+  actually carries makes the lane independent of that pagination; scrolling up
+  (`events.prepend`) re-publishes and heals the boundary call. Names accumulate
+  across sessions so a revisited session keeps its rows. The header remains the
+  only source for tools that were offered but never called — those register
+  ahead of their first call. Without the sessions service the lane stays off and
+  every MCP call keeps the shipped row.
+- **Identity.** A public name cannot be decomposed on the client (it may carry
+  the 12-hex lossy-normalization suffix), so the owning server is matched by the
+  **longest configured `serverName` prefix** from the settings document — which
+  also keeps a serverName containing `_` unambiguous. A tool whose server left
+  the document still renders, without a transport tag.
+- **Cap.** The keyed dispatch projects the slot's WHOLE entry list per rendered
+  row (`entriesOfSlot` is computed on every call — no memo, verified in
+  `dsh-client-ui-slots`), so the lane registers at most
+  `DEFAULT_TOOL_VIEW_LIMIT` (256) names; names past the cap keep the shipped row
+  and the client context's logger (when present) records one warning.
+- **States.** `running` / `ok` / `error` / `stopped` are classified by the same
+  expression the shipped rows use (`!done` ⇒ running, else
+  `block.error?.code === 'interrupted'` ⇒ stopped, else `isError` ⇒ error, else
+  ok — `dsh-client-ui-tool` `ToolRow`). Running carries the shipped sweep
+  (`300px`, `2.6s ease-out infinite`, same gradient and keyframes) plus
+  `aria-busy` and a primary title; settled rows drop the animation and show
+  `time - callTime`. **Terminal states yield the LEADING SLOT to the shipped
+  status dot** — error red, interrupted amber (`--dsw-alias-state-error-primary`
+  / `--dsw-alias-state-warn-primary`, the same anatomy as `StateDot`: a 10px box
+  whose `::after` core is 6px (`inset: 20%`) under a 10%-opacity halo) — so, exactly like upstream, the title keeps its normal colour and
+  only the failure's summary line takes the error token. The row's own metrics
+  and layout mirror the shipped ones (24px row, 16px leading box with 14px
+  glyphs, 6px gap, 13px/24px title, the shipped 2x2 caption-dot separator, a
+  14px/24px ellipsizing summary, then the suffix items) and the disclosure
+  behaviour is `DisclosureRow`'s: `role=button`/`tabIndex`/`aria-expanded` only
+  when expandable, Enter/Space toggle, glyph→chevron on hover, chevron while
+  open. Assistive technology gets the shipped treatment as well: the dot and the
+  sweep are colour-only, so running/error/interrupted rows carry a visually
+  hidden state word (`stateStatus`'s rule — a settled-ok row needs none) and the
+  row's own visible text stays the accessible name. Every number and token here
+  was read out of the shipped stylesheets
+  (`ToolRow`/`DisclosureRow`/`StateDot` module CSS); the pinned generation's
+  theme DECLARES `--dsh-content-font-size-secondary` and
+  `--dsh-content-font-delta` (and the shipped rows read them), so this sheet
+  reads them too with the shipped defaults as fallbacks — the row follows the
+  Settings font-size axis exactly like the shipped rows. (Only the older
+  0.1.1-rc.2 profile theme lacks both, where the fallbacks apply.)
+- **Styling.** Same style seat as the settings section: shipped row metrics
+  (24px row, 16px leading box with 14px glyphs, 6px gap, 13px/24px title,
+  14px/24px summary, 0.5px hairlines), `--dsw-*` alias tokens only (plus the
+  theme's caption token for the separator dot), inline 24-unit glyphs rendered
+  at 14px, and the reduced-motion block disables the sweep. The built bundle
+  still requires only `react` / `react/jsx-runtime`.
+- **Declaration choices (audited against both generations).**
+  - `dsh.client.inject` gains exactly ONE module: `dsh-client-ui-tool`, the
+    package that declares the `tool.call.toolview` slot (its
+    `conversation.chat.node` entry carries the `children` table) and is present
+    in the 0.1.1-rc.2 anchor set *and* the 0.1.5-rc.2 pin. The **provider of
+    `ctx.sessions` is deliberately NOT named**: it is `dsh-client-runtime` in
+    the anchor generation and `dsh-api-session-controller` in 0.1.5 — a module
+    id that only exists in one of them would be a dangling edge in the other.
+    The cordis `inject: ['sessions']` service requirement already orders us
+    after whichever package provides it (both generations expose the service
+    under that exact name: `rootCtx.reflect.provide("sessions", …)` in the
+    anchor's `dsh-client-runtime`, and the same name in the 0.1.5
+    `dsh-api-session-controller`), and the shipped `dsh-client-ui-conversation`
+    injects `"sessions"` the same way.
+  - Rows register at `priority: 1`. Keyed dispatch is exact-key and the
+    shadowing rank is ascending ("lowest renders"), while a same-key pair at
+    the SAME priority **throws** in the slot core — and the throw would hit
+    whichever package registers second. Rank 1 makes a future official row for
+    the same wire name win and makes that collision impossible; the generic
+    fallback is not an entry, so rank 1 still renders today.
+  - Registration is per exact wire name through
+    `ctx.slots.inject(key, () => ctx.slots.register(...))`, the same seam
+    `dsh-client-ui-skill` uses for `skill`. `inject` is a fiber effect
+    (`ctx.effect`) that runs its callback immediately when the declaration
+    exists and later when it lands, so calling it from a session subscription is
+    legal; the callback must not throw (a deferred throw would surface as an
+    uncaught microtask error), which is why the lane installs rows behind a
+    try/catch and leaves a failed name un-registered for a later retry.
+  - The row reuses the existing `mcp-scope.settings` locale namespace instead of
+    declaring a second one: the namespace id is just a dictionary handle, the
+    dictionaries already carry en/zh parity under the compile-enforced key
+    union, and a second namespace would add a second declaration site for no
+    user-visible benefit.
+- **Evidence.** `tests/client/tool-card.spec.tsx` (identity incl. longest-prefix
+  and hashed names, the four states, expand/collapse, keyboard, aria) and
+  `tests/client/tool-register.spec.ts` (diff, cap, teardown, observer
+  lifecycle); `tests/client/styles.spec.tsx` gates the new classes with the rest
+  of the sheet; and `scripts/verify-client-artifact.mjs` (run by
+  `verify:package`) drives the BUILT `lib/client.js` through the loader wrapper
+  in jsdom — it registers one view per discovered name, renders the running and
+  settled forms, and expands on a real click.

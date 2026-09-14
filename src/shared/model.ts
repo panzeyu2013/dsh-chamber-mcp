@@ -19,6 +19,28 @@ export const CREDENTIAL_REF_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 /** HTTP field-name (token) contract per RFC 9110 tchar. */
 export const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 
+/**
+ * Public tool-name prefix of the official `mcp__<serverName>__<rawName>`
+ * contract. Shared so the browser half can recognise MCP tools in the
+ * model-facing request header without importing host code (the host build
+ * imports `node:crypto`, which must never reach the client bundle).
+ */
+export const MCP_TOOL_PREFIX = 'mcp__'
+
+/** DeepSeek function-name contract: at most 64 characters. */
+export const MAX_PUBLIC_NAME_LENGTH = 64
+
+/** Hex chars of the SHA-256 identity hash appended on lossy normalization. */
+export const HASH_LENGTH = 12
+
+/**
+ * The identity suffix a lossy-normalized public name carries: `_` + 12 hex
+ * chars. Only meaningful together with {@link MAX_PUBLIC_NAME_LENGTH} (the
+ * normalized name is truncated to the cap), because a raw MCP tool name may
+ * legitimately end the same way.
+ */
+export const HASH_SUFFIX_PATTERN = new RegExp(`_[0-9a-f]{${HASH_LENGTH}}$`)
+
 export interface StdioServerDef {
   serverName: string
   transport: 'stdio'

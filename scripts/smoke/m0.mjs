@@ -1,26 +1,21 @@
-// M0 smoke for dsh-chamber-mcp against a scratch anchor (0.1.2-rc.1) instance.
+// M0 smoke for dsh-chamber-mcp against a scratch instance booted from the
+// gateway's current anchor CLI (measured dsh 0.1.5-rc.2 on 2026-09-14; the run
+// transcript records the version it actually used).
 // Phases: setup (workspaces/creds/baseline), install (dsh plugin add tgz + restart),
 // plugin (namespace R/W + revision conflict), gate (server add → spawn → sessions in
 // two workspaces with ws-b off → apply/revoke log evidence).
-import { mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { execFileSync, spawnSync } from 'node:child_process'
-import { Instance, SMOKE, ROOT, NODE, log } from './instance.mjs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { Instance, SMOKE, ROOT, NODE, ANCHOR_CLI, cliVersion, log, packPluginTgz } from './instance.mjs'
 
 const PORT = 32131
 const HOME = join(SMOKE, 'm0-home')
 const PKG_META = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
 const PKG_NAME = PKG_META.name
 const PKG_VERSION = PKG_META.version
-const TGZ = join(SMOKE, `${PKG_NAME}-${PKG_VERSION}.tgz`)
-// Self-contained: pack the plugin tarball when it is not present yet (npm
-// cache redirected into .smoke so a read-only HOME cannot break the pack).
-if (!existsSync(TGZ)) {
-  execFileSync('npm', ['pack', '--pack-destination', SMOKE], {
-    cwd: ROOT, stdio: 'inherit',
-    env: { ...process.env, npm_config_cache: join(SMOKE, 'npm-cache') },
-  })
-}
+// Freshly packed from the working tree on every run (see packPluginTgz).
+const TGZ = packPluginTgz()
 
 const FIXTURE = join(ROOT, 'scripts', 'smoke', 'fixture', 'echo-server.mjs')
 const WS_A = join(SMOKE, 'm0-ws-a')
@@ -32,6 +27,12 @@ const evidence = []
 const say = (m) => { evidence.push(m); log(m) }
 const step = (m) => say(`\n=== ${m}`)
 
+// A scratch instance must actually be scratch: a $DSH_HOME left by an earlier
+// run still has the plugin installed (often from a since-deleted tarball), so
+// the install phase fails on the stale profile dependency while the rest of the
+// run carries on against the OLD package — evidence that looks green and proves
+// nothing. Wipe the home and the workspace dirs before booting.
+for (const dir of [HOME, WS_A, WS_B]) rmSync(dir, { recursive: true, force: true })
 for (const dir of [HOME, WS_A, WS_B]) mkdirSync(dir, { recursive: true })
 
 // ── phase: setup ────────────────────────────────────────────────────────────
@@ -61,20 +62,54 @@ await inst.stop()
 
 // ── phase: install (user-install command, real) ──────────────────────────────
 step('dsh plugin --profile web add file:<tgz>')
-const env = {
-  ...process.env,
-  PATH: '/root/.nvm/versions/node/v22.22.3/bin:' + (process.env.PATH ?? ''),
-  DSH_HOME: HOME,
-  HOME: join(SMOKE, 'homedir'),
-  DSH_TELEMETRY_DISABLED: '1',
+/**
+ * Environment handed to the installer (`dsh plugin --profile web add`). It is
+ * deliberately CONTROLLED rather than inherited: the profile owns its package
+ * manager and store, while the invoking process (usually `npm run test:smoke`)
+ * carries npm's own config channel — and the first install into a freshly wiped
+ * scratch home failed while inheriting it. PATH, the DSH home contract and any
+ * proxy/CA settings are forwarded; everything else is the profile's business.
+ * Every run since has passed through the documented entry point.
+ *
+ * @returns the child environment.
+ */
+function installerEnv() {
+  const proxy = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) => /^(https?|no)_proxy$/i.test(key) || key === 'NODE_EXTRA_CA_CERTS',
+    ),
+  )
+  return {
+    ...proxy,
+    PATH: dirname(NODE) + ':' + (process.env.PATH ?? ''),
+    DSH_HOME: HOME,
+    HOME: join(SMOKE, 'homedir'),
+    DSH_TELEMETRY_DISABLED: '1',
+  }
 }
-const add = spawnSync('/root/.nvm/versions/node/v22.22.3/bin/dsh',
-  ['plugin', '--profile', 'web', 'add', `file:${TGZ}`], { env, encoding: 'utf8', timeout: 180_000 })
+// The ANCHOR CLI drives the install too, so install and boot are one
+// generation (the chamber's) instead of a mixed pair.
+say(`anchor CLI: ${ANCHOR_CLI} (dsh@${cliVersion(ANCHOR_CLI)})`)
+say(`tarball: ${TGZ}`)
+const add = spawnSync(NODE, [ANCHOR_CLI, 'plugin', '--profile', 'web', 'add', `file:${TGZ}`], {
+  env: installerEnv(), encoding: 'utf8', timeout: 180_000,
+})
 say(`exit=${add.status}`)
 say((add.stdout + add.stderr).split('\n').slice(-8).join('\n'))
+// A failed install must fail the RUN: the phases after it would otherwise
+// exercise whatever the profile already carried.
+if (add.status !== 0) throw new Error(`dsh plugin --profile web add failed (status ${add.status})`)
 const pkgJson = JSON.parse(readFileSync(join(HOME, 'profiles', 'web', 'package.json'), 'utf8'))
 say(`bundles after add: ${pkgJson.dsh.profile.bundles.join(', ')}`)
-say(`bundles includes ${PKG_NAME}: ${pkgJson.dsh.profile.bundles.includes(PKG_NAME)}`)
+if (!pkgJson.dsh.profile.bundles.includes(PKG_NAME)) {
+  throw new Error(`profile bundles do not include ${PKG_NAME} after add: ${pkgJson.dsh.profile.bundles.join(', ')}`)
+}
+// The INSTALLED artifact must be the one this run packed from the working tree.
+const installed = JSON.parse(readFileSync(join(HOME, 'profiles', 'web', 'node_modules', PKG_NAME, 'package.json'), 'utf8'))
+if (installed.version !== PKG_VERSION) {
+  throw new Error(`installed ${PKG_NAME}@${installed.version} != working tree ${PKG_VERSION}`)
+}
+say(`installed: ${PKG_NAME}@${installed.version} from ${TGZ.split('/').pop()}`)
 
 step('reboot after install')
 await inst.boot()

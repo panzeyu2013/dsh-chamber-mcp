@@ -1,81 +1,156 @@
 # dsh-chamber-mcp
 
-A user-installable **third-party dsh plugin** that manages **MCP servers per
-workspace** from the dsh Settings UI:
+[![CI](https://github.com/panzeyu2013/dsh-chamber-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/panzeyu2013/dsh-chamber-mcp/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/panzeyu2013/dsh-chamber-mcp?display_name=tag)](https://github.com/panzeyu2013/dsh-chamber-mcp/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 
-- a browser **MCP 服务器 / MCP servers settings section** — add/remove MCP
-  servers (stdio or streamable-http), per-workspace on/off switches, write-only
-  secret key inputs;
-- a host half that connects to each server (official `@modelcontextprotocol/sdk`
-  transports), discovers its tools and **injects them only into the tool scopes
-  of enabled workspaces** — disabling a workspace removes the server's tools
-  from that workspace's sessions at the injection layer (model-visible tool set),
-  not merely at execution time.
+**MCP servers, per workspace, from the dsh Settings UI.** A standalone
+third-party [dsh](https://github.com/deepseek-ai/deepseek-harness) plugin:
+declare MCP servers once (stdio or Streamable HTTP), then decide **per
+workspace** — with a switch — whether that workspace's sessions see their
+tools.
 
-Tool naming, output mapping, env hygiene and reconnect policy follow the official
-`@deepseek-ai/dsh-mcp-client` contract (`mcp__<serverName>__<tool>`, `tools/list`
-→ generation swap, scrubbed child env, backoff reconnect). All state lives in the
-dsh settings domain of the instance the plugin is installed into; nothing is
-shared across dsh instances; **dsh-chamber itself never seeds, bundles or
-special-cases this plugin** — it is an ordinary `dsh plugin` install.
+- **Settings-native management.** *Settings → MCP servers* (`MCP 服务器`) adds,
+  edits and removes servers; no `cordis.patch.yml` editing and no instance
+  restart to change what runs.
+- **Per-workspace tool scopes.** Each server is on by default in every
+  workspace of the instance; switching one off removes
+  `mcp__<serverName>__*` from that workspace's model-visible tool set at the
+  injection layer — not merely at execution time.
+- **Credential refs, not secrets.** The settings document stores ref names
+  only; values are write-only, live in the dsh credentials domain, and never
+  ride a settings document, an API response or a log line.
+- **Official bridge contract.** Naming (`mcp__<serverName>__<tool>`), result
+  mapping, env scrubbing, generation swap on `tools/list_changed` and the
+  backoff reconnect policy mirror `@deepseek-ai/dsh-mcp-client`.
+- **Hand-editing works.** With the default file provider the document is
+  watched and live-reloaded, so an external edit starts/stops/restarts only the
+  affected servers.
+
+All state lives in the dsh settings domain of the instance the plugin is
+installed into; nothing is shared across dsh instances. **dsh-chamber itself
+never seeds, bundles or special-cases this plugin** — it is an ordinary
+`dsh plugin` install.
 
 ## Install
 
-Prereqs: a dsh instance (0.1.2-rc.1 or 0.1.5-rc.x generation); Node ≥ 24 and
-pnpm on PATH are toolchain requirements for building this repo and for the dsh
-CLI driving pnpm — not requirements of the installed plugin itself.
+Prerequisites:
+
+- a dsh instance of the supported generation (see [Compatibility](#compatibility));
+- `dsh` on `PATH`, plus **pnpm** and **Node ≥ 24** — the toolchain the `dsh
+  plugin` CLI uses to install the package (not a runtime requirement of the
+  plugin itself, which is loaded by the dsh host).
 
 Releases ship as a GitHub Release whose asset is the packed tarball
-(`npm publish` is temporarily disabled). Pick the asset from the Releases page —
-the newest published release is **v0.0.1**; `0.0.2` is prepared on `main` but not
-tagged yet. Install per instance:
+(`npm publish` is temporarily disabled). Pick the newest asset from the
+[Releases page](https://github.com/panzeyu2013/dsh-chamber-mcp/releases) —
+the **newest published release is `v0.0.1`**; the `0.0.2` line is prepared in
+the repository but **not tagged yet** — and install it per instance:
 
 ```sh
-# into the web profile of a specific dsh instance (per-instance management)
+# into the web profile of one dsh instance (per-instance management)
 dsh plugin --profile web add \
-  https://github.com/<owner>/dsh-chamber-mcp/releases/download/v<version>/dsh-chamber-mcp-<version>.tgz
-# or build locally first:  npm run pack:tgz
-#   dsh plugin --profile web add file:./.smoke/dsh-chamber-mcp-<version>.tgz
-# restart the instance (the profile bundle list changed)
+  https://github.com/panzeyu2013/dsh-chamber-mcp/releases/download/v<version>/dsh-chamber-mcp-<version>.tgz
+
+# or build and install the local package
+npm run pack:tgz
+dsh plugin --profile web add file:./.smoke/dsh-chamber-mcp-<version>.tgz
+
+# restart the instance afterwards (the profile bundle list changed)
 ```
 
-(Once npm publishing is re-enabled, `dsh plugin --profile web add dsh-chamber-mcp`
-installs the same content from the registry.)
+Once npm publishing is re-enabled, `dsh plugin --profile web add dsh-chamber-mcp`
+installs the same content from the registry.
 
-- The package's `dsh.bundle` patch inserts one loader row (`mcp-scope`); the
-  browser half is discovered via the package's `dsh.client` declaration.
-- First boot right after install may race the client-module scan — **restart once**
-  and the section appears in `Settings` (nav order 25, after 智能体预设/Agent presets).
-- Data is bound to that instance's `$DSH_HOME`: `settings.yaml` holds the
-  `mcp-scope:` namespace document; secret values live only in
-  `.credentials.yaml` (never ride any API response).
+What the install does:
+
+- the package's `dsh.bundle` patch inserts one loader row (`mcp-scope`); the
+  browser half is discovered through the package's `dsh.client` declaration;
+- the settings section appears at nav order 25, after
+  智能体预设 / Agent presets. The first boot right after install may race the
+  client-module scan — **restart once** if it is missing;
+- data is bound to that instance's `$DSH_HOME`: `settings.yaml` holds the
+  `mcp-scope:` namespace document, secret values live only in
+  `.credentials.yaml` and are never returned by any API.
 
 ## Use
 
-1. Open Settings → **MCP servers** and *Add server*:
-   - stdio: server name + command + arguments (passed verbatim, no shell) +
-     optional working directory + env-key rows. Each env key names a credential
-     ref whose resolved value is injected into the child env (the row's value
-     input is write-only).
-   - Streamable HTTP: URL + header rows (name + write-only credential ref).
-2. A server is **on by default in every workspace** of this dsh. Under the
-   server card, switch specific workspaces off — their sessions' model-facing
+1. Open *Settings → MCP servers* and choose **Add server**. Two transports:
+   - **stdio** — server name, command, arguments (passed verbatim, `shell:
+     false`), optional working directory, and env-key rows. Each key names a
+     credential ref whose resolved value is injected into the child env; the
+     row's value input is write-only.
+   - **Streamable HTTP** — URL and header rows (name + write-only credential
+     ref).
+2. A new server is **on by default in every workspace** of this dsh. Under the
+   server card, switch individual workspaces off — their sessions' model-facing
    tool set no longer includes `mcp__<serverName>__*`.
-3. Removing a server stops it everywhere and clears credential refs no remaining
-   server references.
+3. **Edit** reopens the staged form; **Remove** stops the server everywhere and
+   clears credential refs that no remaining server references.
 
-Notes: the server process runs as this dsh instance's user; the command's
-environment is scrubbed of `DSH_*` and secret-shaped variables except what you
-declare explicitly; servers connect at instance start (host activation
-lifecycle, like the official client) and reconnect with the official backoff
-policy.
+Servers connect when the plugin starts (host activation lifecycle, like the
+official client) and reconnect with the official backoff policy — the Connect
+step never blocks dsh boot.
+
+## What the model sees
+
+The plugin is an **injection gate**, not a permission filter. Tools are
+registered into the *tool scope of each live agent* whose session is a
+workspace root session in an enabled workspace — never into a global registry.
+
+| Session | Gets MCP tools? |
+|---|---|
+| Workspace root session, server on for that workspace | Yes — `mcp__<serverName>__<rawName>` |
+| Workspace root session, workspace switched off for that server | No — the definitions are revoked from that agent's scope |
+| Session whose cwd is outside every registered workspace | No |
+| Delegation / subagent child (`origin: 'subagent'`) | No — children are preset-governed (`docs/design.md` §4) |
+
+Consequences worth knowing:
+
+- **Disabling a workspace is a model-visible change**: the tools disappear from
+  the tool list the model is offered, not just from what it may execute.
+  Live sessions are updated on the next reconcile (a settings commit or a
+  server re-sync), and the change lands in the next request's tool list.
+- **The tools are part of the context.** MCP definitions are ordinary tool
+  schemas on the request, so they appear in the composer's context meter (the
+  ring beside the send button) under **工具定义 / Tool definitions**, priced
+  heuristically from the request's tool array. The plugin injects no prose into
+  the system prompt, so there is no separate "MCP servers" context line. The
+  meter itself renders only after the model has reported usage for the session.
+- **A call renders as an MCP row, not the generic card.** The plugin owns how
+  its calls render through the keyed `tool.call.toolview` slot: the leading mark
+  is a plug, the title is `serverName · toolName` with a `stdio` / `http`
+  transport tag, and the row expands to the raw arguments and the rendered
+  result. A **running** call carries the sweep treatment and a primary title
+  and reports `aria-busy`; a **settled** call drops the animation and shows its
+  duration; a **failed** call yields the leading mark to the shipped red status
+  dot and puts the failure's first line on the summary in the error colour; an
+  **interrupted** call shows the amber dot. The disclosure behaviour is the
+  shipped one too: click or Enter/Space expands, and the leading glyph swaps to
+  the chevron on hover or while open. The view set is derived
+  from the session's own event stream — every tool the request header offered
+  plus every call the transcript actually shows — so a call outside that set, or
+  a tool past the registration cap, falls back to the shipped generic card
+  instead of breaking the transcript.
+- **Names are normalized, never colliding.** A public name is
+  `mcp__<serverName>__<rawName>` trimmed to the DeepSeek function-name contract
+  (≤ 64 chars of `[A-Za-z0-9_-]`); when normalization is lossy, a 12-hex
+  SHA-256 identity suffix is appended so two distinct MCP tools can never
+  collapse into one name. The raw MCP name is what is sent in `tools/call`.
+- **Image/audio/resource payloads degrade to text placeholders.** The
+  attachments-based image bridge is a documented scope cut
+  (`docs/host-notes.md`), matching the reference implementation's behaviour.
+- **Tool calls time out after 60 s** (official default) and are aborted with
+  the run's signal. A server that overruns the fetch bounds — a repeated
+  cursor, or more than `MAX_SYNC_PAGES` pages — fails the sync and keeps its
+  previous tool generation.
 
 ## Where the configuration lives
 
 The plugin stores nothing of its own: it registers the `mcp-scope` **settings
 namespace**, so the document lives wherever that instance's settings provider
 puts it. With the default file provider that is one document for every
-namespace — `$DSH_HOME/settings.yaml`, the extension picking the format
+namespace — `$DSH_HOME/settings.yaml`, with the extension picking the format
 (`.yaml`, `.yml`, `.json`):
 
 ```yaml
@@ -119,10 +194,10 @@ mcp-scope:
 dsh plugin --profile web remove dsh-chamber-mcp   # + restart the instance
 ```
 
-Removing the package stops the servers and drops the settings section. Namespace
-and credential leftovers can be cleaned by deleting the `mcp-scope:` section
-from `$DSH_HOME/settings.yaml` and the related refs from
-`$DSH_HOME/.credentials.yaml` (manual, documented; values are write-only so the
+Removing the package stops the servers and drops the settings section.
+Namespace and credential leftovers can be cleaned by deleting the `mcp-scope:`
+section from `$DSH_HOME/settings.yaml` and the related refs from
+`$DSH_HOME/.credentials.yaml` (manual, documented; values are write-only, so the
 UI cannot read them back).
 
 ## Relationship to the official dsh MCP client
@@ -139,6 +214,7 @@ part of what "manage MCP servers for this dsh" means:
 | Enable/disable, add/remove | edit the config file and reload | per-workspace switches + add/remove in the UI, plus live hand-editing of the document |
 | MCP capabilities bridged | tools only | tools only (same) |
 | Naming / env scrub / reconnect / generation swap | `mcp__<serverName>__<tool>`, scrubbed child env, backoff reconnect, `tools/list_changed` re-sync | the same contract, verified against it |
+| The call's row in the transcript | whatever the shipped tool row renders (generic card, title = tool name) | an **MCP row** owned through the keyed `tool.call.toolview` slot: plug mark, `server · tool` title, transport tag, shipped state marks (red/amber dots) and disclosure behaviour, expandable arguments + result |
 | Image results | bridged to attachments when the model accepts images | **degraded to text placeholders** — a deliberate scope cut (see `docs/host-notes.md`) |
 
 Stock dsh has no MCP management surface to reuse: the Plugins → *Plugin
@@ -150,45 +226,106 @@ upstream mechanism maps a workspace to a tool set. Evidence:
 
 ## Compatibility
 
-- Target/verified: dsh **0.1.5-rc.1 / 0.1.5-rc.2** (npm `latest`) is the
-  compile-time anchor — `devDependencies` pin `@deepseek-ai/dsh-*@0.1.5-rc.2`
-  (the generation a `dsh@0.1.5-rc.1` install actually resolves to) and CI
-  guards that set. dsh **0.1.2-rc.1** (the generation dsh-chamber currently
-  runs) is also supported and live-verified; the peer ranges accept both
-  (`^0.1.2-rc.1 || ^0.1.5-rc.1`) and every API this plugin calls is
-  byte-identical or additively changed between the two generations.
+| | Version | Notes |
+|---|---|---|
+| Compile-time anchor & CI guard | dsh **0.1.5-rc.2** | every `@deepseek-ai/dsh-*` devDependency is pinned to the generation a `dsh@0.1.5-rc.1` install resolves to; `npm run typecheck` + tests run against it |
+| Live-verified | dsh **0.1.5-rc.2** | the chamber anchor runs this generation (gateway 0.3.0, measured 2026-09-14), and `npm run test:smoke` boots *and* installs through that same anchor CLI |
+| Peer range | `^0.1.2-rc.1 \|\| ^0.1.5-rc.1` | 0.1.2-rc.1 was the anchor generation at recon/first-release time; the API surface this plugin calls is byte-identical or additively changed across both, and both are live-verified |
+
 - Requirement model: every configured server defaults on for all of this dsh's
   workspaces; only explicit per-workspace records turn one off.
 - Sessions outside any registered workspace (plain cwd sessions) never receive
-  MCP tools; delegation/subagent children are preset-governed and never
-  receive MCP tools from this plugin (workspace root sessions do).
-- Out of scope by design (no file/CLI management surface, no toolPolicy
-  allow/ask/deny, no pause key, no custom naming, no status visualization, no
-  on-demand connect toggles).
+  MCP tools; delegation/subagent children are preset-governed and never receive
+  MCP tools from this plugin (workspace root sessions do).
+- Out of scope by design: no file/CLI management surface, no toolPolicy
+  allow/ask/deny, no pause key, no custom naming, no *server*-status surface (a
+  transcript row carries its own call state, as the shipped rows do), no
+  on-demand connect toggles (`docs/acceptance.md`, cut list C1–C6).
+
+## Security & trust model
+
+- **A configured MCP server is code you chose to run.** stdio servers execute
+  as the dsh instance's user with the instance's filesystem access; streamable
+  HTTP servers receive whatever their headers carry. Configure only servers you
+  trust, and treat their tool output as untrusted input.
+- **Credentials are write-only.** Values are resolved per (re)connect from the
+  credentials domain; missing and empty refs are omitted with a warning, and
+  resolved values containing CR/LF/NUL are rejected at the transport boundary
+  so they can neither inject headers/env nor forge log lines. Warnings name the
+  ref, never the value.
+- **Child environments are scrubbed.** stdio children inherit neither `DSH_*`
+  nor credential-shaped ambient variables — only the keys you declare
+  explicitly; spawn is `shell: false` (no shell interpolation).
+- **Remote input is bounded.** `tools/list` pagination is capped
+  (`MAX_SYNC_TOOLS` / `MAX_SYNC_PAGES` = 2000), a repeated continuation cursor
+  rejects the sync, and invalid results fail closed to the previous tool
+  generation. Input schemas pass through unchanged; an advertised output schema
+  is only honoured when it passes the dsh tool-registry's JSON-schema check,
+  and otherwise falls back to an unconstrained result.
+- **A failed connection stops being dangerous.** After 10 consecutive failed
+  reconnect attempts the supervisor gives up and **unregisters the server's
+  tools** rather than leaving half-dead entries; reconnect resumes on plugin
+  reload / instance restart.
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| No *MCP servers* section in Settings | The post-install client-module scan raced. Restart the instance once; verify with `dsh plugin --profile web list` that the bundle is installed. |
+| Section renders, but says settings are unavailable | The client is read-only or the namespace is not served to this connection — check that the host half loaded (loader row `mcp-scope`) and the profile was restarted. |
+| A tool never appears in a session | Check, in order: the session is a **workspace root** session; the server is **on** for that workspace (not switched off); the server is connected and listed tools (see the instance log for `mcp-scope(...)`). Subagent children never receive MCP tools by design. |
+| Hand-edited `settings.yaml` had no effect | The edit violated a document rule and was not published — the instance keeps the last good document and warns. Fix the file; the log names the violated rule (duplicate key, cross-field conflict, pattern mismatch). |
+| A server stopped working after a crash | The supervisor reconnects with 500 ms → 30 s backoff, 10 attempts per outage. After giving up, reload the plugin or restart the instance. |
+| Secret input looks empty after saving | By design: values are write-only. The badge shows *Configured* / *Not configured* / *Status unknown*; only the stored ref name is in the settings document. |
+| I want to switch the plugin off without uninstalling it | Compose a patch over the profile (`dsh web --patch <file>`) that disables the loader row: under `- id: mcp-scope`, set `disabled: true` (the row is visible in `dsh --dump-config`). The servers stop and the settings section disappears; the namespace document stays on disk. |
+| I want to know whether the MCP tools count toward context | Yes — they are ordinary tool schemas in the request. Open the context meter beside the composer's send button and read **工具定义 / Tool definitions** (see [What the model sees](#what-the-model-sees)). |
 
 ## Development
 
 ```sh
 npm install            # dev deps (all @deepseek-ai/* pinned to one dsh generation)
 npm run typecheck      # src + tests
-npm test               # vitest suite (151 tests)
+npm test               # vitest suite (185 tests, 14 files)
 npm run check          # full gate: typecheck + tests + build + package verify
-npm run verify:package # pack → contents whitelist → consumer d.ts check → determinism
+npm run verify:package # pack → contents whitelist → consumer d.ts → bundle purity → MCP-row artifact check → determinism
+npm run verify:client-artifact # drive the BUILT client bundle in jsdom (MCP row registration/render/expand)
 npm run pack:tgz       # build + .smoke/dsh-chamber-mcp-<ver>.tgz
 npm run test:smoke     # live M0/M1 smoke (needs the chamber-anchored dsh CLI; see docs/RELEASE.md)
+npm run verify:workflows # action pins + release-structure invariants
 ```
 
-CI (`.github/workflows/ci.yml`, Node 24 on push/tags/PR + dispatch) runs the full gate and
-uploads the tarball; releases are tag-driven (`v*` → `.github/workflows/release.yml` → GitHub
-Release whose asset is the packed `dsh-chamber-mcp-<version>.tgz`; npm publish
-is temporarily disabled). See `docs/RELEASE.md` for the release checklist and
-smoke-runner requirements.
+CI (`.github/workflows/ci.yml`, Node 24 on push/tags/PR + dispatch) runs the full
+gate and uploads the tarball; releases are tag-driven (`v*` →
+`.github/workflows/release.yml` → GitHub Release whose asset is the packed
+`dsh-chamber-mcp-<version>.tgz` plus its `.sha256`; npm publish is temporarily
+disabled). See `docs/RELEASE.md` for the release checklist and smoke-runner
+requirements.
 
-Docs: `docs/design.md` (architecture), `docs/acceptance.md` (requirement/cut
-matrix), `docs/recon/` (evidence reports, framed as of reconnaissance time),
-`docs/milestones/M0.md` + `M1.md` (smoke evidence + raw transcripts),
-`docs/host-notes.md` / `docs/ui-notes.md` (API findings & intentional
-deviations), `docs/review/` (round-1, `round2/`, `prerelease/` and
-`deploy-issue/` audits — historical — plus `SUMMARY.md` and **`STATUS.md`**, the
-consolidated disposition at HEAD). Smoke drivers under `scripts/smoke/` boot
-scratch 0.1.2-rc.1 instances and drive the real RPC surface.
+Contributing: every change that alters behaviour needs a `CHANGELOG.md` entry
+(releases compose their notes from the dated section), a passing `npm run check`,
+and — for workflow or release-mechanics changes — one `workflow_dispatch` dry
+run of `release.yml` before the tag.
+
+## Documentation
+
+| Doc | Contents |
+|---|---|
+| `docs/design.md` | Locked architecture and decisions |
+| `docs/acceptance.md` | Requirement/cut matrix (R1–R4, C1–C6) |
+| `docs/host-notes.md`, `docs/ui-notes.md` | Host/client API findings and intentional deviations |
+| `docs/RELEASE.md` | CI + release mechanics, smoke runner, rollback |
+| `docs/recon/` | Reconnaissance evidence (as of recon time) |
+| `docs/milestones/` | M0/M1 smoke evidence and raw transcripts |
+| `docs/review/` | Historical audits, plus **`docs/review/STATUS.md`** — the consolidated disposition of every finding at HEAD |
+
+Smoke drivers under `scripts/smoke/` boot scratch instances from the gateway's
+current anchor CLI (dsh **0.1.5-rc.2** as measured on 2026-09-14 — each transcript
+records the version it used), install the tarball freshly packed from the working
+tree, and drive the real RPC surface.
+
+## License
+
+[MIT](LICENSE). Tool-naming, sync/generation-swap, executor and transport
+semantics mirror the reference implementation
+`@deepseek-ai/dsh-mcp-client` (Copyright © 2026 DeepSeek, MIT); see `LICENSE`
+for the attribution notice.

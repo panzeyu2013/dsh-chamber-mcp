@@ -9,6 +9,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   EMPTY_DOC,
+  HASH_LENGTH,
+  HASH_SUFFIX_PATTERN,
+  MAX_PUBLIC_NAME_LENGTH,
+  MCP_TOOL_PREFIX,
   RESERVED_OVERRIDE_KEYS,
   credentialRefsOf,
   isEnabled,
@@ -153,6 +157,27 @@ describe('credentialRefsOf', () => {
       url: 'https://x',
       headers: [{ name: 'X', ref: 'A' }, { name: 'Y', ref: 'B' }],
     })).toEqual(['A', 'B'])
+  })
+})
+
+describe('shared naming constants (host + browser half)', () => {
+  // These four values are the contract BOTH halves derive tool identity from:
+  // the host mints public names with them (src/tools.ts) and the browser half
+  // parses them back (src/client/tool-card/names.ts). They live in the shared
+  // pure model precisely so the browser half never imports host code.
+  it('pins the official contract values', () => {
+    expect(MCP_TOOL_PREFIX).toBe('mcp__')
+    expect(MAX_PUBLIC_NAME_LENGTH).toBe(64)
+    expect(HASH_LENGTH).toBe(12)
+  })
+
+  it('recognizes exactly one identity suffix shape', () => {
+    expect(HASH_SUFFIX_PATTERN.test(`${'x'.repeat(50)}_0123456789ab`)).toBe(true)
+    expect(HASH_SUFFIX_PATTERN.test(`${'x'.repeat(51)}_0123456789a`)).toBe(false) // 11 hex
+    expect(HASH_SUFFIX_PATTERN.test(`${'x'.repeat(50)}_0123456789abc`)).toBe(false) // 13 hex
+    expect(HASH_SUFFIX_PATTERN.test(`${'x'.repeat(50)}_0123456789AG`)).toBe(false) // not hex
+    // No /g flag: repeated .test() calls must not carry lastIndex state.
+    expect(HASH_SUFFIX_PATTERN.test(`${'x'.repeat(50)}_0123456789ab`)).toBe(true)
   })
 })
 

@@ -40,9 +40,12 @@ afterEach(() => {
  * `--dsw-alias-label-error`, which nothing declares; this sheet must not).
  */
 const THEME_TOKENS = new Set([
+  '--dsh-content-font-delta',
+  '--dsh-content-font-size-secondary',
   '--ds-ease-in-out',
   '--ds-font-family-code',
   '--ds-transition-duration',
+  '--dsw-alias-bg-base',
   '--dsw-alias-bg-layer-1',
   '--dsw-alias-bg-layer-2',
   '--dsw-alias-bg-layer-3',
@@ -57,6 +60,7 @@ const THEME_TOKENS = new Set([
   '--dsw-alias-button-primary-hover',
   '--dsw-alias-interactive-bg-hover',
   '--dsw-alias-interactive-bg-hover-danger',
+  '--dsw-alias-label-caption',
   '--dsw-alias-label-dimmed',
   '--dsw-alias-label-primary',
   '--dsw-alias-label-primary-foreground',

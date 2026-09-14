@@ -1,6 +1,6 @@
 # Host-half implementation notes (dsh-chamber-mcp)
 
-> **As of 2026-09-12 (HEAD, package 0.0.2, suite 151/12).** These notes were
+> **As of 2026-09-14 (working tree, package 0.0.2, suite 185/14).** These notes were
 > written during implementation against the **0.1.2-rc.1** anchor; the pinned
 > devDependency generation is now **0.1.5-rc.2** (peers accept both). API claims
 > below were re-checked against the pinned generation where they are load-bearing
@@ -21,12 +21,12 @@ design deviations made and why.
 | `src/agents.ts` | per-agent scope injection gate (never registers globally) |
 | `src/manager.ts` | bridge orchestrator: handle lifecycle, credential events, applier ownership |
 | `src/schema.ts` | `DocumentSchema` (schemastery) — NEW module beyond the original list |
-| `src/index.ts` | plugin entry (exports exactly `name`/`inject`/`Config`/`apply`) |
+| `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface — FE-10) |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index}.spec.ts` | whole suite 151 tests / 12 files, all green |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index}.spec.ts` | the 8 host suites, all green (the 6 client suites are listed in `docs/ui-notes.md` §1; repo total 185 tests / 14 files) |
 
 Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (151 tests / 12 files).
+`node node_modules/vitest/vitest.mjs run` — both fully green (185 tests / 14 files).
 
 ## (a) API signatures that differ from recon docs
 

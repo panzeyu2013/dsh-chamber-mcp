@@ -7,34 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+> **Release flow (see `docs/RELEASE.md` §Changelog-first flow):** before tagging,
+> move every entry below into the dated `## [<version>] - YYYY-MM-DD` section.
+> `scripts/release-notes.mjs` composes the GitHub Release body from THAT section
+> only and ignores this one — an entry left here ships in the tree but never
+> appears in the release notes.
 
-- **Settings-page styling aligned with the dsh design system.** The MCP section
-  no longer renders raw controls with inline styles and literal colours: it
-  ships one token-only stylesheet (`src/client/styles.ts`, injected under the
-  official `style[data-plugin-css]` convention) whose values mirror the pinned
-  design system — `ui-primitives` Button/Tag/Pill/Switch geometry, the
-  settings-panel card and editing-surface fills, the official field
-  vocabulary — so the section reads as part of the panel in both themes
-  (closes review finding FE-5; mapping table in `docs/ui-notes.md` §6).
-- **Workflow actions are pinned to commit SHAs.** Every `uses:` in `ci.yml` and
-  `release.yml` now names a 40-hex commit (`actions/checkout@v5.1.0`,
-  `actions/setup-node@v5.0.0`, `actions/upload-artifact@v6.0.0`,
-  `softprops/action-gh-release@v3.0.3`) instead of a moving major, and the
-  temporary allowlist in `scripts/verify-workflow-action-pins.mjs` is empty —
-  the condition that script documented ("replace it once SHA resolution is
-  possible") is met. Pins are bumped by hand (Dependabot stays disabled).
-- **Documentation consolidation.** Every audit and evidence page now carries an
-  as-of/status frame, and `docs/review/STATUS.md` records the consolidated
-  disposition plus the claims an earlier audit got wrong (a `dependabot.yml` that
-  never existed, stale test counts, outdated recon API shapes). Release and
-  install examples are version-generic instead of pinned to a past release, and
-  `README.md` gains a *Relationship to the official dsh MCP client* section.
-  `.github/workflows/release.yml` drops `--legacy-peer-deps`, so the release gate
-  resolves exactly like CI.
+## [0.0.2] - 2026-09-14
+
+Upstream compatibility release. The plugin was migrated to the **dsh 0.1.5**
+generation (npm `latest`) and audited end-to-end against it — host half and
+browser half — with no API adaptation required beyond the client type surface;
+the line then grew the 0.0.2 documentation/UX work, the MCP transcript lane, and
+the verification hardening that followed two adversarial review rounds.
 
 ### Added
 
+- **MCP calls get their own transcript row.** The browser half now owns how MCP
+  tool calls render, through one keyed `tool.call.toolview` registration per
+  discovered tool name: a plug mark, a `serverName · toolName` title with a
+  `stdio` / `http` transport tag, and an expandable body with the raw arguments
+  and the rendered result. Running and settled calls are deliberately different
+  — running carries the sweep treatment, a primary title and `aria-busy`;
+  settled drops the animation and shows its duration; a failure takes the error
+  token on icon, title and summary; an interrupted call is marked as stopped.
+  The name set is discovered from the staged session's own event window — every
+  `request/header` (the model-facing tool array) **and** every `tool/call`
+  (its own wire name). Both sources are load-bearing: the window is a bounded
+  tail page of the session log while headers are emitted at loop boundaries
+  rather than per turn, so a call can outlive its describing header and still be
+  registered. The lane therefore needs **no host API**, adds **no runtime
+  dependency** (both glyphs are inline SVG and the built bundle still requires
+  only react/react/jsx-runtime), and degrades to the shipped generic row
+  whenever a name is unregistered or past the 256-entry registration cap. Every colour is a `--dsw-*` alias token and every size
+  mirrors the shipped row metrics. Evidence: `tests/client/tool-card.spec.tsx`
+  and `tests/client/tool-register.spec.ts`, plus
+  `scripts/verify-client-artifact.mjs` — run by `verify:package`, it drives the
+  BUILT `lib/client.js` through the loader wrapper in jsdom and asserts the
+  registrations, both state treatments and the click-to-expand interaction; that
+  gate now also asserts client-bundle purity on the packed build. The live
+  M0/M1 smoke re-run at HEAD against the scratch 0.1.2-rc.1 anchor (with freshly
+  wiped scratch homes, see Fixed) confirms the boot graph still accepts the
+  plugin — install `exit=0`, the profile gains `dsh-chamber-mcp`, its inventory
+  row reads `enabled:true, fiberPhase:"active"` — and that the model-facing tool
+  list carries `mcp__fixture__echo` / `mcp__fixture__env_report` in the enabled
+  workspace while the disabled workspace's turn carries none.
 - **Concurrency, hot-reload and hand-editing coverage.** New regression tests
   pin what was previously design-level only: several servers running at once
   (one supervisor each, a server joining while others are live, removal
@@ -46,46 +63,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   document stays in effect). README gains a "Where the configuration lives"
   section: document path and YAML shape, credential refs vs values, and the
   hand-editing rules.
-
-### Fixed
-
-- Credential pills, cards and the form no longer widen the settings column when
-  a header name, credential ref or working directory is long: the pill shrinks
-  and ellipsizes (with `title` fallbacks) and path-like copy wraps.
-- Row-level validation now marks the offending input (error border +
-  `aria-invalid`), not just the problem list under it.
-- **The live-smoke driver works end to end again.** `scripts/smoke/m0.mjs`
-  referenced an undeclared `PKG_NAME` (the M0 driver died at startup) and now
-  derives name/version from `package.json`; `scripts/smoke/m1.mjs` recorded the
-  plugin install as `exit=undefined` because it read `.status` off an
-  `execFileSync` stdout string — it now uses `spawnSync`, records a real exit
-  status, and fails the run when it is non-zero; the stdio fixture
-  (`scripts/smoke/fixture/echo-server.mjs`) no longer hard-codes the authoring
-  box's absolute SDK path, so `npm run test:smoke` is runnable outside that one
-  checkout.
-- `scripts/release-notes.mjs` tracks fenced code blocks, so a `## ` line inside a
-  fence can no longer truncate the composed release body, and `--out` creates
-  missing parent directories instead of failing with a raw ENOENT.
-
-### Security
-
-- **Smoke transcripts can no longer capture a dsh launch token.**
-  `scripts/smoke/instance.mjs` masks `token=…` where child output is echoed or
-  logged (`dsh web` prints a fresh per-process token on every boot, and that
-  token authenticates the instance's whole Host API and WebSocket surface). The
-  two values that had reached the repository are fully purged: the committed
-  transcript is redacted, the 23 gitignored `.smoke/**/*.log` transcripts were
-  scrubbed, and history was rewritten so no commit or object in this clone still
-  contains them, and the rewritten history was force-pushed (`main` bdbb6b3 →
-  fb5255d, tag `v0.0.1` 4e1962a → 8e32806) so the public remote serves the purged
-  history — verified from a fresh clone. See `docs/review/STATUS.md`
-  §"Launch-token purge".
-
-## [0.0.2] - 2026-09-10
-
-Upstream compatibility release: the plugin was migrated to the **dsh 0.1.5-rc.1**
-generation (npm `latest`) and audited end-to-end against it — host half and
-browser half — with no API adaptation required beyond the client type surface.
 
 ### Changed
 
@@ -144,6 +121,36 @@ browser half — with no API adaptation required beyond the client type surface.
   so nothing was broken by the old range; the install log now matches the
   documented support window.
 
+- **Settings-page styling aligned with the dsh design system.** The MCP section
+  no longer renders raw controls with inline styles and literal colours: it
+  ships one token-only stylesheet (`src/client/styles.ts`, injected under the
+  official `style[data-plugin-css]` convention) whose values mirror the pinned
+  design system — `ui-primitives` Button/Tag/Pill/Switch geometry, the
+  settings-panel card and editing-surface fills, the official field
+  vocabulary — so the section reads as part of the panel in both themes
+  (closes review finding FE-5; mapping table in `docs/ui-notes.md` §6).
+- **Workflow actions are pinned to commit SHAs.** Every `uses:` in `ci.yml` and
+  `release.yml` now names a 40-hex commit (`actions/checkout@v5.1.0`,
+  `actions/setup-node@v5.0.0`, `actions/upload-artifact@v6.0.0`,
+  `softprops/action-gh-release@v3.0.3`) instead of a moving major, and the
+  temporary allowlist in `scripts/verify-workflow-action-pins.mjs` is empty —
+  the condition that script documented ("replace it once SHA resolution is
+  possible") is met. Pins are bumped by hand (Dependabot stays disabled).
+- **Documentation consolidation.** The root `README.md` is restructured around
+  the reader's path — install, use, what the model sees (injection semantics,
+  tool naming, context-meter footprint), document format and hand-editing,
+  uninstall, the official-client comparison, compatibility, security/trust
+  model, troubleshooting and development — and `docs/README.md` becomes a
+  linked index with an explicit point-in-time reading convention. Every audit
+  and evidence page now carries an as-of/status frame, and
+  `docs/review/STATUS.md` records the consolidated disposition plus the claims
+  an earlier audit got wrong (a `dependabot.yml` that never existed, stale test
+  counts, outdated recon API shapes). Release and install examples are
+  version-generic, `docs/RELEASE.md` gains a runnable pre-tag checklist and the
+  list of version-bearing docs to update with a release, and
+  `.github/workflows/release.yml` drops `--legacy-peer-deps`, so the release gate
+  resolves exactly like CI.
+
 ### Fixed
 
 - **`tools/list` pagination could spin forever.** A server repeating a
@@ -160,6 +167,51 @@ browser half — with no API adaptation required beyond the client type surface.
   is already pathological, so no legitimate server is restricted by this — the
   regression test without the cap exhausts the V8 heap.
 
+- **The MCP row now follows the Settings font-size axis.** Its title, summary and
+  duration read the shipped `--dsh-content-font-size-secondary` /
+  `--dsh-content-font-delta` tokens (with the shipped defaults as fallbacks)
+  exactly as the shipped tool rows do; the previous fixed `13px/24px` froze the
+  row at the default size. The style-token whitelist test knows both tokens.
+- **The live-smoke drivers were reusing their scratch homes.** `scripts/smoke/m0.mjs`
+  and `m1.mjs` created their scratch `$DSH_HOME` but never wiped it, so a run
+  inherited the previous run's profile: once the package rename and version bump
+  moved the packed tarball, the stale profile dependency pointed at a file that
+  no longer existed, the install phase failed with ENOENT — and the M0 driver,
+  which only *logged* the exit status, carried on against the OLD installed
+  package (so its "after install" evidence proved nothing). Both drivers now
+  delete their scratch home and workspace dirs before booting, M0 fails the run
+  on a non-zero install or a profile that did not gain the bundle, and both hand
+  `dsh plugin add` a controlled environment (PATH, the DSH home contract and
+  proxy/CA settings) instead of inheriting the invoking npm's config channel:
+  the run that failed had inherited it, and a wiped scratch home is exactly the
+  case where the profile's pnpm must fill its store from scratch. Every run
+  since — through `npm run test:smoke`, the documented entry point — passes.
+  The same class of failure survived in the *tarball*: the drivers packed only
+  `if (!existsSync(TGZ))`, so a `.smoke/*.tgz` left by an earlier revision (same
+  name, same version) was installed and the run reported green against old code.
+  Both drivers now pack from the working tree on **every** run, install and boot
+  through the **anchor CLI** (so the run is one generation — the chamber's, read
+  at run time rather than assumed), assert the installed package version equals
+  the working tree's, and record the anchor version, tarball path and installed
+  artifact in the transcript.
+- Credential pills, cards and the form no longer widen the settings column when
+  a header name, credential ref or working directory is long: the pill shrinks
+  and ellipsizes (with `title` fallbacks) and path-like copy wraps.
+- Row-level validation now marks the offending input (error border +
+  `aria-invalid`), not just the problem list under it.
+- **The live-smoke driver works end to end again.** `scripts/smoke/m0.mjs`
+  referenced an undeclared `PKG_NAME` (the M0 driver died at startup) and now
+  derives name/version from `package.json`; `scripts/smoke/m1.mjs` recorded the
+  plugin install as `exit=undefined` because it read `.status` off an
+  `execFileSync` stdout string — it now uses `spawnSync`, records a real exit
+  status, and fails the run when it is non-zero; the stdio fixture
+  (`scripts/smoke/fixture/echo-server.mjs`) no longer hard-codes the authoring
+  box's absolute SDK path, so `npm run test:smoke` is runnable outside that one
+  checkout.
+- `scripts/release-notes.mjs` tracks fenced code blocks, so a `## ` line inside a
+  fence can no longer truncate the composed release body, and `--out` creates
+  missing parent directories instead of failing with a raw ENOENT.
+
 ### Security
 
 - Pagination is now bounded in both dimensions: a repeated cursor and an
@@ -167,21 +219,43 @@ browser half — with no API adaptation required beyond the client type surface.
   previously hold a supervisor in an endless `tools/list` request loop with
   either trick, driving unbounded network work and memory growth.
 
+- **Smoke transcripts can no longer capture a dsh launch token.**
+  `scripts/smoke/instance.mjs` masks `token=…` where child output is echoed or
+  logged (`dsh web` prints a fresh per-process token on every boot, and that
+  token authenticates the instance's whole Host API and WebSocket surface). The
+  two values that had reached the repository are fully purged: the committed
+  transcript is redacted, the 23 gitignored `.smoke/**/*.log` transcripts were
+  scrubbed, and history was rewritten so no commit or object in this clone still
+  contains them, and the rewritten history was force-pushed (`main` bdbb6b3 →
+  fb5255d, tag `v0.0.1` 4e1962a → 8e32806) so the public remote serves the purged
+  history — verified from a fresh clone. See `docs/review/STATUS.md`
+  §"Launch-token purge".
+
 ### Compatibility
 
-- Peer ranges stay `^0.1.2-rc.1 || ^0.1.5-rc.1`: the chamber anchor still runs
-  0.1.2-rc.1, the surface this plugin calls is byte-identical or additively
-  changed across the two generations, and the migrated build was live-verified
-  on **both** (the 0.1.5 line and the 0.1.2-rc.1 anchor). CI now guards the
-  0.1.5 set only.
-- Verification for this release: `npm run check` PASS (typecheck, 138 tests,
-  build, package verification) plus a live boot of the real 0.1.5-rc.1 CLI —
+- Peer ranges stay `^0.1.2-rc.1 || ^0.1.5-rc.1`: the surface this plugin calls
+  is byte-identical or additively changed across the two generations, and the
+  migrated build was live-verified on **both** (the 0.1.5 line and the
+  0.1.2-rc.1 anchor, which was the chamber's generation at recon and first
+  release). CI guards the 0.1.5 set only.
+- Verification for this release: `npm run check` PASS (typecheck, **185 tests /
+  14 files**, build, package verification — 36 packed entries, consumer d.ts
+  check, client-bundle purity, the jsdom artifact check of the shipped browser
+  half, deterministic rebuild) plus a live smoke run that **packs from the
+  working tree, installs and boots through the chamber anchor CLI** (`dsh
+  0.1.5-rc.2` — the gateway moved to 0.3.0 during this line, so the anchor and
+  the pinned generation now coincide) —
   per-workspace `mcp__<server>__*` injection captured from the model-facing tool
   list (R3 PASS), and the browser half fetched from `/plugins/`, evaluated under
   the frozen platform table, and driven through `apply()` against the real
   service contracts (dictionaries, settings scope, `settings.section`
   registration, both remote subscriptions all reached). Both checks were run
   again after the `dsh.client.inject` change, which alters the boot graph row.
+- The live smoke itself is now trustworthy: the drivers wipe their scratch homes,
+  pack from the working tree on every run, install and boot through one anchor
+  generation, and fail the run if the install exits non-zero, the profile misses
+  the bundle, or the installed version differs from `package.json` — and each
+  transcript records the anchor version, tarball and installed artifact.
 
 ## [0.0.1] - 2026-09-06
 

@@ -7,7 +7,13 @@
  *  3. extract the tarball and typecheck a small consumer against BOTH
  *     entry points (`dsh-chamber-mcp` host types and `dsh-chamber-mcp/client`)
  *     with peer types resolved from the repo tree;
- *  4. determinism spot check: a second build must produce identical
+ *  4. assert the shipped browser half requires ONLY the React platform
+ *     modules (the client-bundle purity invariant — every `@deepseek-ai/*`
+ *     import must be type-only and erased);
+ *  5. drive the built browser half through the loader wrapper in jsdom and
+ *     assert its MCP tool-row registrations, states and interaction
+ *     (`scripts/verify-client-artifact.mjs`);
+ *  6. determinism spot check: a second build must produce identical
  *     lib/index.js and lib/client.js.
  */
 import { execFileSync } from 'node:child_process'
@@ -93,7 +99,29 @@ for (const key of ['name', 'inject', 'Config', 'apply']) {
 }
 console.log('built lib/index.js imports OK (exports: ' + Object.keys(probe).join(', ') + ')')
 
-// 4. determinism: rebuild once more and compare host + client bundles
+// Client-bundle purity (repo invariant): the shipped browser half is served
+// from the loader's frozen platform table, so the ONLY specifiers it may
+// require are the React modules. Every `@deepseek-ai/*` import in the client
+// sources must be type-only and erased by the bundle step; a runtime import
+// that slipped through would resolve nowhere in the browser.
+const clientBundle = readFileSync(join(root, 'lib', 'client.js'), 'utf8')
+const allowed = new Set(['react', 'react/jsx-runtime'])
+const required = new Set(Array.from(clientBundle.matchAll(/require\("([^"]+)"\)/g), (match) => match[1]))
+const impure = [...required].filter((name) => !allowed.has(name))
+if (impure.length > 0) {
+  throw new Error(`client bundle requires non-platform module(s): ${impure.join(', ')}`)
+}
+if (!required.has('react')) {
+  throw new Error('client bundle does not require react — not a real plugin bundle?')
+}
+console.log(`client bundle purity OK (requires: ${[...required].sort().join(', ')})`)
+
+// 5. shipped browser half, driven for real: the built bundle is evaluated
+// through the loader wrapper against a fake client context, and its MCP tool
+// row registrations/rendering/interaction are asserted.
+run(process.execPath, [join(root, 'scripts', 'verify-client-artifact.mjs')], root)
+
+// 6. determinism: rebuild once more and compare host + client bundles
 const hash = (f) => createHash('sha256').update(readFileSync(f)).digest('hex')
 const before = [hash(join(root, 'lib', 'index.js')), hash(join(root, 'lib', 'client.js'))]
 run(process.execPath, [join(root, 'scripts', 'build.mjs')], root)

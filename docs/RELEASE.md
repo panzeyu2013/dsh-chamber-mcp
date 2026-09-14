@@ -7,7 +7,8 @@ main, every `v*` tag push, and every PR against **Node 24** (chamber norm: a
 tag can never publish an untested commit; release.yml additionally re-runs
 the full gate itself because tag-triggered workflows run in parallel). The
 first step verifies workflow action pins and release structure
-(`npm run verify:workflows`); installs are frozen `npm ci` with a
+(`node scripts/verify-workflow-action-pins.mjs`, the script the
+`verify:workflows` alias wraps); installs are frozen `npm ci` with a
 lockfile-not-rewritten assert. The workflow is also dispatchable so the
 self-hosted live-smoke lane is reachable.
 
@@ -20,11 +21,18 @@ self-hosted live-smoke lane is reachable.
      `LICENSE`, `README.md`, `package.json`; no `src|tests|.smoke|docs` leaks);
    - a consumer typecheck passes against the **packed** artifact for both
      entry points (`dsh-chamber-mcp` and `dsh-chamber-mcp/client`);
+   - the built host entry imports and exports `name`/`inject`/`Config`/`apply`;
+   - the built `lib/client.js` requires only `react` / `react/jsx-runtime`
+     (client-bundle purity), and — driven through the loader wrapper in jsdom
+     (`scripts/verify-client-artifact.mjs`) — registers one keyed
+     `tool.call.toolview` view per discovered MCP tool, renders the running and
+     settled rows with their distinct state treatment, and expands on a click;
    - the build is deterministic (second build byte-identical).
 6. Artifact upload of the tarball.
 
-A **live smoke job** (M0/M1 against a real chamber-anchored dsh 0.1.2-rc.1
-instance) is available as `workflow_dispatch` on a self-hosted runner tagged
+A **live smoke job** (M0/M1 against a real chamber-anchored instance — the
+anchor CLI the gateway currently ships, dsh **0.1.5-rc.2** as measured
+2026-09-14) is available as `workflow_dispatch` on a self-hosted runner tagged
 `dsh-smoke` (see §smoke, which records where the anchor CLI lives). It never runs
 on ordinary runners.
 
@@ -32,6 +40,32 @@ Dependency updates are **manual**: Dependabot is disabled by maintainer choice
 (there is no `.github/dependabot.yml`), so action pins and the pinned
 `@deepseek-ai/*` generation are bumped by hand and guarded by
 `npm run verify:workflows` + `npm run check`.
+
+## Pre-tag checklist (run all of it on the release commit)
+
+```sh
+# 0. version identity — all three must print the same <version>, and the grep
+#    must match a DATED "## [<version>] - YYYY-MM-DD" heading
+node -p "require('./package.json').version"
+node -p "require('./package-lock.json').packages[''].version"
+grep -n "^## \[$(node -p "require('./package.json').version")\] - " CHANGELOG.md
+
+# 1. full gate (same chain as CI; installs are frozen npm ci, never bare install)
+npm ci --no-audit --no-fund && npm run check
+
+# 2. release mechanics
+node scripts/release-notes.mjs "$(node -p "require('./package.json').version")"   # notes compose
+node scripts/verify-workflow-action-pins.mjs                                      # pins + release structure
+
+# 3. recommended: live smoke on the smoke machine
+npm run test:smoke
+
+# 4. what the remote actually has (never quote a released version from memory)
+git ls-remote --tags origin
+```
+
+Only then commit, tag `v<version>` and push — the tag is what makes the release
+real. A tag must never point at a commit whose gate was not run.
 
 ## Releasing a tgz GitHub Release (tag-driven)
 
@@ -52,20 +86,40 @@ Changelog-first flow (Keep a Changelog — see CHANGELOG.md):
 #    section, e.g. "## [<version>] - <YYYY-MM-DD>", grouped by
 #    Added / Changed / Deprecated / Removed / Fixed / Security
 # 2. bump package.json#version to the same <version>
-
-# 3. local release gate (same as CI — no --legacy-peer-deps since the 0.1.5
-#    migration put every @deepseek-ai devDep on one generation)
-npm ci --no-audit --no-fund && npm run check
-
-# 4. optional but recommended: live smoke on the smoke machine
-npm run test:smoke          # M1 (R3 capture) + M0 evidence
-
+# 3. update the version-bearing prose (see "Docs to update with the release")
+# 4. run the Pre-tag checklist above in full
 # 5. commit + tag + push
 git add -A && git commit -m "release: v<version>"
 git tag v<version>
 git push origin main
 git push origin v<version>  # triggers .github/workflows/release.yml
 ```
+
+### Docs to update with the release
+
+Keep these four in step with the tag; each one states, or is composed from, the
+released version:
+
+| File | What must be true at the tagged commit |
+|---|---|
+| `CHANGELOG.md` | a dated `## [<version>] - YYYY-MM-DD` section (release notes are composed from it — the workflow fails without one) |
+| `README.md` | the *Install* release-status line names the version actually on the Releases page, and the install example resolves |
+| `docs/review/STATUS.md` | the "Project identity at HEAD" block (published release, test counts, toolchain pins) |
+| `AGENTS.md` | the "Published release" line and the version-identity invariant |
+
+Re-run the pre-tag checklist after editing any of them.
+
+**Ordering note.** At the tagged commit the Releases page still serves the
+*previous* release (the tag push is what creates the new one), so the pre-tag
+wording is honest only until the workflow finishes. Three statements therefore
+flip in a **post-release edit** — do it right after the workflow reports success,
+then commit with `docs: release v<version> is out`:
+
+| File | Before the workflow finishes | After it succeeds |
+|---|---|---|
+| `README.md` | "the newest published release is `v<previous>`; the `<version>` line is prepared … but not tagged yet" | "the newest published release is **`v<version>`**" (drop the not-tagged sentence; the install example already uses `<version>` placeholders) |
+| `docs/review/STATUS.md` | "`<version>` is prepared on `main` … but **not tagged**; do not describe it as released" | "**Published release: `v<version>`**" plus the tag/Release line, and the committed test-count sequence |
+| `AGENTS.md` | "**Published release: v<previous>**; the working tree is the `<version>` line" | "**Published release: v<version>**" and drop the "tag is the outstanding step" clause from the version-identity invariant |
 
 The workflow then:
 
@@ -97,9 +151,10 @@ Compatibility notes for consumers:
   fallback farm; only `@modelcontextprotocol/sdk`, `@deepseek-ai/schemastery`
   and `zod` are real dependencies installed by pnpm.
 - Support window: dsh **0.1.5-rc.1 / 0.1.5-rc.2** (npm `latest`, the pinned
-  devDependency set and the CI guard) and **0.1.2-rc.1** (the chamber anchor
-  generation, still in production), expressed by the peer range
-  `^0.1.2-rc.1 || ^0.1.5-rc.1`. A dsh upgrade that changes the typed surface
+  devDependency set, the CI guard, and — as of 2026-09-14 — the chamber anchor:
+  gateway 0.3.0 ships dsh 0.1.5-rc.2) and **0.1.2-rc.1** (the anchor generation
+  at recon and first release; still inside the window), expressed by the peer
+  range `^0.1.2-rc.1 || ^0.1.5-rc.1`. A dsh upgrade that changes the typed surface
   should trigger a compat release; CI typecheck against the installed dsh set
   is the guard (devDependencies pin `0.1.5-rc.2`, the resolved generation).
 - Auditing a new upstream line (the 0.1.5 migration, CHANGELOG 0.0.2): diff
@@ -128,15 +183,23 @@ Compatibility notes for consumers:
      `dsh-client-locale`). It is load-bearing for boot-graph factory arrival
      and entry composition, not decoration.
 
-## Smoke (§smoke) — what the self-hosted job runs
+## Smoke — what the self-hosted job runs
 
 `npm run test:smoke` = `scripts/smoke/m1.mjs` (fresh install → namespace R/W →
 two-workspace R3 tool-capture PASS) then `scripts/smoke/m0.mjs` (install,
-inventory, revision conflict, credentials, gate). Prereqs on the runner:
-writable repo checkout, the anchor CLI path from `scripts/smoke/instance.mjs`,
-pnpm on PATH, registry network for pnpm; everything else lands under
-`.smoke/` (gitignored). Evidence artifacts: `docs/milestones/M1-live-capture.log`
-etc.
+inventory, revision conflict, credentials, gate). Both drivers **pack the plugin
+from the working tree on every run** and drive the install *and* the boot through
+the anchor CLI (`scripts/smoke/instance.mjs`'s `ANCHOR_CLI` — the gateway's
+current anchor, dsh 0.1.5-rc.2 as measured 2026-09-14), recording the anchor
+version, tarball path and installed artifact at the top of the transcript; they
+fail the run if the install exits non-zero, if the profile does not gain the
+bundle, or if the installed version differs from `package.json`. Prereqs on the
+runner: writable repo checkout, that anchor CLI, pnpm on PATH, registry network
+for pnpm; everything else lands under `.smoke/` (gitignored). Evidence artifacts:
+`docs/milestones/M1-live-capture.log` etc. **Note:** a run rewrites the tracked
+`docs/milestones/M0-raw.log` / `M1-raw.log`; review that diff deliberately
+(commit a fresh capture, or revert to keep the historical one) rather than
+letting it ride along in an unrelated commit.
 
 ## Rollback
 

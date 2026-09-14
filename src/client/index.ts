@@ -19,6 +19,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { CredentialInfo as CredentialInfoView } from '@deepseek-ai/dsh-credentials/types'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client' // 'settings.section' SlotMap entry + ctx.settingsScope merge (type-only)
+import type {} from '@deepseek-ai/dsh-client-ui-tool/client' // 'tool.call.toolview' SlotMap entry (type-only)
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client' // ctx.slots merge (type-only; the renderer owns the slot registry in the 0.1.5 generation)
 import type {} from '@deepseek-ai/dsh-client-locale/client' // ctx.locale merge (type-only)
 import type {} from '@deepseek-ai/dsh-api-workspace-controller/client' // ctx.workspaces merge + WorkspaceSnapshot (type-only)
@@ -33,6 +34,18 @@ import {
 } from './controller.js'
 import { McpScopeSection } from './section.js'
 import { mountStyles } from './styles.js'
+import { mcpToolView } from './tool-card/view.js'
+import {
+  DEFAULT_TOOL_VIEW_LIMIT,
+  createToolCardRegistry,
+  startToolCardObserver,
+  type SessionsLike,
+} from './tool-card/register.js'
+
+/** Diagnostic sink the client context may carry (never required). */
+interface LoggerLike {
+  warn(message: string): void
+}
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -104,8 +117,11 @@ function remoteCredentials(wire: McpRemoteWire): CredentialsGateway {
 /**
  * Required services (cordis fiber inject names). `remote.credentials` is the
  * dotted service this plugin actually calls; see the FE-3 note at the top.
+ * `sessions` is the transcript lane's data source (the staged session's event
+ * window), and `slots` carries both the settings section and the keyed tool
+ * rows.
  */
-export const inject = ['slots', 'locale', 'remote', 'remote.credentials', 'settingsScope', 'workspaces']
+export const inject = ['slots', 'locale', 'remote', 'remote.credentials', 'settingsScope', 'workspaces', 'sessions']
 
 /**
  * Apply the browser half. The context type is cordis `Context` — the client
@@ -117,6 +133,7 @@ export const inject = ['slots', 'locale', 'remote', 'remote.credentials', 'setti
  * local structural patch is needed.
  */
 export function apply(ctx: Context): void {
+  const logger = (ctx as unknown as { logger?: LoggerLike }).logger
   // (0) stylesheet: one <style data-plugin-css> tag appended to the document
   // (the official bundles' own convention — the built client may require
   // nothing but react, so the sheet ships as a string). Fiber-owned, so an
@@ -172,4 +189,86 @@ export function apply(ctx: Context): void {
       McpScopeSection,
     ),
   )
+
+  // (d) transcript lane: one keyed tool view per MCP tool the model was
+  // actually offered. The name set is discovered from the staged session's own
+  // event window (`request/header` carries the model-facing tool array), so
+  // this lane needs NO host API — and a composition without the sessions
+  // service simply leaves every MCP call on the shipped generic row. The
+  // settings document supplies the server identity each public name belongs to
+  // (serverName can itself contain '_', so the owning server is matched by the
+  // longest configured prefix, never by splitting the name).
+  ctx.effect(() => {
+    let refused = false
+    let registrationFailed = false
+    let reconcileFailed = false
+    const registry = createToolCardRegistry({
+      host: {
+        register(identity) {
+          // `inject` waits for the slot declaration (the chat UI may compose
+          // after this plugin) and returns the disposer that removes the row.
+          // Registration runs from a session subscription, so a failure here
+          // must NOT propagate into the transcript stream: it degrades to the
+          // shipped row and is reported once (the lane's documented fallback).
+          // `undefined` tells the reconciler the name is still unregistered,
+          // so a later discovery/settings pass retries it.
+          try {
+            return ctx.slots.inject('tool.call.toolview', () =>
+              ctx.slots.register(
+                {
+                  name: 'tool.call.toolview',
+                  key: identity.publicName,
+                  locale: NS,
+                  // Shadowing rank 1 (lowest renders). A future official row
+                  // for the same wire name wins, and a same-key/same-priority
+                  // pair — which THROWS in the slot core, hitting whichever
+                  // package registers second — is impossible by construction.
+                  priority: 1,
+                },
+                mcpToolView(identity),
+              ),
+            )
+          } catch (error) {
+            if (!registrationFailed) {
+              registrationFailed = true
+              logger?.warn(
+                `mcp-scope: could not register the MCP tool row for "${identity.publicName}" — MCP calls keep the generic row: ${String(error)}`,
+              )
+            }
+            return undefined
+          }
+        },
+      },
+      servers: () => controller.store.getSnapshot().doc.servers,
+      onRefuse: (name) => {
+        if (refused) return
+        refused = true
+        // The cap protects the keyed dispatch, which scans the slot's entries
+        // per row render; names past it keep the shipped generic row.
+        logger?.warn(
+          `mcp-scope: more than ${DEFAULT_TOOL_VIEW_LIMIT} MCP tools discovered — remaining MCP calls render as the generic tool row (first refused: ${name})`,
+        )
+      },
+      onError: (error) => {
+        // Reconciliation runs inside framework publish paths (session window,
+        // settings commit): report once and keep the shipped rows.
+        if (reconcileFailed) return
+        reconcileFailed = true
+        logger?.warn(`mcp-scope: MCP tool-row reconciliation failed — MCP calls keep the generic row: ${String(error)}`)
+      },
+    })
+    const stop = startToolCardObserver({
+      sessions: (ctx as unknown as { sessions?: SessionsLike }).sessions,
+      registry,
+    })
+    // A settings commit can re-shape an identity (server renamed, transport
+    // switched, server removed): re-run the diff against the new document
+    // instead of waiting for the next discovery.
+    const offDoc = controller.store.subscribe(() => registry.resync())
+    return () => {
+      stop()
+      offDoc()
+      registry.dispose()
+    }
+  }, 'mcp-scope: tool rows')
 }

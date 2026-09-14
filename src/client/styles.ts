@@ -122,6 +122,25 @@ export const styles = {
   rowInput: 'mcpScope_rowInput',
   problems: 'mcpScope_problems',
   formActions: 'mcpScope_formActions',
+  // MCP tool row (transcript lane, registered through `tool.call.toolview`)
+  toolCard: 'mcpScope_toolCard',
+  toolHead: 'mcpScope_toolHead',
+  toolLeading: 'mcpScope_toolLeading',
+  toolGlyphIdle: 'mcpScope_toolGlyphIdle',
+  toolGlyphHover: 'mcpScope_toolGlyphHover',
+  toolDot: 'mcpScope_toolDot',
+  toolSep: 'mcpScope_toolSep',
+  toolVisuallyHidden: 'mcpScope_toolVisuallyHidden',
+  toolTitle: 'mcpScope_toolTitle',
+  toolTag: 'mcpScope_toolTag',
+  toolDuration: 'mcpScope_toolDuration',
+  toolSummary: 'mcpScope_toolSummary',
+  toolSummaryError: 'mcpScope_toolSummaryError',
+  toolBody: 'mcpScope_toolBody',
+  toolLabel: 'mcpScope_toolLabel',
+  toolCode: 'mcpScope_toolCode',
+  toolCodeOutput: 'mcpScope_toolCodeOutput',
+  toolEmpty: 'mcpScope_toolEmpty',
 } as const
 
 /** Join class names, dropping the falsy ones (`clsx`-lite, no dependency). */
@@ -812,6 +831,275 @@ export const css = `
   border-top: 0.5px solid var(--dsw-alias-border-l2);
 }
 
+/* ---------------------------------------------------------------------------
+   MCP tool row (transcript lane). Chrome mirrors the shipped tool rows rule for
+   rule where the shipped rows define one: a 24px row with a 16px leading box
+   (glyphs at 14px), a 6px gap, a 13px/24px title in the secondary label colour
+   and a 14px/24px tertiary summary that ellipsizes. Terminal states follow the
+   shipped convention too — the leading slot yields to a status dot (error red,
+   interrupted amber), which is why the title itself carries no state colour.
+   Running and settled rows differ on purpose: the running row carries the
+   shipped sweep and a primary title, the settled row drops the animation and
+   shows its duration.
+   --------------------------------------------------------------------------- */
+
+.mcpScope_toolCard {
+  display: flex;
+  flex-direction: column;
+  margin: 2px 0;
+}
+
+.mcpScope_toolHead {
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px 0 0;
+  border-radius: 8px;
+  cursor: default;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+}
+
+.mcpScope_toolHead[role='button'] {
+  cursor: pointer;
+}
+
+.mcpScope_toolHead[role='button']:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.mcpScope_toolHead:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.mcpScope_toolHead[data-state='running']::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 300px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--dsw-alias-bg-base) 60%, transparent) 55%, transparent 100%);
+  animation: mcpScope_toolSweep 2.6s ease-out infinite;
+}
+
+@keyframes mcpScope_toolSweep {
+  0% {
+    left: -300px;
+  }
+
+  90%, to {
+    left: 100%;
+  }
+}
+
+.mcpScope_toolLeading {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  display: inline-flex;
+  position: relative;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Running keeps the glyph — the sweep carries the in-flight signal. */
+.mcpScope_toolHead[data-state='running'] .mcpScope_toolLeading {
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* Hover swap of the shipped rows: the glyph yields to the chevron; the open
+   row shows the chevron outright (rendered by the component, not by CSS). */
+.mcpScope_toolGlyphIdle {
+  display: inline-flex;
+  transition: opacity 100ms ease;
+}
+
+.mcpScope_toolGlyphHover {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  opacity: 0;
+  transition: opacity 100ms ease;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.mcpScope_toolHead[data-open] .mcpScope_toolLeading {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.mcpScope_toolHead[role='button']:hover .mcpScope_toolGlyphIdle {
+  opacity: 0;
+}
+
+.mcpScope_toolHead[role='button']:hover .mcpScope_toolGlyphHover {
+  opacity: 1;
+}
+
+/* Run-state word for assistive technology (the shipped rule verbatim): the dot
+   and the sweep are colour-only, so the state needs text. The row keeps its own
+   visible text as the accessible name — the hidden word only appends to it. */
+.mcpScope_toolVisuallyHidden {
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  width: 1px;
+  height: 1px;
+  position: absolute;
+  overflow: hidden;
+}
+
+/* Title/summary separator: the shipped row's 2x2 caption dot (its own rule
+   verbatim, down to the 8px side margins). */
+.mcpScope_toolSep {
+  background: var(--dsw-alias-label-caption);
+  border-radius: 1px;
+  flex: none;
+  width: 2px;
+  height: 2px;
+  margin: 0 8px;
+}
+
+/* Terminal-state mark (the shipped StateDot geometry): a 10% halo under a
+   solid core at 60% scale, coloured by the state token. */
+.mcpScope_toolDot {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+}
+
+.mcpScope_toolDot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  corner-shape: round;
+  background: currentColor;
+  opacity: 0.1;
+}
+
+.mcpScope_toolDot::after {
+  content: '';
+  position: absolute;
+  inset: 20%;
+  border-radius: 50%;
+  corner-shape: round;
+  background: currentColor;
+}
+
+.mcpScope_toolDot[data-state='warning'] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.mcpScope_toolDot[data-state='error'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.mcpScope_toolTitle {
+  /* The shipped row's title metrics: the pinned theme declares both
+     --dsh-content-font tokens, so the row follows the Settings font-size axis;
+     the fallbacks are the shipped defaults. */
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+}
+
+.mcpScope_toolHead[data-state='running'] .mcpScope_toolTitle {
+  color: var(--dsw-alias-label-primary);
+}
+
+.mcpScope_toolTag {
+  font-size: 11px;
+  line-height: 16px;
+  flex: none;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 6px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The duration is the shipped row's summarySuffix (same size, line box and
+   colour), plus tabular figures so successive rows align. */
+.mcpScope_toolDuration {
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  flex: none;
+  margin-left: 4px;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.mcpScope_toolSummary {
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  min-width: 0;
+  flex: auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mcpScope_toolSummaryError {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.mcpScope_toolBody {
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 4px 8px;
+  padding-left: 12px;
+  border-left: 0.5px solid var(--dsw-alias-border-l2);
+  display: flex;
+}
+
+.mcpScope_toolLabel {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mcpScope_toolCode {
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 16px;
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 160px;
+  overflow: auto;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mcpScope_toolCodeOutput {
+  max-height: 240px;
+}
+
+.mcpScope_toolCode[data-error] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.mcpScope_toolEmpty {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-dimmed);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mcpScope_card,
   .mcpScope_switch,
@@ -822,6 +1110,15 @@ export const css = `
 
   .mcpScope_form {
     animation: none;
+  }
+
+  .mcpScope_toolHead[data-state='running']::after {
+    animation: none;
+  }
+
+  .mcpScope_toolGlyphIdle,
+  .mcpScope_toolGlyphHover {
+    transition: none;
   }
 }
 `

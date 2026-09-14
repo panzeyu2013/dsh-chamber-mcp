@@ -31,6 +31,15 @@ export const en = {
   'transport.stdio': 'stdio',
   'transport.http': 'Streamable HTTP',
 
+  // MCP tool row (transcript lane; registered through `tool.call.toolview`)
+  'tool.running': 'Running…',
+  'tool.failed': 'Failed',
+  'tool.stopped': 'Interrupted',
+  'tool.input': 'Input',
+  'tool.output': 'Output',
+  'tool.noOutput': 'No output',
+  'tool.normalized': 'Name was normalized to fit the tool-name limit',
+
   // server card summary (plural forms resolved through countKey)
   'server.envKeys.one': '{count} env key',
   'server.envKeys.other': '{count} env keys',
@@ -153,6 +162,15 @@ export const zh: Record<SettingsKey, string> = {
   // transport names
   'transport.stdio': 'stdio',
   'transport.http': '流式 HTTP',
+
+  // MCP 工具行（会话流；通过 tool.call.toolview 注册）
+  'tool.running': '运行中…',
+  'tool.failed': '失败',
+  'tool.stopped': '已中断',
+  'tool.input': '参数',
+  'tool.output': '结果',
+  'tool.noOutput': '无输出',
+  'tool.normalized': '名称已按工具名长度上限规范化',
 
   // server card summary (zh has no plural forms; mirrors carry identical text)
   'server.envKeys.one': '{count} 个环境变量键',

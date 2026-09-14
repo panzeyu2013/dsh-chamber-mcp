@@ -26,6 +26,30 @@ const outFile = outIndex >= 0 ? args[outIndex + 1] : undefined
 const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8')
 const lines = changelog.split('\n')
 
+// The documented flow moves `[Unreleased]` entries into the dated section before
+// tagging. Composing notes while that section still holds entries silently drops
+// them from the release body, so say so loudly (the notes are still composed —
+// the maintainer may be drafting).
+{
+  const start = lines.findIndex((line) => /^##\s+\[?Unreleased\]?\s*$/i.test(line.trim()))
+  if (start !== -1) {
+    const rest = lines.slice(start + 1)
+    const end = rest.findIndex((line) => /^##\s/.test(line))
+    // The section carries a standing blockquote that explains this very flow;
+    // only real entries (list items / prose) count as "still unreleased".
+    const body = (end === -1 ? rest : rest.slice(0, end)).filter(
+      (line) => line.trim() !== '' && !line.trimStart().startsWith('>'),
+    )
+    if (body.length > 0) {
+      console.error(
+        `release-notes: WARNING — "## [Unreleased]" still has ${body.length} non-empty line(s); ` +
+          'those entries are NOT part of these notes. Move them into the dated section first ' +
+          '(docs/RELEASE.md §Changelog-first flow).',
+      )
+    }
+  }
+}
+
 /** Heading level + parsed section key; sections are `## [<key>] - <date>` or `## <key>`. */
 function headingOf(line) {
   const trimmed = line.trim()

@@ -32,15 +32,19 @@ import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { assertSupportedJsonSchema } from '@deepseek-ai/dsh-tools'
 import type { JsonSchemaNode } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { HASH_LENGTH, MAX_PUBLIC_NAME_LENGTH, MCP_TOOL_PREFIX } from './shared/model.js'
 
-/** DeepSeek function-name contract: at most 64 characters. */
-export const MAX_PUBLIC_NAME_LENGTH = 64
+/**
+ * Re-exported naming-contract constants. They live in the shared pure model so
+ * the browser half can derive tool identity from a public name without
+ * importing this host module (`node:crypto` must never reach the client
+ * bundle); the names stay exported here because host consumers and
+ * `tests/tools.spec.ts` import them from this module.
+ */
+export { HASH_LENGTH, MAX_PUBLIC_NAME_LENGTH } from './shared/model.js'
 
 /** DeepSeek function-name contract: only `[A-Za-z0-9_-]` is allowed. */
 const INVALID_NAME_CHARS = /[^A-Za-z0-9_-]/g
-
-/** Hex chars of the SHA-256 identity hash appended on lossy normalization. */
-export const HASH_LENGTH = 12
 
 /**
  * Hard cap on one server's tool count. The official bridge mirrors
@@ -95,7 +99,7 @@ export type ToolDefinitions = ReadonlyMap<string, ToolDefinition>
  * collapse into one public name.
  */
 export function publicToolName(serverName: string, rawName: string): string {
-  const joined = `mcp__${serverName}__${rawName}`
+  const joined = `${MCP_TOOL_PREFIX}${serverName}__${rawName}`
   const normalized = joined.replace(INVALID_NAME_CHARS, '_')
   if (normalized === joined && normalized.length <= MAX_PUBLIC_NAME_LENGTH) return normalized
   const hash = createHash('sha256').update(`${serverName}\0${rawName}`).digest('hex').slice(0, HASH_LENGTH)

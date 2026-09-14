@@ -3,23 +3,16 @@
 // Evidence -> llm-requests.jsonl lines: workspace label is NOT on the wire, so we
 // prompt sequentially and record order: first prompt = on-workspace, second = off-workspace.
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, existsSync, rmSync, writeFileSync, appendFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, readFileSync, rmSync, writeFileSync, appendFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { Instance, SMOKE, ROOT, NODE, log } from './instance.mjs'
+import { Instance, SMOKE, ROOT, NODE, ANCHOR_CLI, cliVersion, log, packPluginTgz } from './instance.mjs'
 
 const PKG_META = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
 const PKG_NAME = PKG_META.name
 const PKG_VERSION = PKG_META.version
-const TGZ = join(SMOKE, `${PKG_NAME}-${PKG_VERSION}.tgz`)
-// Self-contained: pack the plugin tarball when it is not present yet (npm
-// cache redirected into .smoke so a read-only HOME cannot break the pack).
-if (!existsSync(TGZ)) {
-  execFileSync('npm', ['pack', '--pack-destination', SMOKE], {
-    cwd: ROOT, stdio: 'inherit',
-    env: { ...process.env, npm_config_cache: join(SMOKE, 'npm-cache') },
-  })
-}
+// Freshly packed from the working tree on every run (see packPluginTgz).
+const TGZ = packPluginTgz()
 
 const PORT = 32132
 const HOME = join(SMOKE, 'm1-home')
@@ -29,6 +22,10 @@ const REQ_LOG = join(SMOKE, 'logs', 'llm-requests.jsonl')
 const MOCK_LOG = join(SMOKE, 'logs', 'mock-llm.log')
 const OUT = join(ROOT, 'docs', 'milestones', 'M1-raw.log')
 
+// Scratch means scratch: wipe the home and the two workspace dirs first, or a
+// stale install from an earlier run silently becomes the thing under test (see
+// the same note in m0.mjs).
+for (const dir of [HOME, ON_DIR, OFF_DIR]) rmSync(dir, { recursive: true, force: true })
 for (const dir of [HOME, ON_DIR, OFF_DIR]) mkdirSync(dir, { recursive: true })
 rmSync(REQ_LOG, { force: true })
 
@@ -41,6 +38,32 @@ const inst = new Instance({ home: HOME, port: PORT, label: 'm1' })
 const evidence = []
 const say = (m) => { evidence.push(m); log(m) }
 
+/**
+ * Environment handed to the installer (`dsh plugin --profile web add`). It is
+ * deliberately CONTROLLED rather than inherited: the profile owns its package
+ * manager and store, while the invoking process (usually `npm run test:smoke`)
+ * carries npm's own config channel — and the first install into a freshly wiped
+ * scratch home failed while inheriting it. PATH, the DSH home contract and any
+ * proxy/CA settings are forwarded; everything else is the profile's business.
+ * Every run since has passed through the documented entry point.
+ *
+ * @returns the child environment.
+ */
+function installerEnv() {
+  const proxy = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) => /^(https?|no)_proxy$/i.test(key) || key === 'NODE_EXTRA_CA_CERTS',
+    ),
+  )
+  return {
+    ...proxy,
+    PATH: dirname(NODE) + ':' + (process.env.PATH ?? ''),
+    DSH_HOME: HOME,
+    HOME: join(SMOKE, 'homedir'),
+    DSH_TELEMETRY_DISABLED: '1',
+  }
+}
+
 try {
   // 1) install the plugin the user way, then reboot (first boot initializes the profile)
   await inst.boot()
@@ -48,14 +71,22 @@ try {
   // spawnSync (not execFileSync) so the install really reports an exit status:
   // execFileSync resolves to the child's stdout, and `.status` on that string is
   // undefined — the transcript used to record "exit=undefined" for a step whose
-  // success the install evidence depends on.
-  const add = spawnSync('/root/.nvm/versions/node/v22.22.3/bin/dsh',
-    ['plugin', '--profile', 'web', 'add', `file:${TGZ}`],
-    { env: { ...process.env, PATH: '/root/.nvm/versions/node/v22.22.3/bin:' + (process.env.PATH ?? ''), DSH_HOME: HOME, HOME: join(SMOKE, 'homedir') }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  // success the install evidence depends on. The ANCHOR CLI drives the install
+  // too, so install and boot are one generation (the chamber's).
+  say(`anchor CLI: ${ANCHOR_CLI} (dsh@${cliVersion(ANCHOR_CLI)})`)
+  say(`tarball: ${TGZ}`)
+  const add = spawnSync(NODE, [ANCHOR_CLI, 'plugin', '--profile', 'web', 'add', `file:${TGZ}`],
+    { env: installerEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
   if (add.status !== 0) throw new Error(`dsh plugin --profile web add failed (status ${add.status}): ${(add.stderr ?? '').trim()}`)
   say('dsh plugin add exit=' + add.status)
   const bundles = JSON.parse(readFileSync(join(HOME, 'profiles', 'web', 'package.json'), 'utf8')).dsh.profile.bundles
   say('bundles: ' + bundles.join(', '))
+  // The INSTALLED artifact must be the one this run packed from the working tree.
+  const installed = JSON.parse(readFileSync(join(HOME, 'profiles', 'web', 'node_modules', PKG_NAME, 'package.json'), 'utf8'))
+  if (installed.version !== PKG_VERSION) {
+    throw new Error(`installed ${PKG_NAME}@${installed.version} != working tree ${PKG_VERSION}`)
+  }
+  say(`installed: ${PKG_NAME}@${installed.version} from ${TGZ.split('/').pop()}`)
 
   await inst.boot(60_000, { DEEPSEEK_BASE_URL: 'http://127.0.0.1:39001' })
 
