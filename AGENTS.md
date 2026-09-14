@@ -2,10 +2,11 @@
 
 `dsh-chamber-mcp` is a standalone third-party dsh plugin (settings-namespace MCP
 servers with per-workspace per-agent tool-scope injection). Releases: GitHub Releases carrying the packed tgz + `.sha256` (npm publish
-temporarily disabled). **Published release: v0.0.1**; the working tree is the
-**0.0.2** line — version set and a dated CHANGELOG section are in place, but no
-`v0.0.2` tag has been pushed yet, so `v0.0.1` remains the newest tag and Release
-(verify with `git ls-remote --tags origin` before quoting a released version).
+temporarily disabled). **Published release: v0.0.2** — tag pushed and GitHub
+Release published 2026-09-14 (asset: `dsh-chamber-mcp-0.0.2.tgz` + `.sha256`);
+`v0.0.1` is the previous release. The next line's version is set in
+`package.json` plus a dated CHANGELOG section before its tag exists (verify with
+`git ls-remote --tags origin` before quoting a released version).
 Tagging, pushing and publishing are **maintainer actions**: never create a tag,
 push a ref, open or edit a GitHub Release, or run a publish, unless explicitly
 asked to in that turn. Preparing a release (docs, changelog, gate) is fine;
@@ -71,8 +72,8 @@ across both and both were live-verified. Migrating the pin: `docs/RELEASE.md`.
   values with CR/LF/NUL are rejected at the transport.
 - Version identity: package.json == package-lock `packages[""]` == the dated
   CHANGELOG section == the release tag. No release without a changelog entry.
-  (At HEAD the first three hold for `0.0.2`; the `v0.0.2` tag is the outstanding
-  step — do not describe it as released until it exists on the remote.)
+  (All four hold for `0.0.2`: tag `v0.0.2` → commit `0ce2ea6`, Release published
+  2026-09-14.)
 
 ## What must pass before tagging
 
