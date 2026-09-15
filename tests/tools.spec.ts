@@ -99,6 +99,17 @@ describe('publicToolName', () => {
 // ---- Definition build ----
 
 describe('fetchToolDefinitions', () => {
+  it('sends the configured timeout on tools/list and tools/call', async () => {
+    const client = createMockClient([{ name: 't', inputSchema: { type: 'object', properties: {} } }])
+    const defs = await fetchToolDefinitions(client as never, { serverName: 'srv', toolCallTimeoutMs: 1234 })
+    const listCall = client.request.mock.calls.find(([request]) => request.method === 'tools/list')
+    expect(listCall?.[2]).toEqual({ timeout: 1234 })
+    const definition = defs.get('mcp__srv__t')!
+    await definition.execute({}, execContext())
+    const callCall = client.request.mock.calls.find(([request]) => request.method === 'tools/call')
+    expect(callCall?.[2]).toMatchObject({ timeout: 1234 })
+  })
+
   it('builds server-qualified definitions from the mock list', async () => {
     const client = createMockClient([
       { name: 'greet', description: 'Say hello', inputSchema: { type: 'object', properties: { name: { type: 'string' } } } },

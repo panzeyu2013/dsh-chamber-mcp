@@ -52,7 +52,8 @@ credential refs) are removed by hand.
 
 ```ts
 // resolved: schema defaults ← composition base {} ← user layer (settings.yaml "mcp-scope:")
-servers: ServerDef[]        // serverName is the stable identity
+servers: ServerDef[]        // serverName is the stable identity; timeoutMs optional
+disabled: { [serverName]: true }                       // presence = globally OFF (0.0.3)
 overrides: { [workspaceId]: { [serverName]: true } }   // presence = explicitly OFF
 ```
 Deviations from the plan's shorthand (same semantics, documented in docs/acceptance.md):
@@ -66,9 +67,9 @@ new servers/workspaces default on; no record = default.
 ```ts
 ServerDef =
   | { serverName: string; transport: 'stdio'; command: string; args?: string[];
-      cwd?: string; envKeys?: string[] }                              // envKeys: credential refs
+      cwd?: string; envKeys?: string[]; timeoutMs?: number }            // envKeys: credential refs
   | { serverName: string; transport: 'streamable-http'; url: string;
-      headers?: { name: string; ref: string }[] }                     // values from credentials
+      headers?: { name: string; ref: string }[]; timeoutMs?: number }   // values from credentials
 // serverName: /^[A-Za-z0-9_-]{1,32}$/ (official contract)
 // ref: /^[A-Za-z_][A-Za-z0-9_]*$/ (CredentialRef = env-var name), value write-only via credentials domain
 ```
@@ -125,7 +126,26 @@ comments, anchors and formatting survive on untouched nodes.
   timeout: 60000}`; `isError` → throw; generation swap on re-sync; registration conflict →
   rollback whole generation.
 - Credentials events (`credentials/reference-updated` for a ref in use) → reconnect that
-  server so new values take effect.
+  server so new values take effect (a globally disabled or manually stopped
+  server is skipped).
+- **Global enable (0.0.3)**: reconcile never supervises a `disabled` server and
+  stops+revokes one that is disabled while tracked; the applier reads the live
+  `isServerDisabled` predicate per push/reconcile, so the model-visible tool set
+  follows the switch.
+- **Runtime status + manual control (0.0.3)**: three JSON routes on the
+  Connection carrier (`/api/mcp-scope.status|action|tools`) are registered
+  through a nested `ctx.inject(['connection'], …)` — headless hosts simply
+  never mount them. The supervisor exposes a bounded snapshot (phase/attempts/
+  nextRetryAt/connectedAt/syncedAt/toolCount/sanitized error). The RESPONSE
+  carries only a fixed host-generated code + message (spawn-failed, timeout,
+  forbidden, protocol, gave-up, reconnect-disabled, generation-stuck,
+  connection-failed) — the raw transport text stays in the host log, because
+  remote bodies can echo a credential in an encoding an in-process substring
+  pass cannot catch. `disconnect` latches a manual stop keyed by the
+  definition fingerprint that reconcile respects until the definition changes;
+  `connect` clears it (and restarts a budget-exhausted handle); `test` probes
+  on a throwaway connection unless the live generation is already connected, in
+  which case it reports read-only.
 - **`tools/list` pagination is bounded** (SEC-05): every followed continuation cursor is
   recorded and a repeat rejects the sync as an invalid tool list, and one sync is capped
   at `MAX_SYNC_PAGES` (= `MAX_SYNC_TOOLS` = 2000) requests. Either failure leaves the
@@ -171,7 +191,20 @@ comments, anchors and formatting survive on untouched nodes.
   staged form with the existing definition and writes the same op shape.
 - Hand-written controls (official card-form pattern); no generic schema-form.
 - Update cadence: scope.subscribe + `ctx.remote.$on('settings/document-updated')` +
-  `credentials/reference-updated` for badge refresh.
+  `credentials/reference-updated` for badge refresh; `connection/reset` and
+  each document revision re-pull the runtime snapshot.
+- **Runtime store (0.0.3)**: `src/client/runtime.ts` reads the three routes
+  with global `fetch` (no client package import, keeping the react-only
+  bundle), dedupes refreshes and owns no timer; the section polls it every 5 s
+  while visible. Missing routes / failed calls degrade the cards to "runtime
+  status unavailable" while every document feature keeps working. Cards show
+  the status dot/label, a localized failure line derived from the host code,
+  Connect/Disconnect/Test (Test gated on a runtime view) and a `Tools (N)`
+  disclosure whose table refetches per sync generation.
+- The staged form gained the enable switch, `timeoutMs`, an unsaved-changes
+  guard on every dismissal path, clipboard paste helpers and a single-server
+  JSON import (`src/client/import.ts`, pure and unit-tested); the section adds
+  a name filter and per-card bulk workspace switches (one mutation per action).
 
 ## 6. Build & test tooling
 

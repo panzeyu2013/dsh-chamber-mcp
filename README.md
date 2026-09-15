@@ -45,7 +45,8 @@ Releases ship as a GitHub Release whose asset is the packed tarball
 (`npm publish` is temporarily disabled). Pick the newest asset from the
 [Releases page](https://github.com/panzeyu2013/dsh-chamber-mcp/releases) —
 the **newest published release is `v0.0.2`** (published 2026-09-14, tgz +
-`.sha256`) — and install it per instance:
+`.sha256`); the **`v0.0.3` line is prepared on `main` but not tagged yet** —
+and install it per instance:
 
 ```sh
 # into the web profile of one dsh instance (per-instance management)
@@ -84,13 +85,33 @@ What the install does:
      ref).
 2. A new server is **on by default in every workspace** of this dsh. Under the
    server card, switch individual workspaces off — their sessions' model-facing
-   tool set no longer includes `mcp__<serverName>__*`.
-3. **Edit** reopens the staged form; **Remove** stops the server everywhere and
-   clears credential refs that no remaining server references.
+   tool set no longer includes `mcp__<serverName>__*` — or use **All on /
+   All off** to move every workspace at once (shown when more than one
+   workspace exists). The switch beside the server name
+   is the **global** enable: a disabled server is not started and exposes no
+   tools anywhere, while its configuration stays on disk.
+3. Each card also carries its live **runtime status** (connected / connecting /
+   reconnecting / failed / stopped / disabled / unknown), a localized failure line,
+   **Connect** / **Disconnect** and **Test**. Disconnect is a real stop and
+   survives unrelated settings edits; editing the definition or pressing
+   Connect brings it back (including after the reconnect budget is exhausted).
+   Test uses a throwaway connection unless the server is already connected, and
+   the section header carries a **Refresh status** action.
+4. **Tools (N)** discloses the synced tool names of a connected server.
+5. **Edit** reopens the staged form (enable switch and per-server timeout
+   included); **Remove** stops the server everywhere and clears credential refs
+   that no remaining server references. The form guards unsaved changes, and
+   accepts clipboard pastes (a full command line, `.env` lines, header lines)
+   plus a single-server JSON import.
+6. The section header has a name filter once servers exist.
 
 Servers connect when the plugin starts (host activation lifecycle, like the
 official client) and reconnect with the official backoff policy — the Connect
-step never blocks dsh boot.
+step never blocks dsh boot. The runtime status/actions ride the same `/api`
+Connection surface the rest of the GUI uses, so a remote/authenticated
+deployment (including the chamber gateway proxy) needs no extra configuration;
+if that surface is absent the section degrades to "runtime status unavailable"
+and every document feature keeps working.
 
 ## What the model sees
 
@@ -238,9 +259,10 @@ upstream mechanism maps a workspace to a tool set. Evidence:
   MCP tools; delegation/subagent children are preset-governed and never receive
   MCP tools from this plugin (workspace root sessions do).
 - Out of scope by design: no file/CLI management surface, no toolPolicy
-  allow/ask/deny, no pause key, no custom naming, no *server*-status surface (a
-  transcript row carries its own call state, as the shipped rows do), no
-  on-demand connect toggles (`docs/acceptance.md`, cut list C1–C6).
+  allow/ask/deny, no custom naming (`docs/acceptance.md`, cut list C1–C2/C6).
+  The 0.0.3 line deliberately supersedes the original pause/status/on-demand
+  connect cuts (C3–C5) with the global enable switch, the runtime status
+  surface and manual Connect/Disconnect/Test — see the extended matrix E1–E8.
 
 ## Security & trust model
 

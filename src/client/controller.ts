@@ -9,6 +9,8 @@
  * Runtime-write layout (shared with `src/shared/model.ts`):
  *   servers:   ServerDef[]            — whole-array replace is ONE atomic op
  *   overrides: { [workspaceId]: { [serverName]: true } }  — presence = OFF
+ *   disabled:  { [serverName]: true }                     — presence = globally OFF
+ *                (flat sparse map so one switch is one atomic path op)
  *
  * Write-verification contract: this runtime's scope.mutate RESOLVES even when
  * the Host refuses the write (the refusal triggers an internal mirror reload
@@ -26,8 +28,14 @@ import {
   MCP_SCOPE_NAMESPACE,
   credentialRefsOf,
   isEnabled,
+  pruneDisabled,
+  removeServerDisabled,
   removeServerOverrides,
+  renameDisabledKey,
+  setDisabledKey,
+  setServerDisabled,
   validateDoc,
+  type DisabledServers,
   type McpScopeDoc,
   type ServerDef,
   type WorkspaceOverrides,
@@ -67,12 +75,17 @@ export function decodeDoc(raw: unknown): McpScopeDoc {
     overridesRaw !== null && typeof overridesRaw === 'object' && !Array.isArray(overridesRaw)
       ? pruneEmptyOverrideRows(overridesRaw as WorkspaceOverrides)
       : {}
-  return { servers, overrides }
+  const disabled = pruneDisabled(section.disabled as DisabledServers | undefined)
+  return { servers, overrides, disabled }
 }
 
-/** Copy a doc into canonical shape (empty override rows pruned). */
+/** Copy a doc into canonical shape (empty override rows and non-true off-switches pruned). */
 export function normalizeDoc(doc: McpScopeDoc): McpScopeDoc {
-  return { servers: doc.servers, overrides: pruneEmptyOverrideRows(doc.overrides) }
+  return {
+    servers: doc.servers,
+    overrides: pruneEmptyOverrideRows(doc.overrides),
+    disabled: pruneDisabled(doc.disabled),
+  }
 }
 
 /** Stable structural equality for server lists (arrays: order matters). */
@@ -92,6 +105,7 @@ function arrayEqual(left: readonly string[], right: readonly string[]): boolean 
  */
 export function serverDefEqual(left: ServerDef, right: ServerDef): boolean {
   if (left.serverName !== right.serverName || left.transport !== right.transport) return false
+  if ((left.timeoutMs ?? 0) !== (right.timeoutMs ?? 0)) return false
   if (left.transport === 'stdio' && right.transport === 'stdio') {
     if (left.command !== right.command) return false
     if ((left.cwd ?? '') !== (right.cwd ?? '')) return false
@@ -131,14 +145,23 @@ export function docsEqual(left: McpScopeDoc, right: McpScopeDoc): boolean {
   const aKeys = Object.keys(a.overrides)
   const bKeys = Object.keys(b.overrides)
   if (aKeys.length !== bKeys.length) return false
-  return aKeys.every((workspaceId) => {
-    const aRow = a.overrides[workspaceId]
-    const bRow = b.overrides[workspaceId]
-    if (aRow === undefined || bRow === undefined) return false
-    const aNames = Object.keys(aRow)
-    const bNames = Object.keys(bRow)
-    return aNames.length === bNames.length && aNames.every((name) => name in bRow)
-  })
+  if (
+    !aKeys.every((workspaceId) => {
+      const aRow = a.overrides[workspaceId]
+      const bRow = b.overrides[workspaceId]
+      if (aRow === undefined || bRow === undefined) return false
+      const aNames = Object.keys(aRow)
+      const bNames = Object.keys(bRow)
+      return aNames.length === bNames.length && aNames.every((name) => name in bRow)
+    })
+  ) {
+    return false
+  }
+  // Global off-switches compared as own-key sets (values are always `true`).
+  const aDisabled = Object.keys(a.disabled ?? {})
+  const bDisabled = Object.keys(b.disabled ?? {})
+  if (aDisabled.length !== bDisabled.length) return false
+  return aDisabled.every((name) => Object.hasOwn(b.disabled ?? {}, name))
 }
 
 /** All credential refs a whole document references, deduplicated, in doc order. */
@@ -174,7 +197,10 @@ export function overrideDoc(
     delete row[serverName]
     if (Object.keys(row).length === 0) delete overrides[workspaceId]
   }
-  return { servers: doc.servers, overrides }
+  // Carry every other document section through untouched (disabled included):
+  // dropping it here made the landed-write check misjudge and, worse, emitted
+  // unset ops that silently cleared global off-switches.
+  return { ...doc, overrides }
 }
 
 /**
@@ -232,6 +258,26 @@ function diffOverrides(prev: McpScopeDoc, next: McpScopeDoc): SettingsPathOpView
   return ops
 }
 
+/** Path ops turning `prev`'s global off-switches into `next`'s (both canonical). */
+function diffDisabled(prev: McpScopeDoc, next: McpScopeDoc): SettingsPathOpView[] {
+  const ops: SettingsPathOpView[] = []
+  const before = prev.disabled ?? {}
+  const after = next.disabled ?? {}
+  const names = new Set([...Object.keys(before), ...Object.keys(after)])
+  for (const name of names) {
+    // Own-property semantics, exactly like diffOverrides (F1).
+    const had = Object.hasOwn(before, name)
+    const want = Object.hasOwn(after, name)
+    if (had === want) continue
+    ops.push(
+      want
+        ? { op: 'set', path: ['disabled', name], value: true }
+        : { op: 'unset', path: ['disabled', name] },
+    )
+  }
+  return ops
+}
+
 /** All credential refs prev referenced that no remaining server still uses. */
 function orphanedRefs(prev: McpScopeDoc, next: McpScopeDoc): string[] {
   const stillUsed = new Set(credentialRefsOfDoc(next))
@@ -262,6 +308,7 @@ export function buildSaveOps(
     ops.push({ op: 'set', path: ['servers'], value: to.servers as unknown as JsonValue })
   }
   ops.push(...diffOverrides(from, to))
+  ops.push(...diffDisabled(from, to))
   return { ops, unsetRefs: orphanedRefs(from, to) }
 }
 
@@ -305,7 +352,7 @@ export function classifySaveError(error: unknown): 'conflict' | 'save-failed' {
     error !== null && typeof error === 'object' && 'message' in error
       ? String((error as { message: unknown }).message)
       : String(error)
-  if (/conflict|revision|stale|expected/i.test(candidate)) return 'conflict'
+  if (/conflict|revision|stale/i.test(candidate)) return 'conflict'
   return 'save-failed'
 }
 
@@ -415,6 +462,8 @@ export interface McpStoreSource {
 export interface ServerSaveInput {
   server: ServerDef
   secrets: readonly SecretWrite[]
+  /** Global enabled flag staged by the form; absent = enabled (default on). */
+  enabled?: boolean
 }
 
 /** Face the section registration injects (hooks → `useDoc` + actions). */
@@ -427,6 +476,14 @@ export interface McpScopeFace {
   replaceServer(oldServerName: string, input: ServerSaveInput): Promise<SaveOutcome>
   removeServer(serverName: string): Promise<SaveOutcome>
   toggleWorkspace(workspaceId: string, serverName: string, off: boolean): Promise<SaveOutcome>
+  /**
+   * Batch per-workspace switch: every named workspace moves to `off` in ONE
+   * revision-fenced mutation (one path op per workspace, never a whole-map
+   * rewrite), used by the card's "all on / all off" controls.
+   */
+  toggleWorkspaces(serverName: string, off: boolean, workspaceIds: readonly string[]): Promise<SaveOutcome>
+  /** Global enable/disable of one server (the card's enable switch). */
+  setServerEnabled(serverName: string, enabled: boolean): Promise<SaveOutcome>
   /** Clear one stored credential literal (badge "Clear" affordance). */
   unsetCredential(ref: string): Promise<SaveOutcome>
 }
@@ -468,6 +525,8 @@ export class McpScopeController {
       replaceServer: (oldServerName, input) => self.replaceServer(oldServerName, input),
       removeServer: (serverName) => self.removeServer(serverName),
       toggleWorkspace: (workspaceId, serverName, off) => self.toggleWorkspace(workspaceId, serverName, off),
+      toggleWorkspaces: (serverName, off, workspaceIds) => self.toggleWorkspaces(serverName, off, workspaceIds),
+      setServerEnabled: (serverName, enabled) => self.setServerEnabled(serverName, enabled),
       unsetCredential: (ref) => self.unsetCredential(ref),
     }
   }
@@ -568,7 +627,11 @@ export class McpScopeController {
     if (base.status === 'loading' || base.status === 'unavailable') {
       return { ok: false, reason: base.status === 'unavailable' ? 'save-failed' : 'invalid' }
     }
-    const next: McpScopeDoc = { servers: [...base.doc.servers, input.server], overrides: base.doc.overrides }
+    const next: McpScopeDoc = {
+      servers: [...base.doc.servers, input.server],
+      overrides: base.doc.overrides,
+      disabled: setDisabledKey(base.doc.disabled, input.server.serverName, input.enabled === false),
+    }
     return this.submitPlan(base, next, input.secrets)
   }
 
@@ -592,7 +655,13 @@ export class McpScopeController {
     const overrides = renamed
       ? renameOverrideKey(base.doc.overrides, oldServerName, input.server.serverName)
       : base.doc.overrides
-    return this.submitPlan(base, { servers, overrides }, input.secrets)
+    // A rename carries the global off-switch to the new name; the form's
+    // enable flag is then applied on top (excluding the default-on no-op).
+    const carried = renamed
+      ? renameDisabledKey(base.doc.disabled, oldServerName, input.server.serverName)
+      : base.doc.disabled
+    const disabled = setDisabledKey(carried, input.server.serverName, input.enabled === false)
+    return this.submitPlan(base, { servers, overrides, disabled }, input.secrets)
   }
 
   /** Remove one server; credentials orphaned by the removal are cleared. */
@@ -605,6 +674,8 @@ export class McpScopeController {
       // Prune the removed server from every workspace's off-switch rows so a
       // later re-add cannot resurrect as OFF through an orphaned row.
       overrides: removeServerOverrides(base.doc.overrides, serverName),
+      // Same for the global off-switch: re-adding starts enabled.
+      disabled: removeServerDisabled(base.doc.disabled, serverName),
     }
     return this.submitPlan(base, next, [])
   }
@@ -619,6 +690,43 @@ export class McpScopeController {
     if (ops.length === 0) return { ok: true }
     const next = overrideDoc(base.doc, workspaceId, serverName, off)
     return this.applyOps(ops, base.revision, next)
+  }
+
+  /**
+   * Global enable/disable of one server through the same save pipeline as any
+   * other document write (revision fence + landed re-read). No secrets.
+   */
+  async setServerEnabled(serverName: string, enabled: boolean): Promise<SaveOutcome> {
+    const base = this.snapshot
+    if (base.status === 'loading' || base.status === 'unavailable') {
+      return { ok: false, reason: 'save-failed' }
+    }
+    if (!base.doc.servers.some((server) => server.serverName === serverName)) {
+      return { ok: false, reason: 'conflict' }
+    }
+    const next = setServerDisabled(base.doc, serverName, !enabled)
+    if (next === base.doc) return { ok: true }
+    return this.submitPlan(base, next, [])
+  }
+
+  /** Batch per-workspace switch (one mutation; one path op per workspace). */
+  async toggleWorkspaces(
+    serverName: string,
+    off: boolean,
+    workspaceIds: readonly string[],
+  ): Promise<SaveOutcome> {
+    const base = this.snapshot
+    if (base.status === 'loading' || base.status === 'unavailable') {
+      return { ok: false, reason: 'save-failed' }
+    }
+    if (!base.doc.servers.some((server) => server.serverName === serverName)) {
+      return { ok: false, reason: 'conflict' }
+    }
+    let next = base.doc
+    for (const workspaceId of workspaceIds) next = overrideDoc(next, workspaceId, serverName, off)
+    const plan = buildSaveOps(base.doc, next)
+    if (plan.ops.length === 0) return { ok: true }
+    return this.applyOps(plan.ops, base.revision, next)
   }
 
   /** Clear one stored credential literal (write-only domain, no doc write). */

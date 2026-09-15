@@ -10,7 +10,15 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { createManager, type ManagerHandle } from '../../src/manager.js'
+import {
+  RuntimeActionError,
+  TOOL_LIST_MAX,
+  capToolList,
+  createManager,
+  type ManagerHandle,
+  type ManagerOptions,
+} from '../../src/manager.js'
+import { RECONNECT_DEFAULTS } from '../../src/server.js'
 import type { CredentialResolver } from '../../src/transport.js'
 import type { McpScopeDoc, ServerDef } from '../../src/shared/model.js'
 import type {} from '@deepseek-ai/dsh-credentials'
@@ -39,7 +47,9 @@ function stdioServer(serverName: string, extra: Partial<Extract<ServerDef, { tra
   }
 }
 
-async function boot(): Promise<{
+async function boot(
+  options: Partial<Pick<ManagerOptions, 'reconnect'>> = {},
+): Promise<{
   ctx: Context
   manager: ManagerHandle
   lines: LoggedLine[]
@@ -66,6 +76,7 @@ async function boot(): Promise<{
       logger,
       getDoc: () => doc,
       credentials,
+      ...options,
     })
   }
   managerHost.inject = ['agents', 'workspaceRegistry']
@@ -283,6 +294,56 @@ describe('bridge manager lifecycle', () => {
     }
   })
 
+  it('never supervises a globally disabled server and stops one when it is disabled', async () => {
+    const { manager, lines, setDoc, dispose } = await boot()
+    try {
+      // Disabled in the document from the start: no process ever spawns.
+      setDoc({ servers: [stdioServer('off')], overrides: {}, disabled: { off: true } })
+      manager.reconcile()
+      await new Promise((resolve) => setTimeout(resolve, 220))
+      expect(started(lines, 'off')).toBe(0)
+
+      // Enabled: the same definition starts.
+      setDoc({ servers: [stdioServer('off')], overrides: {}, disabled: {} })
+      manager.reconcile()
+      await waitFor(() => started(lines, 'off') === 1, 'enabled server started')
+      await waitFor(
+        () => lines.some((l) => l.message.includes('mcp-scope(off): synced 8 tools')),
+        'initial sync log',
+      )
+
+      // Disabling it again stops the live supervisor without touching the doc.
+      setDoc({ servers: [stdioServer('off')], overrides: {}, disabled: { off: true } })
+      manager.reconcile()
+      await waitFor(() => stopped(lines, 'off') === 1, 'disabled server stopped')
+      const count = lines.length
+      await new Promise((resolve) => setTimeout(resolve, 180))
+      expect(started(lines, 'off')).toBe(1)
+      expect(lines.length).toBe(count)
+    } finally {
+      await dispose()
+    }
+  })
+
+  it('a credential update never restarts a globally disabled server', async () => {
+    const { ctx, manager, lines, setDoc, dispose } = await boot()
+    try {
+      setDoc({
+        servers: [stdioServer('off', { envKeys: ['OFF_TOKEN'] })],
+        overrides: {},
+        disabled: { off: true },
+      })
+      manager.reconcile()
+      await new Promise((resolve) => setTimeout(resolve, 180))
+      ctx.emit('credentials/reference-updated', credentialRef('OFF_TOKEN'))
+      await new Promise((resolve) => setTimeout(resolve, 220))
+      expect(started(lines, 'off')).toBe(0)
+      expect(lines.some((l) => l.message.includes('updated — reconnecting'))).toBe(false)
+    } finally {
+      await dispose()
+    }
+  })
+
   it('a queued credential restart of a concurrently removed server never resurrects it (R2I-1)', async () => {
     const { ctx, manager, lines, setDoc, dispose } = await boot()
     try {
@@ -304,6 +365,148 @@ describe('bridge manager lifecycle', () => {
       expect(stopped(lines, 'fix')).toBe(1)
       expect(started(lines, 'fix')).toBe(1)
       expect(lines.filter((l) => l.message.includes('mcp-scope(fix): synced')).length).toBe(1)
+    } finally {
+      await dispose()
+    }
+  })
+
+  it('a manual disconnect latches until connect() or a definition change', async () => {
+    const { manager, lines, setDoc, dispose } = await boot()
+    try {
+      setDoc({ servers: [stdioServer('fix')], overrides: {} })
+      manager.reconcile()
+      await waitFor(() => started(lines, 'fix') === 1, 'initial start')
+      await waitFor(
+        () => manager.runtimeStatus().servers[0]?.state === 'connected',
+        'connected status',
+      )
+
+      await manager.disconnect('fix')
+      await waitFor(() => stopped(lines, 'fix') === 1, 'manual stop')
+      expect(manager.runtimeStatus().servers[0]).toMatchObject({ name: 'fix', state: 'stopped', toolCount: 0 })
+
+      // A settings commit that does not touch the definition keeps it off.
+      manager.reconcile()
+      await new Promise((resolve) => setTimeout(resolve, 160))
+      expect(started(lines, 'fix')).toBe(1)
+      expect(manager.runtimeStatus().servers[0]?.state).toBe('stopped')
+
+      // connect() clears the latch and restarts.
+      await manager.connect('fix')
+      await waitFor(() => started(lines, 'fix') === 2, 'manual reconnect')
+
+      // A definition change also clears the latch.
+      await manager.disconnect('fix')
+      await waitFor(() => stopped(lines, 'fix') === 2, 'second stop')
+      setDoc({ servers: [stdioServer('fix', { cwd: '/tmp' })], overrides: {} })
+      manager.reconcile()
+      await waitFor(() => started(lines, 'fix') === 3, 'definition change clears the latch')
+    } finally {
+      await dispose()
+    }
+  })
+
+  it('runtimeStatus maps disabled/unknown without starting anything and toolList validates the doc', async () => {
+    const { manager, lines, setDoc, dispose } = await boot()
+    try {
+      setDoc({ servers: [stdioServer('off')], overrides: {}, disabled: { off: true } })
+      manager.reconcile()
+      const view = manager.runtimeStatus()
+      expect(view.v).toBe(1)
+      expect(typeof view.at).toBe('number')
+      expect(view.servers).toEqual([
+        {
+          name: 'off',
+          state: 'disabled',
+          attempts: 0,
+          maxAttempts: RECONNECT_DEFAULTS.maxAttempts,
+          toolCount: 0,
+        },
+      ])
+      expect(started(lines, 'off')).toBe(0)
+
+      // Enabled but never reconciled: honest 'unknown', not a fabricated state.
+      setDoc({ servers: [stdioServer('later')], overrides: {} })
+      expect(manager.runtimeStatus().servers[0]?.state).toBe('unknown')
+
+      expect(manager.toolList('later')).toBeUndefined()
+      let thrown: unknown
+      try {
+        manager.toolList('missing')
+      } catch (error) {
+        thrown = error
+      }
+      expect(thrown).toBeInstanceOf(RuntimeActionError)
+      expect((thrown as RuntimeActionError).code).toBe('not-found')
+    } finally {
+      await dispose()
+    }
+  })
+
+  it('connect() restarts a budget-exhausted server and never leaks its error text', async () => {
+    const { manager, lines, setDoc, dispose } = await boot({
+      reconnect: { initialDelayMs: 10, maxDelayMs: 20, maxAttempts: 1 },
+    })
+    try {
+      setDoc({
+        servers: [stdioServer('ghost', { command: '/nonexistent/definitely-missing', args: [] })],
+        overrides: {},
+      })
+      manager.reconcile()
+      await waitFor(() => manager.runtimeStatus().servers[0]?.state === 'failed', 'failed phase')
+      const failed = manager.runtimeStatus().servers[0]!
+      // The wire carries a fixed code + host-generated message only: the raw
+      // spawn error (which could echo remote/credential text) never crosses.
+      expect(failed.error).toBeDefined()
+      expect(failed.error?.message).not.toContain('/nonexistent')
+      expect(failed.error?.message).not.toMatch(/ENOENT|spawn/i)
+      // A never-synced generation is not-connected, not an empty tool list.
+      expect(manager.toolList('ghost')).toBeUndefined()
+
+      const startedBefore = started(lines, 'ghost')
+      await manager.connect('ghost')
+      await waitFor(() => started(lines, 'ghost') > startedBefore, 'restart after connect')
+      await waitFor(() => manager.runtimeStatus().servers[0]?.state === 'failed', 'failed again')
+      expect(started(lines, 'ghost')).toBeGreaterThan(startedBefore)
+    } finally {
+      await dispose()
+    }
+  })
+
+  it('capToolList bounds entries and reports the true total', () => {
+    const many = Array.from({ length: TOOL_LIST_MAX + 5 }, (_, index) => ({
+      publicName: `mcp__srv__t${index}`,
+      rawName: 'r'.repeat(300),
+      description: 'd'.repeat(700),
+    }))
+    const capped = capToolList(many)
+    expect(capped.tools).toHaveLength(TOOL_LIST_MAX)
+    expect(capped.truncated).toBe(true)
+    expect(capped.total).toBe(TOOL_LIST_MAX + 5)
+    expect(capped.tools[0]!.rawName).toHaveLength(200)
+    expect(capped.tools[0]!.description).toHaveLength(500)
+    const exact = capToolList(many.slice(0, TOOL_LIST_MAX))
+    expect(exact.truncated).toBe(false)
+    expect(exact.total).toBe(TOOL_LIST_MAX)
+  })
+
+  it('test() reports the live tool count without opening a second connection', async () => {
+    const { manager, lines, setDoc, dispose } = await boot()
+    try {
+      setDoc({ servers: [stdioServer('fix')], overrides: {} })
+      manager.reconcile()
+      await waitFor(() => manager.runtimeStatus().servers[0]?.state === 'connected', 'connected')
+      const before = started(lines, 'fix')
+      const result = await manager.test('fix')
+      expect(result.ok).toBe(true)
+      expect(result.toolCount).toBeGreaterThan(0)
+      expect(started(lines, 'fix')).toBe(before)
+      // A configured-but-not-running server is probed on a throwaway connection.
+      await manager.disconnect('fix')
+      await waitFor(() => stopped(lines, 'fix') === 1, 'stop before probe')
+      const probed = await manager.test('fix')
+      expect(probed.ok).toBe(true)
+      expect(probed.toolCount).toBeGreaterThan(0)
     } finally {
       await dispose()
     }

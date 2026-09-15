@@ -26,8 +26,16 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { Workspace } from '@deepseek-ai/dsh-workspace'
 import { createAgentApplier, type AgentApplier, type ApplierLogger } from './agents.js'
 import { createTransport } from './transport.js'
-import { startServerSupervisor, type ServerHandle } from './server.js'
-import { credentialRefsOf, type McpScopeDoc, type ServerDef } from './shared/model.js'
+import {
+  probeServer,
+  startServerSupervisor,
+  RECONNECT_DEFAULTS,
+  type ProbeResult,
+  type ReconnectConfig,
+  type ServerHandle,
+  type ToolSummary,
+} from './server.js'
+import { credentialRefsOf, isServerDisabled, type McpScopeDoc, type ServerDef } from './shared/model.js'
 // Side-effect type imports: ctx.tools / ctx.agents / ctx.settings / ctx.credentials merge.
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-agent'
@@ -55,6 +63,33 @@ export interface ManagerOptions {
   getDoc(): McpScopeDoc
   /** The credentials service used to resolve env keys / header refs per attempt. */
   credentials: Pick<CredentialProvider, 'resolve'>
+  /**
+   * Reconnect policy handed to every supervisor. Production omits it (official
+   * defaults 500ms→30s/10 attempts); tests and the smoke shrink it.
+   */
+  reconnect?: ReconnectConfig
+}
+
+/**
+ * Fixed, host-generated message per runtime error code. Remote/transport text
+ * NEVER crosses the status/action wire (the SDK embeds HTTP response bodies in
+ * its errors, which can echo a credential value in any encoding); the raw text
+ * stays in the host log, where it is sanitized but not part of a response.
+ */
+const RUNTIME_ERROR_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
+  'gave-up': 'Reconnect attempts exhausted',
+  'reconnect-disabled': 'Connection lost and reconnect is disabled',
+  'generation-stuck': 'Previous connection generation did not close',
+  forbidden: 'The server rejected the credentials (HTTP 401/403)',
+  timeout: 'The connection or request timed out',
+  'spawn-failed': 'The server command could not be started',
+  protocol: 'The server returned an invalid response',
+  'connection-failed': 'Connection failed',
+})
+
+/** Message of one runtime error code (always host-generated). */
+export function runtimeErrorMessage(code: string): string {
+  return RUNTIME_ERROR_MESSAGES[code] ?? 'Connection failed'
 }
 
 /** The bridge manager handle owned by the plugin entry. */
@@ -67,6 +102,92 @@ export interface ManagerHandle {
   reconcile(): void
   /** Stop every supervisor, quiesce the mutation chain, revoke live registrations. */
   dispose(): Promise<void>
+  /** Runtime status of every server the document names (plus tracked orphans). */
+  runtimeStatus(): RuntimeStatusView
+  /** Committed tool identity of one server, capped for the wire. */
+  toolList(serverName: string): ToolListView | undefined
+  /** Manual reconnect: clears the manual-stop latch and starts the server. */
+  connect(serverName: string): Promise<RuntimeActionResult>
+  /** Manual stop: revokes the server's tools and latches it off until changed. */
+  disconnect(serverName: string): Promise<RuntimeActionResult>
+  /** One-shot probe on a throwaway connection (never touches the live one). */
+  test(serverName: string): Promise<ProbeResult>
+}
+
+/** Wire vocabulary of one server's runtime phase (additive). */
+export type RuntimePhase =
+  | 'connected'
+  | 'connecting'
+  | 'reconnecting'
+  | 'failed'
+  | 'stopped'
+  | 'disabled'
+  | 'unknown'
+
+/** Capped runtime view of one server (never carries credential material). */
+export interface ServerRuntimeView {
+  name: string
+  state: RuntimePhase
+  attempts: number
+  maxAttempts: number
+  nextRetryAt?: number
+  connectedAt?: number
+  syncedAt?: number
+  toolCount: number
+  error?: { code: string; message: string }
+}
+
+/** Whole-document runtime status response (`v` is the wire version). */
+export interface RuntimeStatusView {
+  v: 1
+  at: number
+  servers: ServerRuntimeView[]
+}
+
+/** Capped tool identity response for one server. */
+export interface ToolListView {
+  tools: { publicName: string; rawName: string; description: string }[]
+  truncated: boolean
+  /** Total committed tool count (>= tools.length when truncated). */
+  total: number
+}
+
+/** Result of one manual connect/disconnect. */
+export interface RuntimeActionResult {
+  name: string
+  state: RuntimePhase
+}
+
+/** Caps of the tool-list wire shape (SEC: bounded response, no schema bodies). */
+export const TOOL_LIST_MAX = 200
+const TOOL_NAME_MAX = 200
+const TOOL_DESCRIPTION_MAX = 500
+
+/**
+ * Cap one committed tool generation for the wire: at most {@link TOOL_LIST_MAX}
+ * entries, each name/description capped, no schema bodies. Pure so the bounds
+ * are unit-testable without a live server.
+ */
+export function capToolList(listed: readonly ToolSummary[]): ToolListView {
+  return {
+    tools: listed.slice(0, TOOL_LIST_MAX).map((tool) => ({
+      publicName: tool.publicName,
+      rawName: tool.rawName.slice(0, TOOL_NAME_MAX),
+      description: tool.description.slice(0, TOOL_DESCRIPTION_MAX),
+    })),
+    truncated: listed.length > TOOL_LIST_MAX,
+    total: listed.length,
+  }
+}
+
+/** Business failure of a runtime action, carrying a stable code. */
+export class RuntimeActionError extends Error {
+  readonly code: string
+  constructor(code: string, message: string) {
+    super(message)
+    this.name = 'RuntimeActionError'
+    this.code = code
+  }
 }
 
 /** Fingerprint one server definition for change detection. */
@@ -93,6 +214,28 @@ export function createManager(options: ManagerOptions): ManagerHandle {
   const epochs = new Map<string, number>()
   /** serverNames with a queued `restartServer` mutation (restart coalescing, IMPL-3). */
   const pendingRestarts = new Set<string>()
+  /**
+   * Manual-stop latch: serverName → definition fingerprint it was stopped at.
+   * A reconcile with the SAME fingerprint leaves the server off (a settings
+   * commit must not silently revive it); a fingerprint change clears the
+   * latch and starts the new definition.
+   */
+  const manualStopped = new Map<string, string>()
+  /**
+   * Stable error codes derived from the (host-only) sanitized failure text.
+   * The wire carries ONLY these codes plus {@link RUNTIME_ERROR_MESSAGES};
+   * remote text is never reflected into a response.
+   */
+  const errorCodeOf = (text: string): string => {
+    if (/giving up/.test(text)) return 'gave-up'
+    if (/reconnect is disabled/.test(text)) return 'reconnect-disabled'
+    if (/did not close|overlapping/.test(text)) return 'generation-stuck'
+    if (/\b(401|403)\b|unauthorized|forbidden/i.test(text)) return 'forbidden'
+    if (/timed? out|timeout|ETIMEDOUT|aborted/i.test(text)) return 'timeout'
+    if (/ENOENT|EACCES|EPERM|spawn/i.test(text)) return 'spawn-failed'
+    if (/unexpected token|invalid json|parse error/i.test(text)) return 'protocol'
+    return 'connection-failed'
+  }
 
   const nextEpoch = (serverName: string): number => {
     const epoch = (epochs.get(serverName) ?? 0) + 1
@@ -112,12 +255,20 @@ export function createManager(options: ManagerOptions): ManagerHandle {
       list: () => [...ctx.workspaceRegistry.list()] as Workspace[],
     },
     overrides: () => options.getDoc().overrides,
+    isDisabled: (serverName) => isServerDisabled(options.getDoc(), serverName),
   })
 
   const enqueue = (work: () => Promise<void>): void => {
     const run = mutations.then(work)
     // The chain tail must survive a failed mutation; the worker owns reporting.
     mutations = run.catch(() => {})
+  }
+
+  /** Same chain, but the caller can await this mutation's settlement. */
+  const enqueueAwait = (work: () => Promise<void>): Promise<void> => {
+    const run = mutations.then(work)
+    mutations = run.catch(() => {})
+    return run
   }
 
   /** Resolver used by every transport build — resolve() is per-call, never cached. */
@@ -133,8 +284,11 @@ export function createManager(options: ManagerOptions): ManagerHandle {
     const epoch = nextEpoch(serverName)
     const handle = startServerSupervisor({
       serverName,
+      // Document timeout (tools/call + one tools/list page); absent = official default.
+      toolCallTimeoutMs: server.timeoutMs,
       buildTransport: () => createTransport(server, resolveCredential, (message) => logger.warn(message)),
       logger,
+      reconnect: options.reconnect,
       onDefsChanged: (name, syncId, defs) => {
         if (disposed) return
         applier.pushServerState(name, { epoch, syncId, defs })
@@ -178,7 +332,14 @@ export function createManager(options: ManagerOptions): ManagerHandle {
       // caller captured): a server removed from the document while this
       // restart was queued must be stopped with revocation, or its tools
       // would outlive it (the queued removal reconcile finds nothing tracked).
-      const present = next !== undefined && options.getDoc().servers.some((s) => s.serverName === next.serverName)
+      // A globally disabled server is "not present" for supervision: a
+      // credential update must not silently bring it back up.
+      const doc = options.getDoc()
+      const present =
+        next !== undefined &&
+        doc.servers.some((s) => s.serverName === next.serverName) &&
+        !isServerDisabled(doc, next.serverName) &&
+        !manualStopped.has(next.serverName)
       const current = tracked.get(serverName)
       if (current === undefined) {
         if (present) await startServer(next as ServerDef)
@@ -237,7 +398,9 @@ export function createManager(options: ManagerOptions): ManagerHandle {
       // coalescing set by design). The chain serializes them and the later
       // start resolves credentials per attempt, so the double cycle always
       // converges — accepted as documented in docs/review/SUMMARY.md.
-      const affected = options.getDoc().servers.filter((server) => credentialRefsOf(server).includes(ref))
+      const affected = options.getDoc().servers.filter(
+        (server) => !isServerDisabled(options.getDoc(), server.serverName) && credentialRefsOf(server).includes(ref),
+      )
       for (const server of affected) {
         // Log only when the restart is actually queued (a same-tick second
         // event for this server is absorbed by the coalescing gate).
@@ -249,7 +412,147 @@ export function createManager(options: ManagerOptions): ManagerHandle {
     return () => off()
   }, 'mcp-scope.credentials()')
 
+  /** Wire view of one server (redacted; no secret values ever leave here). */
+  const viewOf = (serverName: string, disabled: boolean): ServerRuntimeView => {
+    if (disabled) {
+      return {
+        name: serverName,
+        state: 'disabled',
+        attempts: 0,
+        maxAttempts: RECONNECT_DEFAULTS.maxAttempts,
+        toolCount: 0,
+      }
+    }
+    if (manualStopped.has(serverName)) {
+      return {
+        name: serverName,
+        state: 'stopped',
+        attempts: 0,
+        maxAttempts: RECONNECT_DEFAULTS.maxAttempts,
+        toolCount: 0,
+      }
+    }
+    const trackedServer = tracked.get(serverName)
+    if (trackedServer === undefined) {
+      return {
+        name: serverName,
+        state: 'unknown',
+        attempts: 0,
+        maxAttempts: RECONNECT_DEFAULTS.maxAttempts,
+        toolCount: 0,
+      }
+    }
+    const snap = trackedServer.handle.snapshot()
+    const code = snap.error !== undefined ? errorCodeOf(snap.error) : undefined
+    const error = code !== undefined ? { code, message: runtimeErrorMessage(code) } : undefined
+    return {
+      name: serverName,
+      state: snap.phase,
+      attempts: snap.attempts,
+      maxAttempts: snap.maxAttempts,
+      toolCount: snap.toolCount,
+      ...(snap.nextRetryAt !== undefined ? { nextRetryAt: snap.nextRetryAt } : {}),
+      ...(snap.connectedAt !== undefined ? { connectedAt: snap.connectedAt } : {}),
+      ...(snap.syncedAt !== undefined ? { syncedAt: snap.syncedAt } : {}),
+      ...(error !== undefined ? { error } : {}),
+    }
+  }
+
   const manager: ManagerHandle = {
+    runtimeStatus(): RuntimeStatusView {
+      const doc = options.getDoc()
+      const servers: ServerRuntimeView[] = []
+      const inDoc = new Set<string>()
+      for (const server of doc.servers) {
+        inDoc.add(server.serverName)
+        servers.push(viewOf(server.serverName, isServerDisabled(doc, server.serverName)))
+      }
+      // Tracked handles the document no longer names (transient orphan).
+      for (const serverName of tracked.keys()) {
+        if (!inDoc.has(serverName)) servers.push(viewOf(serverName, false))
+      }
+      return { v: 1, at: Date.now(), servers }
+    },
+
+    toolList(serverName: string): ToolListView | undefined {
+      if (!options.getDoc().servers.some((server) => server.serverName === serverName)) {
+        throw new RuntimeActionError('not-found', 'server is not configured')
+      }
+      const trackedServer = tracked.get(serverName)
+      if (trackedServer === undefined) return undefined
+      // Never synced (connecting / gave up) or currently down is NOT an empty
+      // list: the route answers not-connected; an actually synced empty list
+      // (a server with zero tools) stays a 200.
+      if (trackedServer.handle.snapshot().phase !== 'connected') return undefined
+      return capToolList(trackedServer.handle.tools())
+    },
+
+    async connect(serverName: string): Promise<RuntimeActionResult> {
+      const def = options.getDoc().servers.find((server) => server.serverName === serverName)
+      if (def === undefined) {
+        throw new RuntimeActionError('not-found', 'server is not configured')
+      }
+      if (isServerDisabled(options.getDoc(), serverName)) {
+        throw new RuntimeActionError('disabled', 'server is disabled')
+      }
+      manualStopped.delete(serverName)
+      await enqueueAwait(async () => {
+        if (disposed) return
+        const trackedServer = tracked.get(serverName)
+        if (trackedServer !== undefined) {
+          // Give-up keeps the handle tracked with no live generation: a manual
+          // Connect must dispose it and start fresh instead of short-circuiting
+          // (the failed card only offers Connect).
+          if (trackedServer.handle.snapshot().phase !== 'failed') return
+          await stopServer(serverName, false)
+        }
+        const current = options.getDoc().servers.find((server) => server.serverName === serverName)
+        if (current === undefined || isServerDisabled(options.getDoc(), serverName)) return
+        if (manualStopped.has(serverName)) return // a racing disconnect won
+        await startServer(current)
+      })
+      return { name: serverName, state: 'connecting' }
+    },
+
+    async disconnect(serverName: string): Promise<RuntimeActionResult> {
+      const def = options.getDoc().servers.find((server) => server.serverName === serverName)
+      if (def === undefined) {
+        throw new RuntimeActionError('not-found', 'server is not configured')
+      }
+      if (isServerDisabled(options.getDoc(), serverName)) {
+        throw new RuntimeActionError('disabled', 'server is disabled')
+      }
+      manualStopped.set(serverName, fingerprint(def))
+      await enqueueAwait(async () => {
+        if (disposed) return
+        await stopServer(serverName, true)
+      })
+      return { name: serverName, state: 'stopped' }
+    },
+
+    async test(serverName: string): Promise<ProbeResult> {
+      const def = options.getDoc().servers.find((server) => server.serverName === serverName)
+      if (def === undefined) {
+        throw new RuntimeActionError('not-found', 'server is not configured')
+      }
+      if (isServerDisabled(options.getDoc(), serverName)) {
+        throw new RuntimeActionError('disabled', 'server is disabled')
+      }
+      const live = tracked.get(serverName)
+      if (live !== undefined && live.handle.snapshot().phase === 'connected') {
+        // Connected servers are tested read-only: no second process/connection.
+        return { ok: true, toolCount: live.handle.snapshot().toolCount }
+      }
+      const result = await probeServer({
+        serverName,
+        buildTransport: () => createTransport(def, resolveCredential, (message) => logger.warn(message)),
+        toolCallTimeoutMs: def.timeoutMs,
+      })
+      if (result.ok) return result
+      const code = errorCodeOf(result.error ?? '')
+      return { ok: false, code, error: runtimeErrorMessage(code) }
+    },
+
     reconcile() {
       enqueue(async () => {
         if (disposed) return
@@ -264,11 +567,29 @@ export function createManager(options: ManagerOptions): ManagerHandle {
           if (!nextNames.has(serverName)) {
             await stopServer(serverName, true)
             epochs.delete(serverName)
+            manualStopped.delete(serverName)
           }
         }
-        // Appeared or changed servers: start or dispose+start.
+        // Appeared or changed servers: start or dispose+start. Globally
+        // disabled servers are never supervised; one that is tracked (the
+        // disable just landed) stops with revocation so its tools disappear.
         for (const server of doc.servers) {
           const current = tracked.get(server.serverName)
+          if (isServerDisabled(doc, server.serverName)) {
+            manualStopped.delete(server.serverName)
+            if (current !== undefined) {
+              await stopServer(server.serverName, true)
+              epochs.delete(server.serverName)
+            }
+            continue
+          }
+          // A manual stop latches until the definition itself changes: a
+          // settings commit that does not touch this server must not revive it.
+          const stoppedAt = manualStopped.get(server.serverName)
+          if (stoppedAt !== undefined) {
+            if (stoppedAt === fingerprint(server)) continue
+            manualStopped.delete(server.serverName)
+          }
           if (current === undefined) {
             await startServer(server)
           } else if (current.defFingerprint !== fingerprint(server)) {
@@ -298,3 +619,4 @@ export function createManager(options: ManagerOptions): ManagerHandle {
 
   return manager
 }
+

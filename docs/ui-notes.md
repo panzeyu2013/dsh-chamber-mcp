@@ -589,3 +589,44 @@ inline SVG.
   `verify:package`) drives the BUILT `lib/client.js` through the loader wrapper
   in jsdom — it registers one view per discovered name, renders the running and
   settled forms, and expands on a real click.
+
+## 8. 0.0.3 runtime status + configuration surface
+
+- **`src/client/runtime.ts`** is a dependency-free store over the three host
+  routes: global `fetch`, injectable for tests, in-flight dedupe, no timer of
+  its own. A failed/unreachable call publishes `unavailable`/`error` and the
+  section keeps rendering the document; the client bundle still requires only
+  react/react/jsx-runtime.
+- **Wiring.** `apply()` composes the runtime store into the same
+  `settings.section` inject face (`useRuntime` hook seat + action callbacks),
+  refreshes on `settings/document-updated` and `connection/reset`, and the
+  section polls every 5 s while visible and once per document revision.
+- **Cards** render the status dot/label, a localized failure line derived from
+  the host's fixed error code (remote text never crosses the wire; unknown codes
+  fall back to the host message), Connect/Disconnect/Test and a `Tools (N)`
+  disclosure; the enable switch starts the header, Test is gated on a runtime
+  view, and runtime action failures surface in the card's own role=alert banner
+  (separate from document save failures).
+- **Form** additions: enable switch, `timeoutMs`, an inline unsaved-changes
+  guard (header and footer route through the same `requestClose`), clipboard
+  paste for command / `.env` / header lines, and a single-server JSON import
+  (`src/client/import.ts`, pure + unit-tested). `section` adds a name filter
+  and per-card all-on/all-off switches (one batched mutation).
+- **Style acceptance (0.0.3 additions).** The status dot uses chamber's dot
+  geometry verbatim (`8px`, `border-radius: 50%`, `corner-shape: round`, state
+  tokens); dialog/textarea/enable-row reuse the sheet's existing field
+  vocabulary. S1 was re-verified authoritatively against the vendored pinned
+  theme (368 declared tokens, 29 referenced, 0 undeclared); S2–S7 and the class
+  map/CSS coverage gate are green.
+- **Retained trade-off.** `draftToServer` trims and drops empty argument rows:
+  the form's blank argument row is a placeholder, so preserving it would add a
+  phantom empty argument to every save. A pasted explicit empty argument is
+  therefore not persisted (round-3 finding C-P2-1, retained by decision).
+- **Layout reference.** The shipped desktop layout (section surface, card
+  anatomy, add/edit form, state matrix, metrics) is documented with wireframes in
+  `docs/mcp-desktop-layout.md` + `docs/mcp-desktop-layout.svg`.
+- **Evidence.** `tests/client/runtime.spec.ts`, `tests/client/import.spec.ts`,
+  the extended `controller.spec.ts` / `section-render.spec.tsx`, and the
+  style-token gate. `scripts/verify-client-artifact.mjs` gained the `ctx.on`
+  seat now that the client half subscribes to `connection/reset`; round-3
+  findings and dispositions live in `docs/review/round3/REPORT.md`.

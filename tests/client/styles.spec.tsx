@@ -235,6 +235,8 @@ describe('components consume the style seat', () => {
         onEdit={() => {}}
         onRemove={async () => ({ ok: true })}
         onToggle={async () => ({ ok: true })}
+        onToggleAll={async () => ({ ok: true })}
+        onSetEnabled={async () => ({ ok: true })}
         onUnsetCredential={async () => ({ ok: true })}
       />,
     )

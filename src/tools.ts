@@ -32,7 +32,7 @@ import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { assertSupportedJsonSchema } from '@deepseek-ai/dsh-tools'
 import type { JsonSchemaNode } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
-import { HASH_LENGTH, MAX_PUBLIC_NAME_LENGTH, MCP_TOOL_PREFIX } from './shared/model.js'
+import { HASH_LENGTH, MAX_PUBLIC_NAME_LENGTH, MCP_TOOL_PREFIX, TIMEOUT_DEFAULT_MS } from './shared/model.js'
 
 /**
  * Re-exported naming-contract constants. They live in the shared pure model so
@@ -65,7 +65,7 @@ export const MAX_SYNC_TOOLS = 2000
 export const MAX_SYNC_PAGES = MAX_SYNC_TOOLS
 
 /** Default timeout for individual MCP tool calls (ms) — official default. */
-export const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000
+export const DEFAULT_TOOL_CALL_TIMEOUT_MS = TIMEOUT_DEFAULT_MS
 
 /** Canonical MCP result shape exposed by executors (same as official McpResult). */
 export interface McpResult<Structured extends JsonValue = JsonValue> {
@@ -87,6 +87,13 @@ export interface ToolBridgeOptions {
 /** The exact live definition generation owned by one server: publicName → definition. */
 export type ToolDefinitions = ReadonlyMap<string, ToolDefinition>
 
+/** Identity + copy line of one listed tool (for the runtime status tool list). */
+export interface ListedToolInfo {
+  publicName: string
+  rawName: string
+  description: string
+}
+
 /**
  * Derive the model-facing public name for one MCP tool.
  *
@@ -107,10 +114,11 @@ export function publicToolName(serverName: string, rawName: string): string {
 }
 
 /** List one `tools/list` page without mutating the SDK's validator cache. */
-function listToolsUncached(client: Client, cursor?: string) {
+function listToolsUncached(client: Client, opts: ToolBridgeOptions, cursor?: string) {
   return client.request(
     { method: 'tools/list', ...cursor === undefined ? {} : { params: { cursor } } },
     ListToolsResultSchema,
+    { timeout: opts.toolCallTimeoutMs },
   )
 }
 
@@ -148,6 +156,8 @@ function callToolUncached(
 export async function fetchToolDefinitions(
   client: Client,
   opts: ToolBridgeOptions,
+  /** Optional sink for one listed tool's identity; consulted only on success. */
+  onListed?: (info: ListedToolInfo) => void,
 ): Promise<Map<string, ToolDefinition>> {
   const definitions = new Map<string, ToolDefinition>()
   // Every cursor already followed: a repeated one can never terminate the
@@ -165,7 +175,7 @@ export async function fetchToolDefinitions(
         `mcp-scope(${opts.serverName}): server paginated past ${MAX_SYNC_PAGES} tools/list pages — refusing the sync`,
       )
     }
-    const response = await listToolsUncached(client, cursor)
+    const response = await listToolsUncached(client, opts, cursor)
     for (const tool of response.tools) {
       const publicName = publicToolName(opts.serverName, tool.name)
       if (definitions.has(publicName)) {
@@ -173,6 +183,7 @@ export async function fetchToolDefinitions(
           `mcp-scope(${opts.serverName}): server listed tool "${tool.name}" more than once — invalid tool list`,
         )
       }
+      onListed?.({ publicName, rawName: tool.name, description: tool.description ?? '' })
       if (definitions.size >= MAX_SYNC_TOOLS) {
         throw new Error(
           `mcp-scope(${opts.serverName}): server lists more than ${MAX_SYNC_TOOLS} tools — refusing the sync`,

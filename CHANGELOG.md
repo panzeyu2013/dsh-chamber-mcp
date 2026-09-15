@@ -13,6 +13,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > only and ignores this one — an entry left here ships in the tree but never
 > appears in the release notes.
 
+## [0.0.3] - 2026-09-15
+
+Runtime-visibility and configuration-completeness line. The original locked
+scope cut server status, pause and on-demand connect (`docs/acceptance.md`
+C3-C5); on request this line supersedes those cuts using the same framework
+seams the shipped features already use - a sparse `disabled` map in the
+settings document, per-server timeouts, and three JSON routes on the
+Connection carrier. No new remote namespace, no new runtime dependency, no
+chamber-side change: the routes ride the same `/api` surface the gateway
+already proxies.
+
+### Added
+
+- **Global enable switch.** A sparse `disabled: { [serverName]: true }` map on
+  the settings document turns one server off everywhere without deleting it: a
+  disabled server is never supervised, its tools are revoked from every live
+  agent, and re-enabling starts it fresh. The card header carries the switch
+  and the draft form the same flag; because it is a flat sparse map, one toggle
+  is ONE atomic path op (`set/unset ['disabled', name]`) that leaves the
+  `servers` array and hand-written comments untouched.
+- **Per-server timeout (`timeoutMs`).** Bounds 1000-600000 ms, applied to
+  `tools/call` and one `tools/list` page; absent = the official 60 s default.
+  Validated by the schema and the shared document validator.
+- **Runtime status and manual connection control.** The host half now exposes
+  `GET /api/mcp-scope.status`, `POST /api/mcp-scope.action` and
+  `GET /api/mcp-scope.tools` through `ctx.connection.fetch.register` - the same
+  carrier the official `/api/present.host` and `/api/session.export` features
+  use - with the Host/Origin fence, browser authentication and the chamber
+  gateway proxy applied unchanged. The supervisor reports a bounded snapshot
+  (phase, attempts, next retry, timestamps, tool count, sanitized error); the
+  response carries only a fixed host-generated code + message (spawn-failed,
+  timeout, forbidden, protocol, gave-up, reconnect-disabled, generation-stuck,
+  connection-failed) - the raw transport text stays in the host log, because
+  remote bodies can echo a credential in an encoding an in-process substring
+  pass cannot catch. The settings card shows the status dot/label, a localized
+  failure line, Connect/Disconnect and Test; Test is a throwaway probe unless
+  the server is already connected, in which case it reports the live generation
+  read-only (no second process/connection).
+- **Tool list on demand.** `GET /api/mcp-scope.tools?server=NAME` returns the
+  synced tool identities (public + raw name, description) capped at 200 entries
+  with per-field caps and no schema bodies. The card discloses them under a
+  `Tools (N)` button; an unsynced server reports `not-connected` instead of an
+  error.
+- **Manual-stop latch.** Disconnect is a first-class state (`stopped`): it
+  revokes the server's tools immediately and survives settings commits that do
+  not change the definition; editing the definition or pressing Connect clears
+  it. Reconnect-budget exhaustion surfaces as `failed` with the reason.
+- **Configuration completeness.** The draft form gained an enable switch, the
+  timeout field, an unsaved-changes guard on every dismissal path, clipboard
+  paste for commands / `.env` / header lines, and a single-server JSON import
+  (`mcpServers`, opencode and flat shapes; imported secret values land in the
+  write-only inputs only). The section gained a name filter and the card
+  all-on / all-off workspace switches, all batched into one revision-fenced
+  mutation.
+
+### Changed
+
+- `docs/acceptance.md`: C3 (server-status visualization), C4 (on-demand
+  connect/reconnect) and C5 (pause key) are superseded by this line and moved
+  into an explicitly extended-scope section with their proofs.
+- The card header layout now starts with the enable switch; the status row sits
+  under the header and the bulk workspace switches sit with the rows.
+
+### Fixed
+
+- `overrideDoc` dropped the `disabled` map, so a per-workspace toggle (single
+  or all-on/all-off) silently cleared every global off-switch and reported a
+  false conflict. Regression tests cover the combination.
+- Connect on a server whose reconnect budget was exhausted was a no-op while
+  returning `connecting`; the handle is now disposed and restarted.
+- A supervisor whose failed generation did not close within the 5 s bound
+  reported `connecting` forever; it now reports `failed` with the
+  `generation-stuck` code. `dispose()` also clears the armed retry timestamp,
+  and a successful reconnect resets the consecutive-failure counter.
+- `toolList` answered `200 {tools: []}` for a never-synced or down server
+  instead of `409 not-connected`; the action route echoed the requested server
+  name and accepted names outside the documented contract (2 KB reflection).
+- `classifySaveError` treated any message containing "expected" as a conflict;
+  `splitCommandLine` ate backslashes in unquoted Windows paths; an
+  out-of-range timeout left Save dead with no message.
+- The card's runtime error line localizes the host code; runtime actions report
+  real pending labels and join the card's busy state; Test reports
+  "Test OK - N tools"; the tool table refetches per sync generation and shows
+  the true total.
+
+### Evidence
+
+- 250 unit/integration tests across 17 files; the supervisor snapshot/probe
+  suite, the manager runtime-control suite and the route envelope suite are new.
+- `npm run check` (typecheck x2, tests, build, `verify:package`) green; the
+  artifact gate drives the built `lib/client.js` in jsdom and still asserts
+  react-only bundle purity and determinism.
+- Live smoke re-run 2026-09-15 on the current anchor (dsh 0.1.5-rc.2):
+  `npm run test:smoke` (`M1` + `M0`) exit 0 with `dsh-chamber-mcp@0.0.3`
+  installed through the anchor CLI; both raw transcripts refreshed.
+- Style conformance re-verified against the vendored pinned dsh theme: 368
+  declared `--dsw-*`/`--dsh-*`/`--ds-*` names, 29 referenced by this
+  stylesheet, 0 undeclared; S2–S7 and the class-map/CSS coverage gates green;
+  the new 8 px status dot matches chamber's dot geometry (round-3 report:
+  `docs/review/round3/REPORT.md`).
+
 ## [0.0.2] - 2026-09-14
 
 Upstream compatibility release. The plugin was migrated to the **dsh 0.1.5**

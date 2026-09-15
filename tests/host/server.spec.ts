@@ -15,6 +15,7 @@ import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import {
   EMPTY_DEFS,
   RECONNECT_DEFAULTS,
+  probeServer,
   resolveReconnectPolicy,
   startServerSupervisor,
   type ServerHandle,
@@ -172,6 +173,8 @@ describe('server supervisor with a real stdio MCP server', () => {
     await waitFor(() => handle.state.syncId === 2, 're-sync after crash reconnect')
     expect(handle.state.connected).toBe(true)
     expect(handle.state.generation).toBe(2)
+    // A connected snapshot describes the CURRENT outage: counters are reset.
+    expect(handle.snapshot().attempts).toBe(0)
     expect(handle.state.defs.has('mcp__fix__add')).toBe(true)
     expect(lines.some((l) => l.level === 'warn' && l.message.includes('connection lost; reconnecting'))).toBe(true)
     expect(lines.some((l) => l.level === 'info' && l.message.includes('reconnected and re-synced tools'))).toBe(true)
@@ -243,6 +246,64 @@ describe('server supervisor with a real stdio MCP server', () => {
     expect(commits.length).toBe(0)
     await waitFor(() => lines.some((l) => l.message.includes('connection failed; retrying')), 'retry log')
     expect(lines.some((l) => l.level === 'warn' && l.message.includes('attempt 1/3'))).toBe(true)
+  })
+})
+
+describe('runtime snapshot + probe (M3)', () => {
+  it('reports connected phase, timestamps and committed tool identity after a sync', async () => {
+    const { handle } = await boot()
+    handles.push(handle)
+    const snap = handle.snapshot()
+    expect(snap.phase).toBe('connected')
+    expect(snap.toolCount).toBe(handle.state.defs.size)
+    expect(snap.toolCount).toBeGreaterThan(0)
+    expect(snap.attempts).toBe(0)
+    expect(snap.maxAttempts).toBe(RECONNECT_DEFAULTS.maxAttempts)
+    expect(typeof snap.connectedAt).toBe('number')
+    expect(typeof snap.syncedAt).toBe('number')
+    const tools = handle.tools()
+    expect(tools.map((tool) => tool.rawName)).toContain('add')
+    expect(tools.find((tool) => tool.publicName === 'mcp__fix__add')?.description).toBe('Adds two numbers.')
+  })
+
+  it('reports failed with the next-retry bookkeeping after the budget is exhausted', async () => {
+    const { log, lines } = makeLogger()
+    const handle = startServerSupervisor({
+      serverName: 'ghost',
+      buildTransport: async () =>
+        createTransport(stdioDef('ghost', { command: '/nonexistent/definitely-missing', args: [] }), noopResolve, NO_WARN),
+      logger: { info: (m) => log('info', m), warn: (m) => log('warn', m), error: (m) => log('error', m) },
+      onDefsChanged: () => {},
+      reconnect: { initialDelayMs: 20, maxDelayMs: 40, maxAttempts: 2 },
+    })
+    handles.push(handle)
+    await handle.ready
+    // A retry is armed first: the snapshot must say so before the budget ends.
+    await waitFor(() => handle.snapshot().phase === 'reconnecting' || handle.snapshot().phase === 'failed', 'retry state')
+    await waitFor(() => handle.snapshot().phase === 'failed', 'failed phase')
+    const snap = handle.snapshot()
+    expect(snap.maxAttempts).toBe(2)
+    expect(snap.attempts).toBeGreaterThan(2)
+    expect(snap.toolCount).toBe(0)
+    expect(snap.error).toBeTruthy()
+    expect(lines.some((l) => l.message.includes('giving up'))).toBe(true)
+  })
+
+  it('probes with a throwaway connection and reports its tool count / failure', async () => {
+    const result = await probeServer({
+      serverName: 'probe',
+      buildTransport: () => createTransport(stdioDef('probe'), noopResolve, NO_WARN),
+    })
+    expect(result.ok).toBe(true)
+    expect(result.toolCount).toBeGreaterThan(0)
+
+    const failed = await probeServer({
+      serverName: 'probe',
+      buildTransport: () =>
+        createTransport(stdioDef('probe', { command: '/nonexistent/definitely-missing', args: [] }), noopResolve, NO_WARN),
+    })
+    expect(failed.ok).toBe(false)
+    expect(failed.error).toBeTruthy()
   })
 })
 

@@ -81,6 +81,7 @@ export const styles = {
   noticeText: 'mcpScope_noticeText',
   list: 'mcpScope_list',
   card: 'mcpScope_card',
+  cardDisabled: 'mcpScope_cardDisabled',
   cardHead: 'mcpScope_cardHead',
   cardName: 'mcpScope_cardName',
   cardMeta: 'mcpScope_cardMeta',
@@ -96,6 +97,19 @@ export const styles = {
   confirm: 'mcpScope_confirm',
   confirmText: 'mcpScope_confirmText',
   confirmActions: 'mcpScope_confirmActions',
+  dialog: 'mcpScope_dialog',
+  toggleRow: 'mcpScope_toggleRow',
+  toggleLabel: 'mcpScope_toggleLabel',
+  statusRow: 'mcpScope_statusRow',
+  statusDot: 'mcpScope_statusDot',
+  statusDotOk: 'mcpScope_statusDotOk',
+  statusDotWarn: 'mcpScope_statusDotWarn',
+  statusDotError: 'mcpScope_statusDotError',
+  statusText: 'mcpScope_statusText',
+  statusErrorText: 'mcpScope_statusErrorText',
+  toolList: 'mcpScope_toolList',
+  toolItem: 'mcpScope_toolItem',
+  toolName: 'mcpScope_toolName',
   wsBlock: 'mcpScope_wsBlock',
   wsList: 'mcpScope_wsList',
   wsRow: 'mcpScope_wsRow',
@@ -110,6 +124,7 @@ export const styles = {
   field: 'mcpScope_field',
   fieldLabel: 'mcpScope_fieldLabel',
   input: 'mcpScope_input',
+  textarea: 'mcpScope_textarea',
   inputInvalid: 'mcpScope_inputInvalid',
   fieldHint: 'mcpScope_fieldHint',
   fieldProblem: 'mcpScope_fieldProblem',
@@ -389,6 +404,11 @@ export const css = `
   border-color: var(--dsw-alias-label-dimmed);
 }
 
+/* A globally disabled server keeps its card readable but visibly out of play. */
+.mcpScope_cardDisabled {
+  opacity: 0.6;
+}
+
 .mcpScope_cardHead {
   display: flex;
   align-items: center;
@@ -538,6 +558,99 @@ export const css = `
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* ---- import dialog (nested block inside the staged form) ---- */
+
+.mcpScope_dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+/* ---- enable toggle (Switch geometry in a labelled row) ---- */
+
+.mcpScope_toggleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcpScope_toggleLabel {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* ---- runtime status row (dot + phase + actions) ---- */
+
+.mcpScope_statusRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mcpScope_statusDot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  corner-shape: round;
+  background: var(--dsw-alias-border-l3);
+}
+
+.mcpScope_statusDotOk {
+  background: var(--dsw-alias-state-success-primary);
+}
+
+.mcpScope_statusDotWarn {
+  background: var(--dsw-alias-state-warn-primary);
+}
+
+.mcpScope_statusDotError {
+  background: var(--dsw-alias-state-error-primary);
+}
+
+.mcpScope_statusText {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.mcpScope_statusErrorText {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
+}
+
+.mcpScope_toolList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mcpScope_toolItem {
+  overflow: hidden;
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--dsw-alias-label-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcpScope_toolName {
+  color: var(--dsw-alias-label-primary);
 }
 
 /* ---- per-workspace rows ---- */
@@ -706,6 +819,31 @@ export const css = `
 }
 
 .mcpScope_input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mcpScope_textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 96px;
+  padding: 8px 12px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+  resize: vertical;
+}
+
+.mcpScope_textarea:focus {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.mcpScope_textarea:disabled {
   opacity: 0.5;
   cursor: default;
 }

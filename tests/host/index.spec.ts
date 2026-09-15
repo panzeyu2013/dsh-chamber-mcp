@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
 import * as entry from '../../src/index.js'
 import z from '@deepseek-ai/schemastery'
 
@@ -22,5 +23,36 @@ describe('plugin entry shape', () => {
   it('Config is the empty-object schema (no composition surface)', () => {
     const schema = entry.Config as unknown as z<object>
     expect(schema({})).toEqual({})
+  })
+
+  it('apply installs the namespace and mounts the runtime routes when connection exists', async () => {
+    const ctx = new Context()
+    const routes: string[] = []
+    let installedNs: unknown
+    ctx.provide('settings', {
+      installSection: (_owner: unknown, ns: string) => {
+        installedNs = ns
+      },
+    } as never)
+    ctx.provide('credentials', { resolve: async () => undefined } as never)
+    ctx.provide('tools', {} as never)
+    ctx.provide('workspaceRegistry', { list: () => [] } as never)
+    ctx.provide('agents', { roots: () => [], get: () => undefined } as never)
+    ctx.provide('connection', {
+      fetch: {
+        register: (route: { path: string }) => {
+          routes.push(route.path)
+          return async () => {}
+        },
+      },
+    } as never)
+    await ctx.plugin(entry)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(installedNs).toBe('mcp-scope')
+    expect(routes.sort()).toEqual([
+      '/api/mcp-scope.action',
+      '/api/mcp-scope.status',
+      '/api/mcp-scope.tools',
+    ])
   })
 })

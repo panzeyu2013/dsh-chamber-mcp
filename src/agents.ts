@@ -107,6 +107,11 @@ export interface AgentApplierOptions {
   workspaceRegistry: WorkspaceRegistryLike
   /** Current document overrides (read live — never cached across pushes). */
   overrides: () => WorkspaceOverrides
+  /**
+   * Global off-switch lookup (read live). Optional so existing test mounts
+   * keep their shape; absent ⇒ never globally disabled.
+   */
+  isDisabled?: (serverName: string) => boolean
 }
 
 /** The per-agent applier owned by the manager. */
@@ -152,8 +157,9 @@ const fmtError = (error: unknown): string =>
   /** Liveness: the agent is still the live registry entry for its id. */
   const isAlive = (agent: Agent): boolean => agents.get(agent.id) === agent
 
-  /** Live enablement source — never cached across pushes (settings reads are per-op). */
+  /** Live enablement sources — never cached across pushes (settings reads are per-op). */
   const overrides = options.overrides
+  const isDisabled = options.isDisabled ?? ((): boolean => false)
 
   const resolveWorkspace = (agent: Agent): string | undefined =>
     workspaceIdOf(agent.session.header.cwd, workspaceRegistry.list())
@@ -224,14 +230,21 @@ const fmtError = (error: unknown): string =>
       return
     }
     const { workspaceId } = entry
-    const enabled = workspaceId !== undefined && isEnabled(docOverrides, workspaceId, serverName) && state.defs.size > 0
+    const globallyOff = isDisabled(serverName)
+    const enabled =
+      workspaceId !== undefined &&
+      !globallyOff &&
+      isEnabled(docOverrides, workspaceId, serverName) &&
+      state.defs.size > 0
     if (!enabled) {
       if (applied !== undefined) {
-        const reason = workspaceId === undefined
-          ? 'agent has no workspace'
-          : !isEnabled(docOverrides, workspaceId, serverName)
-            ? 'disabled for this workspace'
-            : 'server has no tools'
+        const reason = globallyOff
+          ? 'server is disabled globally'
+          : workspaceId === undefined
+            ? 'agent has no workspace'
+            : !isEnabled(docOverrides, workspaceId, serverName)
+              ? 'disabled for this workspace'
+              : 'server has no tools'
         revokeApplied(entry, serverName, reason)
       }
       return

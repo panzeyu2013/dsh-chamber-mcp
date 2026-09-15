@@ -67,6 +67,8 @@ class Harness {
   readonly live = new Map<string, Agent>()
   workspaces: WorkspaceLike[] = []
   overrides: WorkspaceOverrides = {}
+  /** serverNames the harness reports as globally disabled (manager's live view). */
+  readonly globalDisabled = new Set<string>()
   applier!: AgentApplier
   /** Captured applier log lines (apply/revoke/tracking evidence). */
   readonly lines: LoggedLine[] = []
@@ -176,6 +178,7 @@ async function mount(): Promise<Harness> {
       },
       workspaceRegistry: { list: () => [...h.workspaces] },
       overrides: () => h.overrides,
+      isDisabled: (serverName: string) => h.globalDisabled.has(serverName),
     })
   })
   return h
@@ -459,6 +462,31 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
       expect(h.ctx.tools.get(TOOL_B, agentA)).toBeDefined()
       expect(h.lines.at(-1)?.message).toContain('applied 2 tools of server "files" to agent agent-a')
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('a globally disabled server is revoked everywhere and re-applied on re-enable', async () => {
+    const h = await mount()
+    try {
+      const wsA = await h.addWorkspace('a')
+      const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.createAgent(agentA)
+      h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A)]]))
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
+
+      h.globalDisabled.add(SERVER)
+      h.applier.reconcile()
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeUndefined()
+      expect(h.lines.at(-1)?.message).toContain(
+        'revoked server "files" from agent agent-a (server is disabled globally)',
+      )
+
+      h.globalDisabled.delete(SERVER)
+      h.applier.reconcile()
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
+      expect(h.lines.at(-1)?.message).toContain('applied 1 tool of server "files" to agent agent-a')
     } finally {
       h.cleanup()
     }

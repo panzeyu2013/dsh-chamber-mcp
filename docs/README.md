@@ -21,8 +21,9 @@ engineering record behind it.
 | Doc | Contents |
 |---|---|
 | [`design.md`](design.md) | Locked architecture & decisions (namespace document, host gate, UI, build/test tooling) |
-| [`acceptance.md`](acceptance.md) | Requirement/cut matrix from the scope lock (R1–R4, C1–C6) and the data model |
+| [`acceptance.md`](acceptance.md) | Requirement/cut matrix: the locked scope (R1–R4, C1–C6), the 0.0.3 extended line (E1–E8, superseding C3–C5) and the data model |
 | [`RELEASE.md`](RELEASE.md) | CI + release mechanics: workflows, tag flow, smoke runner, upstream-audit recipe, rollback |
+| [`mcp-desktop-layout.md`](mcp-desktop-layout.md) | Desktop layout reference for *Settings → MCP servers* (0.0.3): section/card/form wireframes, card anatomy, runtime state matrix, metrics; companion image [`mcp-desktop-layout.svg`](mcp-desktop-layout.svg) |
 
 ## Implementation findings
 
@@ -39,7 +40,7 @@ engineering record behind it.
 | [`milestones/M0.md`](milestones/M0.md) | M0 smoke evidence log (install, inventory, namespace R/W + revision, credentials) |
 | [`milestones/M0-plan.md`](milestones/M0-plan.md) | How the smoke evidence is produced (`scripts/smoke/`) |
 | [`milestones/M1.md`](milestones/M1.md) | M1 usable-build evidence + gap status |
-| [`milestones/M0-raw.log`](milestones/M0-raw.log), [`M1-raw.log`](milestones/M1-raw.log) | Raw driver transcripts (`M0-raw.log` is the pre-rename v0.0.1 run) |
+| [`milestones/M0-raw.log`](milestones/M0-raw.log), [`M1-raw.log`](milestones/M1-raw.log) | Raw driver transcripts — **as of 2026-09-15 both hold the 0.0.3 pre-release smoke** (anchor dsh 0.1.5-rc.2, `M1`+`M0` exit 0); the earlier pre-rename v0.0.1 run they superseded is quoted in `M0.md`/`M1.md` |
 | [`milestones/M1-live-capture.log`](milestones/M1-live-capture.log) | Raw live R3 tool-capture transcript (launch tokens masked) |
 
 ## Audits
@@ -50,6 +51,7 @@ engineering record behind it.
 | [`review/SUMMARY.md`](review/SUMMARY.md) | Round-1/round-2 finding matrix |
 | [`review/`](review/) round-1 files | Round-1 audits: the six-axis review (architecture, implementation, interaction, frontend, performance, security) plus the separate conventions/compliance audit |
 | [`review/round2/`](review/round2/) | Round-2 follow-up audits and fix verification |
+| [`review/round3/`](review/round3/) | Round-3 review of the 0.0.3 runtime/config line: four read-only agents (host correctness, client correctness, completeness, optimality/security), dispositions, style-consistency acceptance |
 | [`review/prerelease/`](review/prerelease/) | Pre-release blockers, client UX, docs hygiene, release mechanics |
 | [`review/deploy-issue/`](review/deploy-issue/) | Install-diagnosis reports, version contract, local-mount evidence |
 

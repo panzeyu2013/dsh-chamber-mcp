@@ -16,6 +16,7 @@ import { en, zh, countKey, type SettingsKey } from '../../src/client/locales.ts'
 import type { CredentialInfo } from '@deepseek-ai/dsh-credentials/types'
 import type { McpScopeDoc, WorkspaceOverrides } from '../../src/shared/model.ts'
 import type { SaveOutcome, ServerSaveInput } from '../../src/client/controller.ts'
+import type { RuntimeSnapshot, RuntimeTestResult, RuntimeToolEntry } from '../../src/client/runtime.ts'
 
 function t(key: SettingsKey, params?: Record<string, string | number>): string {
   return en[key].replace(/\{(\w+)\}/g, (_, name) => String(params?.[name] ?? ''))
@@ -31,6 +32,7 @@ interface LiveState {
   wsState: 'idle' | 'loading' | 'error'
   wsPhase: 'pending' | 'ready'
   wsItems: { workspaceId: string; title: string }[]
+  runtime?: RuntimeSnapshot
 }
 
 interface Actions {
@@ -38,7 +40,13 @@ interface Actions {
   replaceServer?(oldName: string, input: ServerSaveInput): Promise<SaveOutcome>
   removeServer?(name: string): Promise<SaveOutcome>
   toggleWorkspace?(workspaceId: string, serverName: string, off: boolean): Promise<SaveOutcome>
+  toggleWorkspaces?(serverName: string, off: boolean, workspaceIds: readonly string[]): Promise<SaveOutcome>
+  setServerEnabled?(serverName: string, enabled: boolean): Promise<SaveOutcome>
   unsetCredential?(ref: string): Promise<SaveOutcome>
+  connectServer?(serverName: string): Promise<unknown>
+  disconnectServer?(serverName: string): Promise<unknown>
+  testServer?(serverName: string): Promise<RuntimeTestResult>
+  loadTools?(serverName: string): Promise<{ tools: RuntimeToolEntry[]; truncated: boolean; total: number }>
 }
 
 const OK = async () => ({ ok: true as const })
@@ -56,6 +64,8 @@ function snapshotOf(live: LiveState): {
 }
 
 const NOOP = async () => {}
+const NOOP_REFRESH = async () => {}
+const EMPTY_RUNTIME: RuntimeSnapshot = { phase: 'ready', servers: {} }
 
 // Test-only casts: the composed props re-state framework types that collapse
 // to opaque cross-package shapes in this dev tree (see docs/ui-notes.md).
@@ -78,7 +88,16 @@ function propsOf(live: LiveState, actions: Actions): McpScopeSectionProps {
     replaceServer: actions.replaceServer ?? OK,
     removeServer: actions.removeServer ?? OK,
     toggleWorkspace: actions.toggleWorkspace ?? OK,
+    toggleWorkspaces: actions.toggleWorkspaces ?? OK,
+    setServerEnabled: actions.setServerEnabled ?? OK,
     unsetCredential: actions.unsetCredential ?? OK,
+    useRuntime: ((selector: (s: unknown) => unknown) =>
+      selector(live.runtime ?? EMPTY_RUNTIME)) as unknown as McpScopeSectionProps['useRuntime'],
+    refreshRuntime: NOOP_REFRESH,
+    connectServer: actions.connectServer ?? NOOP,
+    disconnectServer: actions.disconnectServer ?? NOOP,
+    testServer: actions.testServer ?? (async () => ({ ok: true })),
+    loadTools: actions.loadTools ?? (async () => ({ tools: [], truncated: false, total: 0 })),
   }
 }
 
@@ -283,13 +302,219 @@ describe('McpScopeSection render', () => {
     )
     await flush()
     expect(mounted.text()).not.toContain(en['error.conflict'])
-    const switchInput = mounted.host.querySelector<HTMLInputElement>('input[role="switch"]')
-    if (switchInput === null) throw new Error('missing switch')
+    // The card's first switch is the global enable toggle; this test targets
+    // the per-workspace row by id.
+    const switchInput = mounted.host.querySelector<HTMLInputElement>('#mcp-scope-a-ws-1')
+    if (switchInput === null) throw new Error('missing workspace switch')
     switchInput.click()
     await flush()
     const alerts = Array.from(mounted.host.querySelectorAll('[role="alert"]'))
     expect(alerts.length).toBe(1)
     expect(alerts[0]!.textContent).toContain(en['error.conflict'])
+  })
+
+  it('toggles a server globally and renders the disabled state from the document', async () => {
+    const calls: { name: string; enabled: boolean }[] = []
+    const doc: McpScopeDoc = {
+      servers: [stdioServer('a')],
+      overrides: {},
+      disabled: { a: true },
+    }
+    const mounted = mountSection(doc, {
+      setServerEnabled: async (name, enabled) => {
+        calls.push({ name, enabled })
+        return { ok: true }
+      },
+    })
+    await flush()
+    expect(mounted.text()).toContain(en['server.disabledTag'])
+    const toggle = mounted.host.querySelector<HTMLInputElement>('#mcp-scope-enable-a')
+    if (toggle === null) throw new Error('missing enable toggle')
+    expect(toggle.checked).toBe(false)
+    toggle.click()
+    await flush()
+    expect(calls).toEqual([{ name: 'a', enabled: true }])
+  })
+
+  it('batches per-workspace switches through the card\'s all-on/all-off controls', async () => {
+    const calls: { off: boolean; ids: readonly string[] }[] = []
+    const doc: McpScopeDoc = { servers: [stdioServer('a')], overrides: {} }
+    const mounted = mountSection(
+      doc,
+      {
+        toggleWorkspaces: async (_name, off, ids) => {
+          calls.push({ off, ids })
+          return { ok: true }
+        },
+      },
+      {
+        wsItems: [
+          { workspaceId: 'ws-1', title: 'one' },
+          { workspaceId: 'ws-2', title: 'two' },
+        ],
+      },
+    )
+    await flush()
+    buttonByText(mounted.host, en['row.allOff'])!.click()
+    await flush()
+    expect(calls).toEqual([{ off: true, ids: ['ws-1', 'ws-2'] }])
+  })
+
+  it('filters the card list by server name', async () => {
+    const doc: McpScopeDoc = {
+      servers: [stdioServer('alpha'), stdioServer('beta')],
+      overrides: {},
+    }
+    const mounted = mountSection(doc)
+    await flush()
+    const search = mounted.host.querySelector<HTMLInputElement>('input[type="search"]')
+    if (search === null) throw new Error('missing search input')
+    setValue(search, 'alp')
+    await flush()
+    expect(mounted.text()).toContain('alpha')
+    expect(mounted.text()).not.toContain('beta')
+    setValue(search, 'nope')
+    await flush()
+    expect(mounted.text()).toContain(t('search.none', { query: 'nope' }))
+  })
+
+  it('guards unsaved form changes behind an inline discard confirmation', async () => {
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, en['add.add'])!.click()
+    await flush()
+    // A pristine form closes directly.
+    buttonByText(mounted.host, en['action.cancel'])!.click()
+    await flush()
+    expect(mounted.host.querySelector('form')).toBeNull()
+
+    buttonByText(mounted.host, en['add.add'])!.click()
+    await flush()
+    setValue(inputById(mounted.host, 'mcp-scope-add-name'), 'typed')
+    await flush()
+    buttonByText(mounted.host, en['action.cancel'])!.click()
+    await flush()
+    // Dirty: the form stays and asks.
+    expect(mounted.host.querySelector('form')).not.toBeNull()
+    expect(mounted.text()).toContain(en['dirty.confirm'])
+    buttonByText(mounted.host, en['dirty.keepEditing'])!.click()
+    await flush()
+    expect(mounted.host.querySelector('form')).not.toBeNull()
+    expect(mounted.text()).not.toContain(en['dirty.confirm'])
+    buttonByText(mounted.host, en['action.cancel'])!.click()
+    await flush()
+    buttonByText(mounted.host, en['dirty.discard'])!.click()
+    await flush()
+    expect(mounted.host.querySelector('form')).toBeNull()
+  })
+
+  it('imports one server from a pasted JSON snippet into the staged form', async () => {
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, en['add.add'])!.click()
+    await flush()
+    buttonByText(mounted.host, en['add.importJson'])!.click()
+    await flush()
+    const textarea = mounted.host.querySelector<HTMLTextAreaElement>('textarea')
+    if (textarea === null) throw new Error('missing import textarea')
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!
+    setter.call(textarea, JSON.stringify({ mcpServers: { imported: { command: 'node server.js', env: { TOKEN: 's' } } } }))
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    await flush()
+    buttonByText(mounted.host, en['import.parse'])!.click()
+    await flush()
+    expect(inputById(mounted.host, 'mcp-scope-add-name').value).toBe('imported')
+    expect(inputById(mounted.host, 'mcp-scope-add-command').value).toBe('node')
+    const envKey = mounted.host.querySelector<HTMLInputElement>('[aria-label="' + en['add.envKey'] + ' 1"]')
+    expect(envKey?.value).toBe('TOKEN')
+  })
+
+  it('renders the runtime status row, drives connect and discloses the tool list', async () => {
+    const calls: string[] = []
+    const runtime: RuntimeSnapshot = {
+      phase: 'ready',
+      at: 1,
+      servers: {
+        a: {
+          name: 'a',
+          state: 'failed',
+          attempts: 3,
+          maxAttempts: 10,
+          toolCount: 2,
+          error: { code: 'connection-failed', message: 'boom' },
+        },
+      },
+    }
+    const mounted = mountSection(
+      { servers: [stdioServer('a')], overrides: {} },
+      {
+        connectServer: async (name) => {
+          calls.push('connect:' + name)
+          return {}
+        },
+        loadTools: async (name) => {
+          calls.push('tools:' + name)
+          return {
+            tools: [{ publicName: 'mcp__a__t', rawName: 't', description: 'does things' }],
+            truncated: true,
+            total: 2000,
+          }
+        },
+      },
+      { runtime },
+    )
+    await flush()
+    expect(mounted.text()).toContain(en['status.failed'])
+    // The host message never crosses the wire; the card localizes the code.
+    expect(mounted.text()).toContain(en['runtime.error.connection-failed'])
+    expect(mounted.text()).not.toContain('boom')
+    buttonByText(mounted.host, en['action.connect'])!.click()
+    await flush()
+    expect(calls).toContain('connect:a')
+    buttonByText(mounted.host, en['tools.title'] + ' (2)')!.click()
+    await flush()
+    expect(calls).toContain('tools:a')
+    expect(mounted.text()).toContain('does things')
+    // Truncation reports the TRUE total, not the displayed count.
+    expect(mounted.text()).toContain(t('tools.truncated', { count: 1, total: 2000 }))
+  })
+
+  it('never reads runtime state through Object.prototype for prototype-name servers', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('toString')], overrides: {} },
+      {},
+      { runtime: { phase: 'unavailable', servers: {}, error: 'offline' } },
+    )
+    await flush()
+    // Own-property lookup only: an inherited member must not look like a view.
+    expect(mounted.text()).toContain(en['runtime.unavailable'])
+    expect(buttonByText(mounted.host, en['action.connect'])).toBeUndefined()
+    expect(buttonByText(mounted.host, en['action.test'])).toBeUndefined()
+  })
+
+  it('reveals an out-of-range timeout instead of leaving Save dead', async () => {
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, en['add.add'])!.click()
+    await flush()
+    setValue(inputById(mounted.host, 'mcp-scope-add-name'), 'ok')
+    setValue(inputById(mounted.host, 'mcp-scope-add-command'), 'node')
+    setValue(inputById(mounted.host, 'mcp-scope-add-timeout'), '500')
+    await flush()
+    expect(mounted.text()).toContain(en['validation.timeout'])
+    const save = buttonByText(mounted.host, en['action.save']) as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+  })
+
+  it('degrades to a hint when the runtime channel is unavailable', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('a')], overrides: {} },
+      {},
+      { runtime: { phase: 'unavailable', servers: {}, error: 'offline' } },
+    )
+    await flush()
+    expect(mounted.text()).toContain(en['runtime.unavailable'])
+    expect(mounted.text()).toContain(en['status.unknown'])
   })
 
   it('wires a real form: Enter submits through onSubmit, non-submit buttons stay type=button', async () => {

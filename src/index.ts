@@ -19,6 +19,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { createManager, type ManagerHandle } from './manager.js'
+import { registerMcpScopeRoutes } from './routes.js'
 import { DocumentSchema } from './schema.js'
 import { EMPTY_DOC, validateDoc, type McpScopeDoc } from './shared/model.js'
 // Public type surface for typed consumers (FE-10 host side).
@@ -85,6 +86,10 @@ export async function apply(ctx: Context, _config: unknown): Promise<void> {
   ctx.effect(() => {
     return () => manager.dispose()
   }, 'mcp-scope.manager')
+
+  // Runtime status/actions ride the Connection carrier when one exists (web
+  // deployments); headless hosts simply never mount the routes.
+  registerMcpScopeRoutes(ctx, manager, ctx.logger)
 
   ctx.settings.installSection(ctx, 'mcp-scope', DocumentSchema, EMPTY_DOC, {
     setSource: (source) => {

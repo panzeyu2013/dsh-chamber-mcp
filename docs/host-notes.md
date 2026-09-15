@@ -203,3 +203,48 @@ flags and the full config is green at the time of writing.
 - `tests/fixture/mcp-fixture-server.mjs` child processes rely on repo
   `node_modules` resolution (spawned with `process.execPath` from the repo
   cwd); moving the fixture would break the supervisor/manager specs.
+
+## (d) 0.0.3 — runtime status, manual control, timeouts
+
+- **Carrier choice.** The status/actions ride `ctx.connection.fetch.register`
+  (`/api/mcp-scope.status|action|tools`), the same seam the official
+  `/api/present.host` (`dsh-client-ui-deliverables`) and `/api/session.export`
+  (`dsh-session-log-export`) routes use, registered through a nested
+  `ctx.inject(['connection'], …)` so a headless host never mounts them. A custom
+  Remote namespace was rejected: the client assembly's namespaces are a
+  compile-time selection this plugin cannot extend, and a custom RPC channel
+  has no in-tree usage. Riding `/api` also means the chamber gateway's
+  reverse proxy, Host/Origin fence and browser auth apply unchanged.
+- **Snapshots.** `ServerHandle.snapshot()` maps the existing supervisor
+  bookkeeping (connected/failedAttempts/reconnectTimer/connectedAt/syncedAt)
+  onto the wire's phase vocabulary plus a sanitized `error`; `handle.tools()`
+  returns the committed generation's identity (publicName/rawName/description)
+  collected through the new optional `onListed` sink of `fetchToolDefinitions`
+  and committed atomically with the definitions.
+- **Error text never crosses the wire.** The status/action/tools routes carry
+  ONLY a fixed host-generated code + message per failure (spawn-failed,
+  timeout, forbidden, protocol, gave-up, reconnect-disabled, generation-stuck,
+  connection-failed); the raw/sanitized transport text stays in the host log.
+  The earlier `***`-redaction approach was removed after review: remote bodies
+  (which the SDK embeds in errors) can echo a credential in an encoding the
+  substring pass cannot catch, and "no secret in any response" is only
+  enforceable by never sending the text.
+- **Extra supervisor bookkeeping (review-driven).** A generation that fails to
+  close within 5 s now reports `failed` (`generation-stuck`) instead of
+  `connecting` forever; `dispose()` clears the armed retry timestamp; a
+  successful reconnect resets the consecutive-failure counter; `connect()` on a
+  budget-exhausted (still tracked) handle disposes and restarts it;
+  `toolList` answers not-connected unless the handle is currently connected;
+  tool-list responses carry `total` next to `truncated`.
+- **Prototype-safe sparse maps.** `pruneDisabled`/`renameDisabledKey` build
+  their results with `Object.fromEntries`, so a literal `__proto__` key stays
+  an own entry instead of mutating the prototype.
+- **Manual stop.** `manualStopped` is keyed by the definition fingerprint: a
+  reconcile with an unchanged definition leaves the server off, while a changed
+  definition or `connect()` clears the latch. Disconnect stops with
+  `revokeFirst=true`, so the model-visible tools disappear immediately.
+- **Test semantics.** Connected → read-only report of the live generation (no
+  second process/connection); otherwise a throwaway `probeServer` connect+sync.
+- **Test additions.** `tests/host/server.spec.ts` (snapshot phases, tool
+  identity, probe) and `tests/host/routes.spec.ts` (envelope + status codes);
+  `tests/host/manager.spec.ts` grew the latch and runtime-control cases.

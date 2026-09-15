@@ -20,6 +20,8 @@ import {
   CREDENTIAL_REF_PATTERN,
   HEADER_NAME_PATTERN,
   SERVER_NAME_PATTERN,
+  TIMEOUT_MAX_MS,
+  TIMEOUT_MIN_MS,
   type McpScopeDoc,
   type ServerDef,
 } from './shared/model.js'
@@ -39,12 +41,14 @@ export const ServerSchema: z<ServerDef> = z.union([
     args: z.array(String).default([]),
     cwd: z.string().default(''),
     envKeys: z.array(z.string().pattern(CREDENTIAL_REF_PATTERN)).default([]),
+    timeoutMs: z.number().min(TIMEOUT_MIN_MS).max(TIMEOUT_MAX_MS),
   }),
   z.object({
     serverName: z.string().required().pattern(SERVER_NAME_PATTERN),
     transport: z.const('streamable-http'),
     url: z.string().required(),
     headers: z.array(HeaderSchema).default([]),
+    timeoutMs: z.number().min(TIMEOUT_MIN_MS).max(TIMEOUT_MAX_MS),
   }),
 ]) as unknown as z<ServerDef>
 
@@ -56,4 +60,5 @@ export const ServerSchema: z<ServerDef> = z.union([
 export const DocumentSchema: z<McpScopeDoc> = z.object({
   servers: z.array(ServerSchema).default([]),
   overrides: z.dict(z.dict(z.const(true))).default({}),
+  disabled: z.dict(z.const(true)).default({}),
 }) as unknown as z<McpScopeDoc>

@@ -4,8 +4,9 @@
 servers with per-workspace per-agent tool-scope injection). Releases: GitHub Releases carrying the packed tgz + `.sha256` (npm publish
 temporarily disabled). **Published release: v0.0.2** — tag pushed and GitHub
 Release published 2026-09-14 (asset: `dsh-chamber-mcp-0.0.2.tgz` + `.sha256`);
-`v0.0.1` is the previous release. The next line's version is set in
-`package.json` plus a dated CHANGELOG section before its tag exists (verify with
+`v0.0.1` is the previous release. The working tree is the **0.0.3** line
+(prepared on `main`, **not tagged**): its version is set in `package.json` plus
+a dated CHANGELOG section before its tag exists (verify with
 `git ls-remote --tags origin` before quoting a released version).
 Tagging, pushing and publishing are **maintainer actions**: never create a tag,
 push a ref, open or edit a GitHub Release, or run a publish, unless explicitly

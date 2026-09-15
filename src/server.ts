@@ -123,6 +123,45 @@ export type DefsChangedListener = (
   defs: ReadonlyMap<string, ToolDefinition>,
 ) => void
 
+/**
+ * Connection phase of one supervised server, as reported to the runtime-status
+ * surface (wire vocabulary; additive, never a closed world).
+ */
+export type ServerConnectionPhase = 'connecting' | 'connected' | 'reconnecting' | 'failed' | 'stopped'
+
+/** One server's runtime status snapshot (no credential material). */
+export interface ServerSnapshot {
+  phase: ServerConnectionPhase
+  /** Consecutive failed attempts in the current outage. */
+  attempts: number
+  /** Budget of the fixed official reconnect policy. */
+  maxAttempts: number
+  /** When the armed reconnect timer fires (phase 'reconnecting'). */
+  nextRetryAt?: number
+  /** When the current generation finished connect + initial sync. */
+  connectedAt?: number
+  /** When the last tool listing committed. */
+  syncedAt?: number
+  /** Committed tool count (0 while down / never synced). */
+  toolCount: number
+  /** Sanitized text of the latest connection/sync failure. */
+  error?: string
+}
+
+/** Identity + copy line of one synced tool (runtime tool list, capped by the caller). */
+export interface ToolSummary {
+  publicName: string
+  rawName: string
+  description: string
+}
+
+/** Log-safe error text: control characters stripped, capped. Remote-reflected
+ * payloads (e.g. an HTTP error body echoing a credential value) must never
+ * reach the log verbatim. */
+export function safeErrorText(error: unknown): string {
+  return String(error).replace(/[\u0000-\u001f\u007f]/g, '?').slice(0, 300)
+}
+
 /** Read-only master state view for one supervised server. */
 export interface ServerState {
   /** The server's stable identity. */
@@ -151,12 +190,50 @@ export interface ServerHandle {
    * the supervisor enters its reconnect loop regardless.
    */
   readonly ready: Promise<void>
+  /** Runtime status snapshot for the settings surface. */
+  snapshot(): ServerSnapshot
+  /** Identity + description of every tool in the committed generation. */
+  tools(): readonly ToolSummary[]
   /**
    * Stop reconnection, close the live client, wait for the in-flight attempt
    * and queued syncs to quiesce. Committed defs stay readable; the OWNER
    * (manager) decides when to push a revocation to live agents.
    */
   dispose(): Promise<void>
+}
+
+/** One-shot probe result (manual "Test connection"). */
+export interface ProbeResult {
+  ok: boolean
+  toolCount?: number
+  /** Stable failure code when the probe failed (never remote text). */
+  code?: string
+  /** Host-generated message of {@link ProbeResult.code}. */
+  error?: string
+}
+
+/**
+ * Probe one server definition with a throwaway client: connect, list tools,
+ * close. Never touches the supervised generation and never registers
+ * anything; the caller owns rate/concurrency discipline.
+ */
+export async function probeServer(options: {
+  serverName: string
+  buildTransport: () => Promise<Transport>
+  toolCallTimeoutMs?: number
+}): Promise<ProbeResult> {
+  const client = new Client({ name: pkgIdentity.name, version: pkgIdentity.version }, { capabilities: {} })
+  const toolCallTimeoutMs = options.toolCallTimeoutMs ?? DEFAULT_TOOL_CALL_TIMEOUT_MS
+  try {
+    const transport = await options.buildTransport()
+    await client.connect(transport)
+    const defs = await fetchToolDefinitions(client, { serverName: options.serverName, toolCallTimeoutMs })
+    return { ok: true, toolCount: defs.size }
+  } catch (error) {
+    return { ok: false, error: safeErrorText(error) }
+  } finally {
+    try { await client.close() } catch { /* transport already gone */ }
+  }
 }
 
 /** Supervisor construction options. */
@@ -184,11 +261,7 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
   const { serverName } = options
   const policy = resolveReconnectPolicy(options.reconnect, `mcp-scope(${serverName}): reconnect`)
   const label = `mcp-scope(${serverName})`
-/** Log-safe error text: control characters stripped, capped. Remote-reflected
- * payloads (e.g. an HTTP error body echoing a credential value) must never
- * reach the log verbatim. */
-const fmtError = (error: unknown): string =>
-  String(error).replace(/[\u0000-\u001f\u007f]/g, '?').slice(0, 300)
+  const fmtError = safeErrorText
   const log = options.logger
   const toolCallTimeoutMs = options.toolCallTimeoutMs ?? DEFAULT_TOOL_CALL_TIMEOUT_MS
 
@@ -209,6 +282,16 @@ const fmtError = (error: unknown): string =>
   let connectedAt: number | undefined
   /** The real error from the first connection attempt, for startup diagnostics. */
   let firstAttemptError: unknown
+  /** Latest sanitized failure text exposed through the runtime snapshot. */
+  let lastError: string | undefined
+  /** When the last listing committed (undefined = never). */
+  let syncedAt: number | undefined
+  /** When the armed reconnect timer fires (undefined while connected/connecting). */
+  let nextRetryAt: number | undefined
+  /** True after the reconnect budget is exhausted or reconnect is disabled. */
+  let gaveUp = false
+  /** Tool identity/copy of the committed generation. */
+  let toolSummaries: readonly ToolSummary[] = []
 
   /** A generation may act only while it is the current one on a live supervisor. */
   const isCurrent = (generationClient: Client): boolean => !disposed && client === generationClient
@@ -218,8 +301,10 @@ const fmtError = (error: unknown): string =>
    * generation, so the "synced N tools" info line and both counters are
    * warranted.
    */
-  function commit(next: ReadonlyMap<string, ToolDefinition>): void {
+  function commit(next: ReadonlyMap<string, ToolDefinition>, listed?: readonly ToolSummary[]): void {
     master = next
+    toolSummaries = listed ?? []
+    syncedAt = Date.now()
     generation += 1
     syncId += 1
     log.info(`${label}: synced ${next.size} tool${next.size === 1 ? '' : 's'} (generation ${generation})`)
@@ -235,6 +320,7 @@ const fmtError = (error: unknown): string =>
    */
   function unregister(): void {
     master = EMPTY_DEFS
+    toolSummaries = []
     options.onDefsChanged(serverName, syncId, master)
   }
 
@@ -248,10 +334,18 @@ const fmtError = (error: unknown): string =>
     const run = syncChain.then(async () => {
       if (!isCurrent(generationClient)) return
       // Phase 1: fetch the full next generation WITHOUT touching master state.
-      const next = await fetchToolDefinitions(generationClient, { serverName, toolCallTimeoutMs })
+      const listed: ToolSummary[] = []
+      const next = await fetchToolDefinitions(
+        generationClient,
+        { serverName, toolCallTimeoutMs },
+        (info) => {
+          listed.push({ publicName: info.publicName, rawName: info.rawName, description: info.description })
+        },
+      )
       if (!isCurrent(generationClient)) return
-      // Phase 2: commit swap.
-      commit(Object.freeze(next) as ReadonlyMap<string, ToolDefinition>)
+      // Phase 2: commit swap (the listed identity commits atomically with the
+      // definitions, so a failed sync can never publish half a list).
+      commit(Object.freeze(next) as ReadonlyMap<string, ToolDefinition>, listed)
     })
     // The chain tail must survive a failed sync; the enqueuing caller owns reporting.
     syncChain = run.catch(() => {})
@@ -285,6 +379,8 @@ const fmtError = (error: unknown): string =>
       const message = lostEstablishedConnection
         ? 'connection lost and reconnect is disabled — registered tools will fail until an HMR reload or Host restart'
         : 'connection failed and reconnect is disabled — no tools were registered; reload the plugin or restart the Host to connect'
+      gaveUp = true
+      lastError = message
       log.error(`${label}: ${message}`)
       return
     }
@@ -294,10 +390,12 @@ const fmtError = (error: unknown): string =>
     connectedAt = undefined
     failedAttempts += 1
     if (failedAttempts > policy.maxAttempts) {
+      gaveUp = true
       // Enqueue the give-up commit so it cannot race an in-flight sync's
       // phase-2 commit (which checks isCurrent inside the queue).
       syncChain = syncChain.then(() => {
         if (disposed) return
+        lastError = `giving up after ${policy.maxAttempts} consecutive failed reconnect attempts`
         log.error(`${label}: giving up after ${policy.maxAttempts} consecutive failed reconnect attempts — tools unregistered; reload the plugin or restart the Host to reconnect`)
         unregister()
       })
@@ -306,8 +404,10 @@ const fmtError = (error: unknown): string =>
     const delayMs = Math.min(policy.maxDelayMs, policy.initialDelayMs * 2 ** (failedAttempts - 1))
     const action = lostEstablishedConnection ? 'connection lost; reconnecting' : 'connection failed; retrying'
     log.warn(`${label}: ${action} in ${delayMs}ms (attempt ${failedAttempts}/${policy.maxAttempts})`)
+    nextRetryAt = Date.now() + delayMs
     reconnectTimer = setTimeout(() => {
       reconnectTimer = undefined
+      nextRetryAt = undefined
       settling = connectGeneration()
     }, delayMs)
     // An armed reconnect timer must never hold the process open on its own.
@@ -325,6 +425,8 @@ const fmtError = (error: unknown): string =>
       { name: pkgIdentity.name, version: pkgIdentity.version },
       { capabilities: {} },
     )
+    gaveUp = false
+    lastError = undefined
     const closed = deferred<void>()
     let attemptSettled = false
     let closeObserved = false
@@ -367,7 +469,10 @@ const fmtError = (error: unknown): string =>
       if (firstAttemptError === undefined) firstAttemptError = error
       // Disposal clears current ownership before it closes the generation, so
       // only a live supervisor reports an attempt failure.
-      if (isCurrent(generationClient)) log.warn(`${label}: connection attempt failed: ${fmtError(error)}`)
+      if (isCurrent(generationClient)) {
+        lastError = fmtError(error)
+        log.warn(`${label}: connection attempt failed: ${fmtError(error)}`)
+      }
       try { await generationClient.close() } catch { /* transport already gone */ }
       const quiesced = hasClosed() || await waitForClose(closed.promise)
       attemptSettled = true
@@ -375,6 +480,10 @@ const fmtError = (error: unknown): string =>
       if (!quiesced) {
         client = undefined
         clientClosed = undefined
+        // No timer is armed (an overlapping retry would be worse), so without
+        // this the snapshot would report 'connecting' forever.
+        gaveUp = true
+        lastError = `failed generation did not close within ${GENERATION_CLOSE_TIMEOUT_MS}ms`
         log.error(`${label}: failed generation did not close within ${GENERATION_CLOSE_TIMEOUT_MS}ms — reconnect stopped to avoid overlapping server processes; reload the plugin or restart the Host to retry`)
         return
       }
@@ -389,7 +498,11 @@ const fmtError = (error: unknown): string =>
     if (!isCurrent(generationClient)) return
     connected = true
     connectedAt = Date.now()
-    if (failedAttempts > 0) log.info(`${label}: reconnected and re-synced tools (attempt ${failedAttempts}/${policy.maxAttempts})`)
+    // The outage is over: the attempt counter describes the current outage,
+    // so a connected snapshot must never report a stale failure count.
+    const attemptsBeforeRecovery = failedAttempts
+    failedAttempts = 0
+    if (attemptsBeforeRecovery > 0) log.info(`${label}: reconnected and re-synced tools (attempt ${attemptsBeforeRecovery}/${policy.maxAttempts})`)
   }
 
   /** The in-flight (or last settled) connection attempt; dispose awaits it for quiescence. */
@@ -410,16 +523,36 @@ const fmtError = (error: unknown): string =>
     get connected() { return connected },
   }
 
+  const snapshot = (): ServerSnapshot => {
+    const base = {
+      attempts: failedAttempts,
+      maxAttempts: policy.maxAttempts,
+      toolCount: master.size,
+      ...(nextRetryAt !== undefined ? { nextRetryAt } : {}),
+      ...(connectedAt !== undefined ? { connectedAt } : {}),
+      ...(syncedAt !== undefined ? { syncedAt } : {}),
+      ...(lastError !== undefined ? { error: lastError } : {}),
+    }
+    if (disposed) return { phase: 'stopped', ...base }
+    if (connected) return { phase: 'connected', ...base }
+    if (gaveUp) return { phase: 'failed', ...base }
+    if (reconnectTimer !== undefined) return { phase: 'reconnecting', ...base }
+    return { phase: 'connecting', ...base }
+  }
+
   return {
     serverName,
     state,
     ready,
+    snapshot,
+    tools: () => toolSummaries,
     async dispose(): Promise<void> {
       disposed = true
       if (reconnectTimer !== undefined) {
         clearTimeout(reconnectTimer)
         reconnectTimer = undefined
       }
+      nextRetryAt = undefined
       const current = client
       const currentClosed = clientClosed
       client = undefined

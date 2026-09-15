@@ -110,6 +110,10 @@ const ctx = {
     const off = fn()
     return typeof off === 'function' ? off : () => {}
   },
+  /** Cordis Events seat: the client half subscribes to 'connection/reset'. */
+  on() {
+    return () => {}
+  },
   locale: {
     register(_ns, dict) {
       dictionary = dict.en

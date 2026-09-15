@@ -1,0 +1,170 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1160" height="1880" viewBox="0 0 1160 1880">
+<rect x="0" y="0" width="1160" height="1880" rx="0" fill="#f2f2f5"/>
+<text x="40" y="42" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="18" font-weight="600" fill="#1b1b1f">Settings → MCP 服务器 · 桌面布局参考图 (0.0.3)</text>
+<text x="40" y="62" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10.5" fill="#6b6b76">结构示意（非像素截图）。配色为上游 dsh 主题 token 的近似值；开实机看 Settings → MCP 服务器。</text>
+<rect x="40" y="76" width="1080" height="250" rx="10" fill="#ffffff" stroke="#e6e6ea" stroke-width="0.75"/><text x="56" y="100" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="13" font-weight="600" fill="#1b1b1f">① 位置：官方 Settings shell 内的一列</text>
+<rect x="60" y="104" width="1040" height="200" rx="8" fill="#f7f7f9" stroke="#e6e6ea" stroke-width="0.5"/>
+<rect x="72" y="116" width="190" height="176" rx="6" fill="#ececf0"/>
+<text x="84" y="140" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="11" font-weight="600" fill="#1b1b1f">侧栏</text>
+<rect x="84" y="152" width="166" height="20" rx="5" fill="none"/>
+<text x="94" y="166" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#6b6b76">会话</text>
+<rect x="84" y="178" width="166" height="20" rx="5" fill="none"/>
+<text x="94" y="192" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#6b6b76">工作区</text>
+<rect x="84" y="204" width="166" height="20" rx="5" fill="none"/>
+<text x="94" y="218" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#6b6b76">文件</text>
+<rect x="84" y="230" width="166" height="20" rx="5" fill="#ffffff" stroke="#e0e0e6" stroke-width="1"/>
+<text x="94" y="244" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#1b1b1f">设置</text>
+<rect x="274" y="116" width="160" height="176" rx="6" fill="#ffffff" stroke="#e6e6ea" stroke-width="0.5"/>
+<text x="286" y="138" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#9a9aa5">设置导航</text>
+<text x="286" y="160" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" font-weight="400" fill="#6b6b76">通用</text>
+<text x="286" y="182" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" font-weight="400" fill="#6b6b76">模型</text>
+<text x="286" y="204" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" font-weight="400" fill="#6b6b76">插件</text>
+<text x="286" y="226" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" font-weight="600" fill="#4d6bfe">MCP 服务器</text>
+<rect x="446" y="116" width="642" height="176" rx="6" fill="#ffffff" stroke="#e6e6ea" stroke-width="0.5"/>
+<text x="462" y="140" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="12" font-weight="600" fill="#1b1b1f">MCP 服务器</text>
+<rect x="914" y="124" width="74" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="951" y="139" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">刷新状态</text>
+<rect x="996" y="124" width="78" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="1035" y="139" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">＋ 添加服务器</text>
+<rect x="462" y="152" width="612" height="22" rx="6" fill="#f7f7f9" stroke="#e6e6ea" stroke-width="0.5"/>
+<text x="470" y="167" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#9a9aa5">筛选服务器</text>
+<rect x="462" y="186" width="612" height="88" rx="8" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.5"/>
+<rect x="476" y="198" width="30" height="17" rx="8.5" fill="#4d6bfe"/><circle cx="497" cy="206.5" r="6.5" fill="#ffffff"/><text x="512" y="210" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#1b1b1f"></text>
+<text x="524" y="211" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="11" font-weight="600" fill="#1b1b1f">github</text>
+<text x="580" y="211" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9" fill="#6b6b76">Streamable HTTP</text>
+<circle cx="482" cy="235" r="4" fill="#1f9d55"/>
+<text x="492" y="239" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44">已连接 · 12 个工具</text>
+<rect x="830" y="226" width="44" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="852" y="241" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">断开</text>
+<rect x="878" y="226" width="44" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="900" y="241" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">测试</text>
+<rect x="926" y="226" width="68" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="960" y="241" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">工具 (12)</text>
+<rect x="476" y="252" width="584" height="14" rx="4" fill="#f2f2f5"/>
+<text x="482" y="262" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="8.5" fill="#9a9aa5">工作区开关 · 凭据徽标 · 定义明细</text>
+<text x="60" y="318" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">Slot: settings.section · id "mcp-scope" · order 25；单列 max-width 720px、gap 12px；无子 slot。</text>
+<rect x="40" y="344" width="1080" height="610" rx="10" fill="#ffffff" stroke="#e6e6ea" stroke-width="0.75"/><text x="56" y="368" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="13" font-weight="600" fill="#1b1b1f">② 列表状态：section 表面与卡片解剖</text>
+<text x="200" y="386" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="15" font-weight="600" fill="#1b1b1f">MCP 服务器</text>
+<rect x="746" y="370" width="74" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="783" y="385" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">刷新状态</text>
+<rect x="826" y="370" width="94" height="22" rx="11" fill="#4d6bfe" stroke="#4d6bfe" stroke-width="0.75"/><text x="873" y="385" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle">＋ 添加服务器</text>
+<rect x="200" y="402" width="720" height="26" rx="6" fill="#f7f7f9" stroke="#e6e6ea" stroke-width="0.5"/><text x="208" y="419" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#9a9aa5">筛选服务器</text>
+<text x="200" y="452" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#1f9d55">✓ 已添加 github</text>
+<text x="320" y="452" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">(role=status，6 秒后消失)</text>
+<rect x="200" y="464" width="720" height="336" rx="12" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/>
+<rect x="214" y="480" width="30" height="17" rx="8.5" fill="#4d6bfe"/><circle cx="235" cy="488.5" r="6.5" fill="#ffffff"/><text x="250" y="492" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#1b1b1f"></text>
+<text x="262" y="493" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="12" font-weight="600" fill="#1b1b1f">github</text>
+<text x="318" y="493" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9" fill="#6b6b76">Streamable HTTP</text>
+<text x="416" y="493" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9" fill="#9a9aa5">1 header · Off in 2 workspaces</text>
+<rect x="816" y="480" width="44" height="22" rx="11" fill="#fdf0f0" stroke="#f0c9c9" stroke-width="0.75"/><text x="838" y="495" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#c33b3b" text-anchor="middle">移除</text>
+<rect x="866" y="480" width="44" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="888" y="495" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">编辑</text>
+<circle cx="220" cy="520" r="4" fill="#1f9d55"/>
+<text x="230" y="524" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10.5" fill="#3a3a44">已连接 · 12 个工具</text>
+<rect x="730" y="511" width="54" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="757" y="526" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">断开</text>
+<rect x="790" y="511" width="44" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="812" y="526" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">测试</text>
+<rect x="840" y="511" width="68" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="874" y="526" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">工具 (12)</text>
+<rect x="214" y="538" width="692" height="112" rx="8" fill="#fafafb" stroke="#ececf0" stroke-width="0.5"/>
+<text x="226" y="556" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" font-weight="600" fill="#6b6b76">工具</text>
+<text x="226" y="578" font-size="10" fill="#1b1b1f" font-family="ui-monospace,SFMono-Regular,Menlo,monospace">search_issues</text>
+<text x="320" y="578" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#6b6b76">— Search issues</text>
+<text x="226" y="600" font-size="10" fill="#1b1b1f" font-family="ui-monospace,SFMono-Regular,Menlo,monospace">create_issue</text>
+<text x="320" y="600" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#6b6b76">— Create an issue</text>
+<text x="226" y="632" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94">共 120 个工具，显示前 2 个。</text>
+<text x="226" y="674" font-size="10" fill="#3a3a44" font-family="ui-monospace,SFMono-Regular,Menlo,monospace">npx -y @modelcontextprotocol/server-github</text>
+<text x="226" y="694" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94">工作目录：/srv/github</text>
+<rect x="226" y="706" width="200" height="18" rx="9" fill="#f0f7f2"/>
+<circle cx="238" cy="715" r="4" fill="#1f9d55"/>
+<text x="248" y="719" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9" fill="#1f7a45">Authorization  AUTH_TOKEN</text>
+<text x="436" y="719" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9" fill="#1f9d55">已配置</text>
+<text x="476" y="719" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9" fill="#c33b3b">[清除]</text>
+<text x="226" y="748" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#6b6b76">默认开启，除非在此关闭</text>
+<rect x="226" y="760" width="30" height="17" rx="8.5" fill="#4d6bfe"/><circle cx="247" cy="768.5" r="6.5" fill="#ffffff"/><text x="262" y="772" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#1b1b1f">alpha 开启</text>
+<rect x="360" y="760" width="30" height="17" rx="8.5" fill="#d9d9e0"/><circle cx="369" cy="768.5" r="6.5" fill="#ffffff"/><text x="396" y="772" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#1b1b1f">beta 关闭</text>
+<rect x="500" y="758" width="62" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="531" y="773" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">全部开启</text>
+<rect x="568" y="758" width="62" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="599" y="773" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">全部关闭</text>
+<text x="226" y="796" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9" fill="#9a9aa5">新建 workspace 默认开启</text>
+<rect x="200" y="812" width="720" height="110" rx="12" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/>
+<rect x="214" y="828" width="30" height="17" rx="8.5" fill="#4d6bfe"/><circle cx="235" cy="836.5" r="6.5" fill="#ffffff"/><text x="250" y="840" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#1b1b1f"></text>
+<text x="262" y="841" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="12" font-weight="600" fill="#1b1b1f">ghost</text>
+<text x="310" y="841" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9" fill="#6b6b76">stdio</text>
+<rect x="816" y="828" width="44" height="22" rx="11" fill="#fdf0f0" stroke="#f0c9c9" stroke-width="0.75"/><text x="838" y="843" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#c33b3b" text-anchor="middle">移除</text>
+<rect x="866" y="828" width="44" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="888" y="843" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">编辑</text>
+<circle cx="220" cy="868" r="4" fill="#d64545"/>
+<text x="230" y="872" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10.5" fill="#3a3a44">失败</text>
+<rect x="790" y="859" width="44" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="812" y="874" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">连接</text>
+<rect x="840" y="859" width="44" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="862" y="874" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">测试</text>
+<text x="226" y="896" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#c33b3b">连接失败</text>
+<text x="52" y="486" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">cardHead：开关/名称/标签/元信息/操作</text>
+<text x="52" y="522" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">statusRow：状态点 + 相位 + 动作</text>
+<text x="52" y="560" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">工具面板（按 syncedAt 失效）</text>
+<text x="52" y="676" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">definition code + cwd</text>
+<text x="52" y="716" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">凭据徽标（只显示 ref，不显示值）</text>
+<text x="52" y="766" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">wsBlock：逐 workspace 开关</text>
+<text x="52" y="800" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">all-on/all-off：≥2 个 workspace</text>
+<text x="52" y="840" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">失败卡：只提供 连接 / 测试</text>
+<text x="52" y="878" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">错误行 = 本地化固定 code</text>
+<text x="40" y="940" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">卡片纵向排列；表单打开时列表保留、卡片删除类操作禁用；空状态 / 搜索无结果使用 empty 文案。</text>
+<rect x="40" y="968" width="1080" height="610" rx="10" fill="#ffffff" stroke="#e6e6ea" stroke-width="0.75"/><text x="56" y="992" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="13" font-weight="600" fill="#1b1b1f">③ 添加 / 编辑表单（渲染在列表上方）</text>
+<rect x="140" y="1000" width="560" height="556" rx="10" fill="#fafafb" stroke="#e0e0e6" stroke-width="0.75"/>
+<text x="156" y="1026" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="13" font-weight="600" fill="#1b1b1f">添加 MCP 服务器</text>
+<rect x="600" y="1010" width="84" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="642" y="1025" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">导入 JSON…</text>
+<text x="156" y="1042" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#6b6b76">服务器名称 *</text><rect x="156" y="1048" width="528" height="26" rx="6" fill="#f7f7f9" stroke="#e6e6ea" stroke-width="0.5"/><text x="164" y="1065" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#9a9aa5">github</text>
+<text x="156" y="1092" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94">工具将以 mcp__&lt;名称>__* 命名</text>
+<rect x="156" y="1104" width="30" height="17" rx="8.5" fill="#4d6bfe"/><circle cx="177" cy="1112.5" r="6.5" fill="#ffffff"/><text x="192" y="1116" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#1b1b1f">启用</text>
+<text x="256" y="1117" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">停用的服务器保留配置，但不会运行，也不暴露工具</text>
+<text x="156" y="1150" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#6b6b76">传输方式</text>
+<rect x="220" y="1136" width="54" height="20" rx="10" fill="#eceffe" stroke="#c9d2ff" stroke-width="0.75"/>
+<text x="247" y="1150" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9" fill="#4d6bfe" text-anchor="middle">stdio</text>
+<rect x="280" y="1136" width="118" height="20" rx="10" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/>
+<text x="339" y="1150" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9" fill="#3a3a44" text-anchor="middle">Streamable HTTP</text>
+<text x="156" y="1166" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#6b6b76">命令 *</text><rect x="156" y="1172" width="380" height="26" rx="6" fill="#f7f7f9" stroke="#e6e6ea" stroke-width="0.5"/><text x="164" y="1189" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#9a9aa5">npx -y @modelcontextprotocol/server-github</text>
+<rect x="548" y="1172" width="68" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="582" y="1187" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">粘贴命令</text>
+<text x="156" y="1216" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94">该命令以此实例用户身份执行</text>
+<text x="156" y="1240" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#6b6b76">参数</text>
+<rect x="156" y="1248" width="528" height="26" rx="6" fill="#f7f7f9" stroke="#e6e6ea" stroke-width="0.5"/><text x="164" y="1265" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#9a9aa5">--read-only</text>
+<rect x="634" y="1248" width="42" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="655" y="1263" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">移除</text>
+<rect x="156" y="1282" width="74" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="193" y="1297" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">＋ 添加参数</text>
+<text x="156" y="1310" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#6b6b76">工作目录（可选）</text><rect x="156" y="1316" width="528" height="26" rx="6" fill="#f7f7f9" stroke="#e6e6ea" stroke-width="0.5"/><text x="164" y="1333" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#9a9aa5">/srv/github</text>
+<text x="156" y="1364" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#6b6b76">环境变量 / 凭据键</text>
+<rect x="616" y="1352" width="68" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="650" y="1367" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">粘贴 .env</text>
+<rect x="156" y="1372" width="150" height="26" rx="6" fill="#f7f7f9" stroke="#e6e6ea" stroke-width="0.5"/><text x="164" y="1389" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#9a9aa5">GITHUB_TOKEN</text>
+<rect x="314" y="1372" width="200" height="26" rx="6" fill="#f7f7f9" stroke="#e6e6ea" stroke-width="0.5"/><text x="322" y="1389" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#9a9aa5">值（仅写入）</text>
+<rect x="634" y="1372" width="42" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="655" y="1387" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">移除</text>
+<rect x="156" y="1406" width="96" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="204" y="1421" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">＋ 添加环境变量</text>
+<text x="156" y="1434" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#6b6b76">超时（毫秒）</text><rect x="156" y="1440" width="200" height="26" rx="6" fill="#f7f7f9" stroke="#e6e6ea" stroke-width="0.5"/><text x="164" y="1457" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#9a9aa5">60000</text>
+<text x="368" y="1458" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94">留空使用默认 60 秒；1000–600000</text>
+<text x="156" y="1496" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94">HTTP 分支替换为：URL 端点 + 请求头行（名称 / 凭据 ref / 值），同样带“粘贴请求头”。</text>
+<rect x="540" y="1524" width="60" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="570" y="1539" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">取消</text>
+<rect x="608" y="1524" width="76" height="22" rx="11" fill="#4d6bfe" stroke="#4d6bfe" stroke-width="0.75"/><text x="646" y="1539" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle">保存</text>
+<text x="140" y="1580" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">dirty 时点取消 → 内联“放弃未保存的修改？[放弃修改][继续编辑]”；头部取消与页脚取消同一路径。</text>
+<rect x="740" y="1000" width="340" height="210" rx="10" fill="#ffffff" stroke="#d6d6dd" stroke-width="0.75"/>
+<text x="756" y="1026" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="12" font-weight="600" fill="#1b1b1f">导入 MCP 服务器 JSON</text>
+<text x="1064" y="1026" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="8.5" fill="#9a9aa5" text-anchor="end">role=dialog</text>
+<text x="756" y="1046" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#6b6b76">粘贴 mcpServers / opencode 片段中的单个服务器。</text>
+<rect x="756" y="1056" width="308" height="84" rx="8" fill="#f7f7f9" stroke="#e6e6ea" stroke-width="0.5"/>
+<text x="764" y="1074" font-size="9.5" fill="#6b6b76" font-family="ui-monospace,SFMono-Regular,Menlo,monospace">{</text>
+<text x="772" y="1090" font-size="9.5" fill="#6b6b76" font-family="ui-monospace,SFMono-Regular,Menlo,monospace">"mcpServers": {</text>
+<text x="780" y="1106" font-size="9.5" fill="#9a9aa5" font-family="ui-monospace,SFMono-Regular,Menlo,monospace">"github": { "command": "npx", … }</text>
+<text x="764" y="1122" font-size="9.5" fill="#6b6b76" font-family="ui-monospace,SFMono-Regular,Menlo,monospace">}</text>
+<rect x="756" y="1152" width="96" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="804" y="1167" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">从剪贴板粘贴</text>
+<rect x="1000" y="1152" width="64" height="22" rx="11" fill="#4d6bfe" stroke="#4d6bfe" stroke-width="0.75"/><text x="1032" y="1167" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle">填入表单</text>
+<text x="740" y="1240" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">解析成功后：名称/传输/命令/参数/env/headers 填入表单，</text>
+<text x="740" y="1256" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">值只进 write-only 输入框（不落设置文档）；多服务器片段只取第一个。</text>
+<rect x="740" y="1290" width="340" height="96" rx="10" fill="#fff7f7" stroke="#f0c9c9" stroke-width="0.75"/>
+<text x="756" y="1316" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="11" font-weight="600" fill="#c33b3b">移除确认（卡片内联）</text>
+<text x="756" y="1338" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#6b6b76">移除服务器？服务器将全面停止，配置被删除。</text>
+<rect x="920" y="1352" width="56" height="22" rx="11" fill="#fdf0f0" stroke="#f0c9c9" stroke-width="0.75"/><text x="948" y="1367" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#c33b3b" text-anchor="middle">确认</text>
+<rect x="982" y="1352" width="56" height="22" rx="11" fill="#ffffff" stroke="#e0e0e6" stroke-width="0.75"/><text x="1010" y="1367" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#3a3a44" text-anchor="middle">取消</text>
+<text x="740" y="1416" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94" font-style="italic">Esc 取消；焦点回到“移除”。</text>
+<rect x="40" y="1596" width="1080" height="250" rx="10" fill="#ffffff" stroke="#e6e6ea" stroke-width="0.75"/><text x="56" y="1620" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="13" font-weight="600" fill="#1b1b1f">④ 状态图例与运行时动作矩阵</text>
+<circle cx="70" cy="1640" r="4" fill="#1f9d55"/>
+<text x="80" y="1644" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#1b1b1f">connected 已连接</text>
+<text x="190" y="1644" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#6b6b76">断开 · 测试 · 工具 (N)</text>
+<circle cx="70" cy="1666" r="4" fill="#d98c00"/>
+<text x="80" y="1670" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#1b1b1f">connecting / reconnecting 连接中…/重连中…</text>
+<text x="340" y="1670" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#6b6b76">断开 · 测试（reconnect 显示 第 i/max 次尝试）</text>
+<circle cx="70" cy="1692" r="4" fill="#d64545"/>
+<text x="80" y="1696" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#1b1b1f">failed 失败</text>
+<text x="190" y="1696" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#6b6b76">连接 · 测试（连接 = 先清理再重启）</text>
+<circle cx="70" cy="1718" r="4" fill="#c2c2cb"/>
+<text x="80" y="1722" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10" fill="#1b1b1f">stopped / disabled / unknown</text>
+<text x="250" y="1722" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#6b6b76">停止/停用/无运行时视图：无运行时动作，用卡头开关</text>
+<text x="560" y="1644" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#6b6b76">相位来源：GET /api/mcp-scope.status（固定 code + 本地化文案；远端原文只进 host 日志）</text>
+<text x="560" y="1666" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#6b6b76">轮询：每个文档 revision 一次 + connection/reset + 可见时每 5s；0 个服务器时不轮询</text>
+<text x="560" y="1692" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#6b6b76">动作：POST /api/mcp-scope.action；工具：GET /api/mcp-scope.tools（上限 200，附真实 total）</text>
+<text x="40" y="1830" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="9.5" fill="#8a8a94">关键度量：section 720px/间距12 · 卡片 r16/0.5px 发丝线/padding 12 16 14 · 状态点 8px+corner-shape:round · 输入 34px/r8 · 表单 r12/bg-module-platform · 按钮胶囊 28px/r14</text>
+</svg>

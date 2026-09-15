@@ -8,15 +8,24 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  type DisabledServers,
   EMPTY_DOC,
   HASH_LENGTH,
   HASH_SUFFIX_PATTERN,
   MAX_PUBLIC_NAME_LENGTH,
   MCP_TOOL_PREFIX,
   RESERVED_OVERRIDE_KEYS,
+  TIMEOUT_MAX_MS,
+  TIMEOUT_MIN_MS,
   credentialRefsOf,
   isEnabled,
+  isServerDisabled,
+  pruneDisabled,
+  removeServerDisabled,
   removeServerOverrides,
+  renameDisabledKey,
+  setDisabledKey,
+  setServerDisabled,
   validateDoc,
   type McpScopeDoc,
   type WorkspaceOverrides,
@@ -100,6 +109,15 @@ describe('validateDoc', () => {
     expect(errors.join('; ')).toMatch(/env key "1BAD"/)
   })
 
+  it('flags timeoutMs values outside the supported bounds', () => {
+    const base = { serverName: 'a', transport: 'stdio' as const, command: 'x' }
+    expect(validateDoc({ servers: [{ ...base, timeoutMs: TIMEOUT_MIN_MS }], overrides: {} })).toEqual([])
+    expect(validateDoc({ servers: [{ ...base, timeoutMs: TIMEOUT_MAX_MS }], overrides: {} })).toEqual([])
+    for (const bad of [TIMEOUT_MIN_MS - 1, TIMEOUT_MAX_MS + 1, 1500.5]) {
+      expect(validateDoc({ servers: [{ ...base, timeoutMs: bad }], overrides: {} }).join('; ')).toMatch(/timeoutMs/)
+    }
+  })
+
   it('flags duplicate header names and invalid header refs', () => {
     const errors = validateDoc({
       servers: [{
@@ -160,6 +178,52 @@ describe('credentialRefsOf', () => {
   })
 })
 
+const off = (...names: string[]): DisabledServers => {
+  const map: DisabledServers = {}
+  for (const name of names) map[name] = true
+  return map
+}
+
+describe('global off-switches (disabled map)', () => {
+  it('defaults on and judges strictly by own `true` entries', () => {
+    const doc: McpScopeDoc = { servers: [], overrides: {} }
+    expect(isServerDisabled(doc, 'a')).toBe(false)
+    expect(isServerDisabled({ ...doc, disabled: off('a') }, 'a')).toBe(true)
+    expect(isServerDisabled({ ...doc, disabled: off() }, 'a')).toBe(false)
+    // Prototype-member names must not read as disabled through inheritance.
+    expect(isServerDisabled({ ...doc, disabled: off() }, 'toString')).toBe(false)
+    expect(isServerDisabled({ ...doc, disabled: off('valueOf') }, 'valueOf')).toBe(true)
+  })
+
+  it('prunes malformed entries and is immutable', () => {
+    const raw = { a: true, b: false, c: 'x' } as unknown as Record<string, true>
+    expect(pruneDisabled(raw)).toEqual({ a: true })
+    const original: DisabledServers = { a: true }
+    const next = setDisabledKey(original, 'b', true)
+    expect(next).toEqual({ a: true, b: true })
+    expect(original).toEqual({ a: true })
+    // No-op paths return the same reference.
+    expect(setDisabledKey(original, 'a', true)).toBe(original)
+    expect(setDisabledKey(original, 'b', false)).toBe(original)
+  })
+
+  it('setServerDisabled returns the same doc reference when nothing changes', () => {
+    const doc: McpScopeDoc = { servers: [], overrides: {} }
+    expect(setServerDisabled(doc, 'a', false)).toBe(doc)
+    const off = setServerDisabled(doc, 'a', true)
+    expect(off.disabled).toEqual({ a: true })
+    expect(setServerDisabled(off, 'a', false).disabled).toEqual({})
+  })
+
+  it('removeServerDisabled and renameDisabledKey carry or drop one key', () => {
+    expect(removeServerDisabled({ a: true, b: true }, 'a')).toEqual({ b: true })
+    expect(removeServerDisabled(undefined, 'a')).toEqual({})
+    expect(renameDisabledKey({ old: true, keep: true }, 'old', 'new')).toEqual({ new: true, keep: true })
+    expect(renameDisabledKey({ old: true }, 'old', 'old')).toEqual({ old: true })
+    expect(renameDisabledKey({ keep: true }, 'missing', 'x')).toEqual({ keep: true })
+  })
+})
+
 describe('shared naming constants (host + browser half)', () => {
   // These four values are the contract BOTH halves derive tool identity from:
   // the host mints public names with them (src/tools.ts) and the browser half
@@ -203,9 +267,11 @@ describe('workspace helpers', () => {
   it('EMPTY_DOC is a frozen empty document', () => {
     expect(EMPTY_DOC.servers).toEqual([])
     expect(EMPTY_DOC.overrides).toEqual({})
+    expect(EMPTY_DOC.disabled).toEqual({})
     expect(Object.isFrozen(EMPTY_DOC)).toBe(true)
     expect(Object.isFrozen(EMPTY_DOC.servers)).toBe(true)
     expect(Object.isFrozen(EMPTY_DOC.overrides)).toBe(true)
+    expect(Object.isFrozen(EMPTY_DOC.disabled)).toBe(true)
   })
 
   it('validateDoc refuses reserved override-key serverNames', () => {

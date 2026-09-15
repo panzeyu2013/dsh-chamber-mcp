@@ -52,6 +52,12 @@ export interface StdioServerDef {
   cwd?: string
   /** Credential refs whose resolved values are added to the child env. */
   envKeys?: string[]
+  /**
+   * Per-server request timeout in ms (tools/call + one tools/list page);
+   * absent = {@link TIMEOUT_DEFAULT_MS} (official default). Bounded by
+   * {@link TIMEOUT_MIN_MS}..{@link TIMEOUT_MAX_MS}.
+   */
+  timeoutMs?: number
 }
 
 export interface StreamableHttpServerDef {
@@ -61,6 +67,12 @@ export interface StreamableHttpServerDef {
   url: string
   /** Request-header rows; values come from the credentials domain. */
   headers?: { name: string; ref: string }[]
+  /**
+   * Per-server request timeout in ms (tools/call + one tools/list page);
+   * absent = {@link TIMEOUT_DEFAULT_MS} (official default). Bounded by
+   * {@link TIMEOUT_MIN_MS}..{@link TIMEOUT_MAX_MS}.
+   */
+  timeoutMs?: number
 }
 
 export type ServerDef = StdioServerDef | StreamableHttpServerDef
@@ -68,10 +80,30 @@ export type ServerDef = StdioServerDef | StreamableHttpServerDef
 /** Per-workspace explicit off-switches: overrides[w][serverName] === true ⇔ off. */
 export type WorkspaceOverrides = Record<string, Record<string, true>>
 
+/**
+ * Explicit global off-switches, keyed by serverName: presence (own property)
+ * of `true` ⇔ that server is disabled everywhere. Like `overrides`, this is a
+ * dict-of-dicts-shaped sparse map so one switch is ONE atomic path op
+ * (`set/unset ['disabled', serverName]`) instead of a whole-array rewrite.
+ */
+export type DisabledServers = Record<string, true>
+
+/** Bounds of the per-server request timeout (ms). */
+export const TIMEOUT_MIN_MS = 1_000
+export const TIMEOUT_MAX_MS = 600_000
+/** Official default used when a server defines no `timeoutMs`. */
+export const TIMEOUT_DEFAULT_MS = 60_000
+
 /** Resolved settings-document shape (schema defaults ← base ← user layer). */
 export interface McpScopeDoc {
   servers: ServerDef[]
   overrides: WorkspaceOverrides
+  /**
+   * Global off-switches. Optional on the type (older documents and most
+   * constructions omit it) but always materialized by the schema, the
+   * decoder and every writer; absent ≡ empty.
+   */
+  disabled?: DisabledServers
 }
 
 /**
@@ -82,6 +114,7 @@ export interface McpScopeDoc {
 export const EMPTY_DOC: McpScopeDoc = Object.freeze({
   servers: Object.freeze([]),
   overrides: Object.freeze({}),
+  disabled: Object.freeze({}),
 }) as unknown as McpScopeDoc
 
 /**
@@ -94,6 +127,83 @@ export function isEnabled(overrides: WorkspaceOverrides, workspaceId: string, se
   if (!Object.hasOwn(overrides, workspaceId)) return true
   const row = overrides[workspaceId]
   return row === null || typeof row !== 'object' || !Object.hasOwn(row, serverName)
+}
+
+/**
+ * Global enablement: a serverName that has an OWN `true` entry in `disabled`
+ * is off everywhere. Absence = enabled (new servers default on), mirroring
+ * {@link isEnabled}'s own-property rule so prototype-member names keep working.
+ */
+export function isServerDisabled(doc: McpScopeDoc, serverName: string): boolean {
+  const disabled = doc.disabled
+  return disabled !== undefined && Object.hasOwn(disabled, serverName) && disabled[serverName] === true
+}
+
+/**
+ * Keep only `true` entries of a decoded/raw global off-switch map. Returns
+ * the input reference when nothing had to be dropped, so downstream no-op
+ * checks can compare by identity.
+ */
+export function pruneDisabled(disabled: DisabledServers | undefined): DisabledServers {
+  if (disabled === undefined || disabled === null || typeof disabled !== 'object' || Array.isArray(disabled)) {
+    return {}
+  }
+  let dropped = false
+  const entries: [string, true][] = []
+  for (const [name, value] of Object.entries(disabled)) {
+    if (value === true) entries.push([name, true])
+    else dropped = true
+  }
+  // Object.fromEntries defines OWN properties: a literal `__proto__` key stays
+  // an entry instead of silently becoming the prototype (F1 discipline).
+  return dropped ? (Object.fromEntries(entries) as DisabledServers) : disabled
+}
+
+/**
+ * Set or clear one server's global off-switch. Returns the same reference when
+ * nothing changes, so callers can cheaply detect no-ops.
+ */
+export function setDisabledKey(
+  disabled: DisabledServers | undefined,
+  serverName: string,
+  off: boolean,
+): DisabledServers {
+  const current = pruneDisabled(disabled)
+  if (off) {
+    if (Object.hasOwn(current, serverName)) return current
+    return { ...current, [serverName]: true }
+  }
+  if (!Object.hasOwn(current, serverName)) return current
+  const next = { ...current }
+  delete next[serverName]
+  return next
+}
+
+/** Immutable doc-level form of {@link setDisabledKey} (`off` = disabled). */
+export function setServerDisabled(doc: McpScopeDoc, serverName: string, off: boolean): McpScopeDoc {
+  const current = pruneDisabled(doc.disabled)
+  if (off === Object.hasOwn(current, serverName)) return doc // already in the requested state
+  return { servers: doc.servers, overrides: doc.overrides, disabled: setDisabledKey(current, serverName, off) }
+}
+
+/** Drop a removed server's global off-switch so a re-add starts enabled. */
+export function removeServerDisabled(disabled: DisabledServers | undefined, serverName: string): DisabledServers {
+  return setDisabledKey(disabled, serverName, false)
+}
+
+/** Carry one server's global off-switch across a rename (edit-with-rename). */
+export function renameDisabledKey(
+  disabled: DisabledServers | undefined,
+  from: string,
+  to: string,
+): DisabledServers {
+  const current = pruneDisabled(disabled)
+  if (from === to || !Object.hasOwn(current, from)) return current
+  const entries: [string, true][] = []
+  for (const [name, value] of Object.entries(current)) {
+    entries.push([name === from ? to : name, value])
+  }
+  return Object.fromEntries(entries) as DisabledServers
 }
 
 /**
@@ -170,6 +280,14 @@ export function validateDoc(doc: McpScopeDoc): string[] {
         if (!CREDENTIAL_REF_PATTERN.test(header.ref)) {
           errors.push(`server "${server.serverName}": header ref "${header.ref}" must match ${CREDENTIAL_REF_PATTERN}`)
         }
+      }
+    }
+    if (server.timeoutMs !== undefined) {
+      const timeout = server.timeoutMs
+      if (!Number.isInteger(timeout) || timeout < TIMEOUT_MIN_MS || timeout > TIMEOUT_MAX_MS) {
+        errors.push(
+          `server "${server.serverName}": timeoutMs must be an integer between ${TIMEOUT_MIN_MS} and ${TIMEOUT_MAX_MS}`,
+        )
       }
     }
   }

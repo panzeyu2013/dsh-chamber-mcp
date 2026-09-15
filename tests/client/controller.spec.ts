@@ -11,6 +11,7 @@ import {
   failureKey,
   normalizeDoc,
   renameOverrideKey,
+  serverDefEqual,
   toggleOp,
   type CredentialsGateway,
   type SettingsScopePort,
@@ -39,14 +40,19 @@ const doc = (servers: ServerDef[], overrides: McpScopeDoc['overrides'] = {}): Mc
 
 describe('decodeDoc (malformed-snapshot hardening)', () => {
   it('defaults null / non-objects to the empty document', () => {
-    expect(decodeDoc(undefined)).toEqual({ servers: [], overrides: {} })
-    expect(decodeDoc(null)).toEqual({ servers: [], overrides: {} })
-    expect(decodeDoc('nope')).toEqual({ servers: [], overrides: {} })
+    expect(decodeDoc(undefined)).toEqual({ servers: [], overrides: {}, disabled: {} })
+    expect(decodeDoc(null)).toEqual({ servers: [], overrides: {}, disabled: {} })
+    expect(decodeDoc('nope')).toEqual({ servers: [], overrides: {}, disabled: {} })
   })
 
   it('guards missing arrays', () => {
-    expect(decodeDoc({})).toEqual({ servers: [], overrides: {} })
-    expect(decodeDoc({ servers: 'x', overrides: undefined })).toEqual({ servers: [], overrides: {} })
+    expect(decodeDoc({})).toEqual({ servers: [], overrides: {}, disabled: {} })
+    expect(decodeDoc({ servers: 'x', overrides: undefined })).toEqual({ servers: [], overrides: {}, disabled: {} })
+  })
+
+  it('prunes non-true global off-switch entries', () => {
+    const decoded = decodeDoc({ servers: [], disabled: { a: true, b: false, c: 'x' } })
+    expect(decoded.disabled).toEqual({ a: true })
   })
 
   it('prunes empty override rows and non-true entries', () => {
@@ -136,6 +142,24 @@ describe('buildSaveOps', () => {
     const plan = buildSaveOps(prev, next)
     expect(plan.ops).toEqual([{ op: 'set', path: ['servers'], value: next.servers }])
   })
+
+  it('global off-switch moves through ONE leaf op, never a servers rewrite', () => {
+    const d = doc([stdioServer('a'), stdioServer('b')])
+    const off = buildSaveOps(d, { ...d, disabled: { a: true } })
+    expect(off.ops).toEqual([{ op: 'set', path: ['disabled', 'a'], value: true }])
+    const on = buildSaveOps({ ...d, disabled: { a: true } }, d)
+    expect(on.ops).toEqual([{ op: 'unset', path: ['disabled', 'a'] }])
+  })
+
+  it('a disabled add carries the servers op and the off-switch op together', () => {
+    const prev = doc([])
+    const next: McpScopeDoc = { servers: [stdioServer('git')], overrides: {}, disabled: { git: true } }
+    const plan = buildSaveOps(prev, next)
+    expect(plan.ops).toEqual([
+      { op: 'set', path: ['servers'], value: next.servers },
+      { op: 'set', path: ['disabled', 'git'], value: true },
+    ])
+  })
 })
 
 describe('toggleOp', () => {
@@ -174,6 +198,13 @@ describe('docsEqual (landed-write comparison)', () => {
 
   it('prunes empty override rows before comparing', () => {
     expect(docsEqual(doc([stdioServer('a')], { ws1: {} }), doc([stdioServer('a')]))).toBe(true)
+  })
+
+  it('compares the global off-switch map as an own-key set', () => {
+    const base = doc([stdioServer('a'), stdioServer('b')])
+    expect(docsEqual(base, { ...base, disabled: {} })).toBe(true)
+    expect(docsEqual(base, { ...base, disabled: { a: true } })).toBe(false)
+    expect(docsEqual({ ...base, disabled: { a: true } }, { ...base, disabled: { a: true, b: false as never } })).toBe(true)
   })
 
   it('server order matters (arrays), object key order does not', () => {
@@ -365,6 +396,14 @@ class FakeScope implements SettingsScopePort {
       if (op.op === 'set') {
         this.mirror = { ...this.mirror, servers: structuredClone(op.value) as unknown as ServerDef[] }
       }
+      return
+    }
+    if (section === 'disabled') {
+      if (workspaceId === undefined) return
+      const disabled = { ...(this.mirror.disabled ?? {}) }
+      if (op.op === 'set') disabled[workspaceId] = true
+      else delete disabled[workspaceId]
+      this.mirror = { ...this.mirror, disabled }
       return
     }
     if (section !== 'overrides' || workspaceId === undefined) return
@@ -674,6 +713,118 @@ describe('McpScopeController save pipeline (FE-4)', () => {
     } finally {
       stop()
     }
+  })
+
+  it('a rename carries the global off-switch to the new name', async () => {
+    const { scope, controller, stop } = makePipeline({
+      servers: [stdioServer('old')],
+      overrides: {},
+      disabled: { old: true },
+    })
+    try {
+      const outcome = await controller.replaceServer('old', { server: stdioServer('new'), secrets: [], enabled: false })
+      expect(outcome).toEqual({ ok: true })
+      expect(scope.mirror.disabled).toEqual({ new: true })
+      const plan = scope.mutateCalls.at(-1)!.ops
+      expect(plan).toContainEqual({ op: 'unset', path: ['disabled', 'old'] })
+      expect(plan).toContainEqual({ op: 'set', path: ['disabled', 'new'], value: true })
+    } finally {
+      stop()
+    }
+  })
+
+  it('addServer with enabled:false writes the servers op and the off-switch op', async () => {
+    const { scope, controller, stop } = makePipeline(doc([]))
+    try {
+      const outcome = await controller.addServer({ server: stdioServer('git'), secrets: [], enabled: false })
+      expect(outcome).toEqual({ ok: true })
+      expect(scope.mirror.disabled).toEqual({ git: true })
+      const ops = scope.mutateCalls.at(-1)!.ops
+      expect(ops).toContainEqual({ op: 'set', path: ['disabled', 'git'], value: true })
+      expect(ops).toContainEqual({ op: 'set', path: ['servers'], value: [stdioServer('git')] })
+    } finally {
+      stop()
+    }
+  })
+
+  it('setServerEnabled flips the global off-switch through one leaf op', async () => {
+    const { scope, controller, stop } = makePipeline(doc([stdioServer('a'), stdioServer('b')]))
+    try {
+      expect(await controller.setServerEnabled('a', false)).toEqual({ ok: true })
+      expect(scope.mirror.disabled).toEqual({ a: true })
+      expect(scope.mutateCalls.at(-1)!.ops).toEqual([{ op: 'set', path: ['disabled', 'a'], value: true }])
+      expect(await controller.setServerEnabled('a', true)).toEqual({ ok: true })
+      expect(scope.mirror.disabled).toEqual({})
+      expect(scope.mutateCalls.at(-1)!.ops).toEqual([{ op: 'unset', path: ['disabled', 'a'] }])
+    } finally {
+      stop()
+    }
+  })
+
+  it('setServerEnabled is a no-op when the state already holds and a conflict for a missing server', async () => {
+    const { scope, controller, stop } = makePipeline(doc([stdioServer('a')]))
+    try {
+      const callsBefore = scope.mutateCalls.length
+      expect(await controller.setServerEnabled('a', true)).toEqual({ ok: true })
+      expect(scope.mutateCalls.length).toBe(callsBefore)
+      expect(await controller.setServerEnabled('missing', false)).toEqual({ ok: false, reason: 'conflict' })
+      expect(scope.mutateCalls.length).toBe(callsBefore)
+    } finally {
+      stop()
+    }
+  })
+
+  it('toggleWorkspaces batches one override op per workspace without rewriting servers', async () => {
+    const { scope, controller, stop } = makePipeline(doc([stdioServer('a')]))
+    try {
+      const outcome = await controller.toggleWorkspaces('a', true, ['ws1', 'ws2'])
+      expect(outcome).toEqual({ ok: true })
+      expect(scope.mirror.overrides).toEqual({ ws1: { a: true }, ws2: { a: true } })
+      expect(scope.mutateCalls.at(-1)!.ops).toEqual([
+        { op: 'set', path: ['overrides', 'ws1', 'a'], value: true },
+        { op: 'set', path: ['overrides', 'ws2', 'a'], value: true },
+      ])
+      await controller.toggleWorkspaces('a', false, ['ws1', 'ws2'])
+      expect(scope.mirror.overrides).toEqual({})
+    } finally {
+      stop()
+    }
+  })
+
+  it('workspace toggles preserve the global off-switch map (regression)', async () => {
+    const { scope, controller, stop } = makePipeline({
+      servers: [stdioServer('a'), stdioServer('b')],
+      overrides: {},
+      disabled: { b: true },
+    })
+    try {
+      expect(await controller.toggleWorkspaces('a', true, ['ws1', 'ws2'])).toEqual({ ok: true })
+      expect(scope.mirror.disabled).toEqual({ b: true })
+      expect(scope.mutateCalls.at(-1)!.ops.every((op) => op.path[0] !== 'disabled')).toBe(true)
+      expect(await controller.toggleWorkspace('ws1', 'a', false)).toEqual({ ok: true })
+      expect(scope.mirror.disabled).toEqual({ b: true })
+    } finally {
+      stop()
+    }
+  })
+
+  it('toggleWorkspaces with an empty workspace list is a no-op', async () => {
+    const { scope, controller, stop } = makePipeline(doc([stdioServer('a')]))
+    try {
+      const before = scope.mutateCalls.length
+      expect(await controller.toggleWorkspaces('a', true, [])).toEqual({ ok: true })
+      expect(scope.mutateCalls.length).toBe(before)
+    } finally {
+      stop()
+    }
+  })
+
+  it('treats a dropped timeoutMs as a landed-write mismatch', () => {
+    const withTimeout: ServerDef = { ...stdioServer('a'), timeoutMs: 120_000 }
+    const without = stdioServer('a')
+    expect(docsEqual(doc([withTimeout]), doc([without]))).toBe(false)
+    expect(serverDefEqual(withTimeout, without)).toBe(false)
+    expect(serverDefEqual(withTimeout, { ...without, timeoutMs: 120_000 })).toBe(true)
   })
 
   it('replaceServer refuses with conflict when the target no longer exists', async () => {

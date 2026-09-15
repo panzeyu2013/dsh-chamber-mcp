@@ -23,6 +23,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-tool/client' // 'tool.call.toolv
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client' // ctx.slots merge (type-only; the renderer owns the slot registry in the 0.1.5 generation)
 import type {} from '@deepseek-ai/dsh-client-locale/client' // ctx.locale merge (type-only)
 import type {} from '@deepseek-ai/dsh-api-workspace-controller/client' // ctx.workspaces merge + WorkspaceSnapshot (type-only)
+import type {} from '@deepseek-ai/dsh-client-connection/client' // 'connection/reset' event merge (type-only)
 import type { McpScopeDoc } from '../shared/model.js'
 import { MCP_SCOPE_NAMESPACE } from '../shared/model.js'
 import { en, zh, NS, type SettingsKey } from './locales.js'
@@ -34,6 +35,7 @@ import {
 } from './controller.js'
 import { McpScopeSection } from './section.js'
 import { mountStyles } from './styles.js'
+import { createRuntimeStore } from './runtime.js'
 import { mcpToolView } from './tool-card/view.js'
 import {
   DEFAULT_TOOL_VIEW_LIMIT,
@@ -153,6 +155,10 @@ export function apply(ctx: Context): void {
   })
   const remote = ctx.remote as unknown as McpRemoteWire
   const controller = new McpScopeController(scope, remoteCredentials(remote))
+  // Live runtime status/actions over the Connection carrier's JSON routes.
+  // Degradable by construction: without the route the store reports
+  // "unavailable" and the document UI keeps working.
+  const runtime = createRuntimeStore()
 
   ctx.effect(
     () => {
@@ -162,12 +168,19 @@ export function apply(ctx: Context): void {
       // reference change refreshes only badges.
       disposers.push(
         remote.$on('settings/document-updated', (ns: string) => {
-          if (ns === MCP_SCOPE_NAMESPACE) controller.refresh()
+          if (ns !== MCP_SCOPE_NAMESPACE) return
+          controller.refresh()
+          void runtime.refresh({ silent: true })
         }),
         remote.$on('credentials/reference-updated', (ref: string) => {
           controller.onCredentialRefUpdated(ref)
         }),
       )
+      // A fresh connection generation can mean a restarted host: re-pull.
+      const offReset = ctx.on('connection/reset', () => {
+        void runtime.refresh({ silent: true })
+      })
+      disposers.push(offReset)
       return () => {
         for (const dispose of disposers) dispose()
       }
@@ -176,19 +189,30 @@ export function apply(ctx: Context): void {
   )
 
   // (b) settings.section registration through the declaration inject seam.
-  ctx.slots.inject('settings.section', () =>
-    ctx.slots.register(
+  // The runtime store joins the same inject face: the section receives a
+  // `useRuntime` hook seat plus the action callbacks.
+  ctx.slots.inject('settings.section', () => {
+    const face = controller.face()
+    return ctx.slots.register(
       {
         name: 'settings.section',
         id: 'mcp-scope',
         order: 25,
         label: () => t('nav'),
         locale: NS,
-        inject: () => controller.face(),
+        inject: () => ({
+          ...face,
+          hooks: { ...face.hooks, runtime },
+          refreshRuntime: (options?: { silent?: boolean }) => runtime.refresh(options),
+          connectServer: (serverName: string) => runtime.act(serverName, 'connect'),
+          disconnectServer: (serverName: string) => runtime.act(serverName, 'disconnect'),
+          testServer: (serverName: string) => runtime.test(serverName),
+          loadTools: (serverName: string) => runtime.tools(serverName),
+        }),
       },
       McpScopeSection,
-    ),
-  )
+    )
+  })
 
   // (d) transcript lane: one keyed tool view per MCP tool the model was
   // actually offered. The name set is discovered from the staged session's own

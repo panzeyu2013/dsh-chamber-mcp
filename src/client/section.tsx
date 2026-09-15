@@ -20,7 +20,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { McpStoreSnapshot, McpScopeFace, SaveOutcome, ServerSaveInput } from './controller.js'
-import type { ServerDef } from '../shared/model.js'
+import { isServerDisabled, type ServerDef } from '../shared/model.js'
+import type { RuntimeSnapshot, RuntimeTestResult, RuntimeToolEntry } from './runtime.js'
 import { NS } from './locales.js'
 import { AddServerForm, EMPTY_DRAFT, draftFromServer } from './add-form.js'
 import { ServerCard } from './server-card.js'
@@ -57,7 +58,16 @@ export interface McpScopeSectionProps {
   replaceServer: McpScopeFace['replaceServer']
   removeServer: McpScopeFace['removeServer']
   toggleWorkspace: McpScopeFace['toggleWorkspace']
+  toggleWorkspaces: McpScopeFace['toggleWorkspaces']
+  setServerEnabled: McpScopeFace['setServerEnabled']
   unsetCredential: McpScopeFace['unsetCredential']
+  /** Live runtime-status store (host routes over the Connection carrier). */
+  useRuntime: SnapshotHook<RuntimeSnapshot>
+  refreshRuntime(options?: { silent?: boolean }): Promise<void>
+  connectServer(serverName: string): Promise<unknown>
+  disconnectServer(serverName: string): Promise<unknown>
+  testServer(serverName: string): Promise<RuntimeTestResult>
+  loadTools(serverName: string): Promise<{ tools: RuntimeToolEntry[]; truncated: boolean; total: number }>
 }
 
 /** One staged-form session: add mode, or edit mode replacing `original`. */
@@ -68,10 +78,15 @@ type StagedForm =
 export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
   const { t } = props
   const snapshot = props.useDoc((state) => state)
+  const runtime = props.useRuntime((state) => state)
   const wsState = props.useWorkspaces((state) => state)
   const items = workspaceItemsOf(wsState)
   const workspaceStatus = workspaceListStatusOf(wsState)
   const [staged, setStaged] = useState<StagedForm | null>(null)
+  /** Header Add/Cancel presses routed into the open form's discard guard. */
+  const [dismissToken, setDismissToken] = useState(0)
+  /** Case-insensitive server-name filter (pure list narrowing). */
+  const [query, setQuery] = useState('')
   // A form save in flight: the section's Add/Cancel button must not tear the
   // form down mid-save (R2F-2) — secrets and/or the document write could
   // still land with no surface reporting them.
@@ -93,6 +108,22 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
     return () => window.clearTimeout(timer)
   }, [justSaved])
 
+  // Runtime status: fetch once per document revision (a commit can change
+  // enablement/overrides) and then poll while this panel is actually visible.
+  const refreshRuntime = props.refreshRuntime
+  useEffect(() => {
+    void refreshRuntime({ silent: true })
+  }, [refreshRuntime, snapshot.revision])
+  useEffect(() => {
+    // Nothing to poll when no server is configured (the store stays ready).
+    if (snapshot.doc.servers.length === 0) return undefined
+    const timer = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+      void refreshRuntime({ silent: true })
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [refreshRuntime, snapshot.doc.servers.length])
+
   // Refocus sensibly after a successful add/edit: move focus to the affected
   // card header (browsers scroll it into view). Only runs when the card
   // actually exists in the committed tree.
@@ -113,6 +144,10 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
   const existingNames = doc.servers
     .filter((server) => staged?.mode !== 'edit' || server.serverName !== staged.original.serverName)
     .map((server) => server.serverName)
+  const needle = query.trim().toLowerCase()
+  const visibleServers = needle === ''
+    ? doc.servers
+    : doc.servers.filter((server) => server.serverName.toLowerCase().includes(needle))
 
   async function handleAdd(input: ServerSaveInput): Promise<SaveOutcome> {
     setBusy(true)
@@ -141,6 +176,15 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
       <header className={styles.head}>
         <h2 className={styles.title}>{t('nav')}</h2>
         <span className={styles.spacer} />
+        {doc.servers.length > 0 && (
+          <button
+            type="button"
+            className={cx(styles.button, styles.buttonOutline)}
+            onClick={() => void refreshRuntime()}
+          >
+            {t('runtime.refresh')}
+          </button>
+        )}
         {writable && (
           <button
             type="button"
@@ -148,7 +192,10 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
             disabled={busy}
             onClick={() => {
               setJustSaved(null)
-              setStaged((open) => (open === null ? { mode: 'add' } : null))
+              // A form is open: route the dismissal through the form, whose
+              // unsaved-changes guard decides (header and footer agree).
+              if (staged === null) setStaged({ mode: 'add' })
+              else setDismissToken((token) => token + 1)
             }}
           >
             {formOpen ? t('action.cancel') : t('add.add')}
@@ -158,6 +205,19 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
 
       {!writable && <p className={styles.empty}>{t('state.readonly')}</p>}
 
+      {doc.servers.length > 0 && staged === null && (
+        <div className={styles.field}>
+          <input
+            type="search"
+            aria-label={t('search.placeholder')}
+            placeholder={t('search.placeholder')}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            className={styles.input}
+          />
+        </div>
+      )}
+
       {staged?.mode === 'add' && (
         <AddServerForm
           key="add"
@@ -166,6 +226,7 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
           initial={EMPTY_DRAFT}
           existingNames={existingNames}
           writable={writable}
+          dismissToken={dismissToken}
           onSave={handleAdd}
           onClose={() => setStaged(null)}
         />
@@ -175,9 +236,10 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
           key={`edit-${staged.original.serverName}`}
           t={t}
           titleKey="edit.title"
-          initial={draftFromServer(staged.original)}
+          initial={draftFromServer(staged.original, isServerDisabled(doc, staged.original.serverName))}
           existingNames={existingNames}
           writable={writable}
+          dismissToken={dismissToken}
           onSave={handleEdit}
           onClose={() => setStaged(null)}
         />
@@ -193,9 +255,11 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
 
       {doc.servers.length === 0 && staged === null ? (
         <p className={styles.empty}>{t('empty.servers')}</p>
+      ) : needle !== '' && visibleServers.length === 0 ? (
+        <p className={styles.empty}>{t('search.none', { query: query.trim() })}</p>
       ) : (
         <ul className={styles.list}>
-          {doc.servers.map((server) => (
+          {visibleServers.map((server) => (
             <li key={server.serverName}>
               <ServerCard
                 t={t}
@@ -212,7 +276,19 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
                 }}
                 onRemove={props.removeServer}
                 onToggle={props.toggleWorkspace}
+                onToggleAll={props.toggleWorkspaces}
+                onSetEnabled={props.setServerEnabled}
                 onUnsetCredential={props.unsetCredential}
+                runtime={
+                  Object.hasOwn(runtime.servers, server.serverName)
+                    ? runtime.servers[server.serverName]
+                    : undefined
+                }
+                runtimePhase={runtime.phase}
+                onConnect={props.connectServer}
+                onDisconnect={props.disconnectServer}
+                onTest={props.testServer}
+                onLoadTools={props.loadTools}
               />
             </li>
           ))}

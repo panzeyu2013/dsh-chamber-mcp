@@ -110,7 +110,7 @@ describe('mcp-scope settings namespace (real file-backed provider)', () => {
     // Attach: setSource before onChange; doc = schema defaults.
     expect(sourceCalls).toBe(1)
     expect(changes).toBe(1)
-    expect(currentSource()).toEqual({ servers: [], overrides: {} })
+    expect(currentSource()).toEqual({ servers: [], overrides: {}, disabled: {} })
 
     await ctx.settings.update('mcp-scope', {
       servers: [
@@ -128,6 +128,14 @@ describe('mcp-scope settings namespace (real file-backed provider)', () => {
     await ctx.settings.mutate('mcp-scope', [{ op: 'set', path: ['overrides', 'ws-b', 'files'], value: true }])
     expect(currentSource().overrides).toEqual({ 'ws-b': { files: true } })
     expect(changes).toBe(3)
+
+    // Global off-switch writes are leaf ops on the disabled map.
+    await ctx.settings.mutate('mcp-scope', [{ op: 'set', path: ['disabled', 'files'], value: true }])
+    expect(currentSource().disabled).toEqual({ files: true })
+    expect(changes).toBe(4)
+    await ctx.settings.mutate('mcp-scope', [{ op: 'unset', path: ['disabled', 'files'] }])
+    expect(currentSource().disabled).toEqual({})
+    expect(changes).toBe(5)
   })
 
   it('refuses a duplicate-serverName write host-side via the validate hook', async () => {

@@ -20,9 +20,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { CredentialInfo } from '@deepseek-ai/dsh-credentials/types'
-import { isEnabled, credentialRefsOf, type McpScopeDoc, type ServerDef } from '../shared/model.js'
+import { credentialRefsOf, isEnabled, isServerDisabled, type McpScopeDoc, type ServerDef } from '../shared/model.js'
 import { failureText, type SaveFailure, type SaveOutcome } from './controller.js'
-import { countKey } from './locales.js'
+import { countKey, type SettingsKey } from './locales.js'
+import type { RuntimePhase, RuntimeTestResult, RuntimeToolEntry, ServerRuntimeView } from './runtime.js'
 import type { SectionT } from './section.js'
 import { cx, styles } from './styles.js'
 import type { WorkspaceItem, WorkspaceListStatus } from './workspaces.js'
@@ -44,7 +45,84 @@ export interface ServerCardProps {
   onEdit(): void
   onRemove(name: string): Promise<SaveOutcome>
   onToggle(workspaceId: string, serverName: string, off: boolean): Promise<SaveOutcome>
+  /** Batch per-workspace switch ("all on" / "all off"). */
+  onToggleAll(serverName: string, off: boolean, workspaceIds: readonly string[]): Promise<SaveOutcome>
+  /** Global enable/disable switch. */
+  onSetEnabled(serverName: string, enabled: boolean): Promise<SaveOutcome>
   onUnsetCredential(ref: string): Promise<SaveOutcome>
+  /** Live runtime view of this server (absent = no runtime channel / not loaded). */
+  runtime?: ServerRuntimeView
+  /** Lifecycle of the whole runtime snapshot (drives the degraded hint). */
+  runtimePhase?: 'loading' | 'ready' | 'unavailable' | 'error'
+  onConnect?(serverName: string): Promise<unknown>
+  onDisconnect?(serverName: string): Promise<unknown>
+  onTest?(serverName: string): Promise<RuntimeTestResult>
+  onLoadTools?(serverName: string): Promise<{ tools: RuntimeToolEntry[]; truncated: boolean; total: number }>
+}
+
+/** Locale key of one runtime phase. */
+function statusKeyOf(state: RuntimePhase): SettingsKey {
+  switch (state) {
+    case 'connected':
+      return 'status.connected'
+    case 'connecting':
+      return 'status.connecting'
+    case 'reconnecting':
+      return 'status.reconnecting'
+    case 'failed':
+      return 'status.failed'
+    case 'stopped':
+      return 'status.stopped'
+    case 'disabled':
+      return 'status.disabled'
+    default:
+      return 'status.unknown'
+  }
+}
+
+/** Locale key of one runtime error code (undefined = keep the host message). */
+function runtimeErrorKey(code: string): SettingsKey | undefined {
+  switch (code) {
+    case 'connection-failed':
+      return 'runtime.error.connection-failed'
+    case 'gave-up':
+      return 'runtime.error.gave-up'
+    case 'reconnect-disabled':
+      return 'runtime.error.reconnect-disabled'
+    case 'generation-stuck':
+      return 'runtime.error.generation-stuck'
+    case 'forbidden':
+      return 'runtime.error.forbidden'
+    case 'timeout':
+      return 'runtime.error.timeout'
+    case 'spawn-failed':
+      return 'runtime.error.spawn-failed'
+    case 'protocol':
+      return 'runtime.error.protocol'
+    default:
+      return undefined
+  }
+}
+
+/** Localized text of one runtime error (fixed host codes never carry remote text). */
+function runtimeErrorText(t: SectionT, error: { code: string; message: string }): string {
+  const key = runtimeErrorKey(error.code)
+  return key !== undefined ? t(key) : error.message
+}
+
+/** Tone class of one runtime phase (idle = no extra class). */
+function statusToneOf(state: RuntimePhase): string | undefined {
+  switch (state) {
+    case 'connected':
+      return styles.statusDotOk
+    case 'connecting':
+    case 'reconnecting':
+      return styles.statusDotWarn
+    case 'failed':
+      return styles.statusDotError
+    default:
+      return undefined
+  }
 }
 
 /** Badge state of one ref: describe answers authoritatively, absence ≠ unset. */
@@ -75,7 +153,22 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
   const [pendingWs, setPendingWs] = useState<string | undefined>(undefined)
   const [removing, setRemoving] = useState(false)
   const [clearingRef, setClearingRef] = useState<string | null>(null)
+  const [pendingEnabled, setPendingEnabled] = useState(false)
+  const [pendingAll, setPendingAll] = useState(false)
   const [failure, setFailure] = useState<SaveFailure | null>(null)
+  /** Runtime action/test failure text (not a document save failure). */
+  const [runtimeFailure, setRuntimeFailure] = useState<string | null>(null)
+  const [pendingRuntime, setPendingRuntime] = useState<'connect' | 'disconnect' | 'test' | null>(null)
+  /** Transient success note (Test OK · N tools). */
+  const [runtimeNote, setRuntimeNote] = useState<string | null>(null)
+  const [toolsOpen, setToolsOpen] = useState(false)
+  const [toolsLoading, setToolsLoading] = useState(false)
+  const [toolsSyncedAt, setToolsSyncedAt] = useState<number | undefined>(undefined)
+  const [toolsView, setToolsView] = useState<{
+    tools: RuntimeToolEntry[]
+    truncated: boolean
+    total: number
+  } | null>(null)
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -90,6 +183,16 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
     const timer = window.setTimeout(() => setFailure(null), 8000)
     return () => window.clearTimeout(timer)
   }, [failure])
+  useEffect(() => {
+    if (runtimeFailure === null) return
+    const timer = window.setTimeout(() => setRuntimeFailure(null), 8000)
+    return () => window.clearTimeout(timer)
+  }, [runtimeFailure])
+  useEffect(() => {
+    if (runtimeNote === null) return
+    const timer = window.setTimeout(() => setRuntimeNote(null), 6000)
+    return () => window.clearTimeout(timer)
+  }, [runtimeNote])
   // Esc cancels the inline remove confirmation; focus returns to the Remove
   // button afterwards (the card stays mounted on cancel).
   const removeButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -99,26 +202,47 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
       if (event.key === 'Escape') {
         setFailure(null)
         setConfirmingRemove(false)
-        removeButtonRef.current?.focus()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [confirmingRemove])
+  // The Remove button is not mounted while the confirmation is open, so focus
+  // is restored after the re-render that closes it (not inside the key handler).
+  const wasConfirmingRemove = useRef(false)
+  useEffect(() => {
+    if (wasConfirmingRemove.current && !confirmingRemove) removeButtonRef.current?.focus()
+    wasConfirmingRemove.current = confirmingRemove
+  }, [confirmingRemove])
 
   const refs = credentialRefsOf(server)
   const rowsReady = workspaceStatus === 'ready'
+  const globallyDisabled = isServerDisabled(doc, server.serverName)
   const offCount = rowsReady
     ? workspaces.filter((ws) => !isEnabled(doc.overrides, ws.workspaceId, server.serverName)).length
     : 0
-  const busy = removing || pendingWs !== undefined || clearingRef !== null
+  const busy =
+    removing ||
+    pendingWs !== undefined ||
+    clearingRef !== null ||
+    pendingEnabled ||
+    pendingAll ||
+    pendingRuntime !== null
   const disabled = !writable || busy || props.actionsDisabled === true
+  /** Workspace rows and bulk switches are inert while the server is globally off. */
+  const rowsDisabled = disabled || globallyDisabled
+  const runtime = props.runtime
+  const runtimeState: RuntimePhase = runtime?.state ?? 'unknown'
+  const statusTone = statusToneOf(runtimeState)
 
   const summaryBits: string[] = []
   if (server.transport === 'stdio' && (server.envKeys?.length ?? 0) > 0) {
     summaryBits.push(t(countKey('server.envKeys', server.envKeys!.length), { count: server.envKeys!.length }))
   } else if (server.transport === 'streamable-http' && (server.headers?.length ?? 0) > 0) {
     summaryBits.push(t(countKey('server.headers', server.headers!.length), { count: server.headers!.length }))
+  }
+  if (globallyDisabled) {
+    summaryBits.push(t('server.disabledTag'))
   }
   if (rowsReady && offCount > 0) {
     summaryBits.push(t(countKey('server.offWorkspaces', offCount), { count: offCount }))
@@ -142,6 +266,94 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
     if (!mounted.current) return
     setPendingWs(undefined)
     if (!outcome.ok) setFailure(outcome)
+  }
+
+  async function handleSetEnabled(enabled: boolean): Promise<void> {
+    setFailure(null)
+    setPendingEnabled(true)
+    let outcome: SaveOutcome
+    try {
+      outcome = await props.onSetEnabled(server.serverName, enabled)
+    } catch {
+      outcome = { ok: false, reason: 'save-failed' }
+    }
+    if (!mounted.current) return
+    setPendingEnabled(false)
+    if (!outcome.ok) setFailure(outcome)
+  }
+
+  async function handleToggleAll(off: boolean): Promise<void> {
+    setFailure(null)
+    setPendingAll(true)
+    let outcome: SaveOutcome
+    try {
+      outcome = await props.onToggleAll(
+        server.serverName,
+        off,
+        workspaces.map((ws) => ws.workspaceId),
+      )
+    } catch {
+      outcome = { ok: false, reason: 'save-failed' }
+    }
+    if (!mounted.current) return
+    setPendingAll(false)
+    if (!outcome.ok) setFailure(outcome)
+  }
+
+  async function handleRuntime(action: 'connect' | 'disconnect'): Promise<void> {
+    const handler = action === 'connect' ? props.onConnect : props.onDisconnect
+    if (handler === undefined) return
+    setRuntimeFailure(null)
+    setPendingRuntime(action)
+    try {
+      await handler(server.serverName)
+    } catch (error) {
+      if (mounted.current) setRuntimeFailure(error instanceof Error ? error.message : t('runtime.error'))
+    }
+    if (mounted.current) setPendingRuntime(null)
+  }
+
+  async function handleTest(): Promise<void> {
+    if (props.onTest === undefined) return
+    setRuntimeFailure(null)
+    setPendingRuntime('test')
+    try {
+      const result = await props.onTest(server.serverName)
+      if (mounted.current && !result.ok) {
+        setRuntimeFailure(
+          runtimeErrorText(t, { code: result.code ?? '', message: result.error ?? t('runtime.error') }),
+        )
+      } else if (mounted.current) {
+        setRuntimeNote(t('action.testOk', { count: result.toolCount ?? 0 }))
+      }
+    } catch (error) {
+      if (mounted.current) setRuntimeFailure(error instanceof Error ? error.message : t('runtime.error'))
+    }
+    if (mounted.current) setPendingRuntime(null)
+  }
+
+  async function handleToggleTools(): Promise<void> {
+    if (props.onLoadTools === undefined || toolsLoading) return
+    if (toolsOpen) {
+      setToolsOpen(false)
+      return
+    }
+    setToolsOpen(true)
+    // A listing is valid for one sync generation: re-fetch whenever the
+    // server resynced (syncedAt moved) instead of serving a stale table.
+    if (toolsView !== null && toolsSyncedAt === runtime?.syncedAt) return
+    setToolsLoading(true)
+    try {
+      const listed = await props.onLoadTools(server.serverName)
+      if (mounted.current) {
+        setToolsView(listed)
+        setToolsSyncedAt(runtime?.syncedAt)
+      }
+    } catch (error) {
+      if (mounted.current) setRuntimeFailure(error instanceof Error ? error.message : t('runtime.error'))
+    } finally {
+      if (mounted.current) setToolsLoading(false)
+    }
   }
 
   async function handleRemove(): Promise<void> {
@@ -180,8 +392,25 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
   }
 
   return (
-    <article className={styles.card} aria-busy={busy}>
+    <article className={cx(styles.card, globallyDisabled && styles.cardDisabled)} aria-busy={busy}>
       <header className={styles.cardHead}>
+        {writable && (
+          <span className={styles.switchBox}>
+            <input
+              id={`mcp-scope-enable-${server.serverName}`}
+              type="checkbox"
+              role="switch"
+              aria-label={`${t('server.enableToggle')}: ${server.serverName}`}
+              className={styles.switchInput}
+              checked={!globallyDisabled}
+              disabled={busy || props.actionsDisabled === true}
+              onChange={(event) => void handleSetEnabled(event.target.checked)}
+            />
+            <span className={styles.switch} aria-hidden="true">
+              <span className={styles.switchThumb} />
+            </span>
+          </span>
+        )}
         <strong
           id={`mcp-scope-card-${server.serverName}`}
           className={cx(styles.cardName, styles.focusRing)}
@@ -213,6 +442,123 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
           </div>
         )}
       </header>
+
+      <div className={styles.statusRow}>
+        <span
+          className={statusTone !== undefined ? cx(styles.statusDot, statusTone) : styles.statusDot}
+          aria-hidden="true"
+        />
+        <span className={styles.statusText}>{t(statusKeyOf(runtimeState))}</span>
+        {runtime?.state === 'connected' && runtime.toolCount > 0 && (
+          <span className={styles.statusText}>{t('status.tools', { count: runtime.toolCount })}</span>
+        )}
+        {runtime?.state === 'reconnecting' && runtime.attempts > 0 && (
+          <span className={styles.statusText}>
+            {t('status.retry', { attempt: runtime.attempts, max: runtime.maxAttempts })}
+          </span>
+        )}
+        <span className={styles.spacer} />
+        {runtime !== undefined &&
+          !globallyDisabled &&
+          props.onConnect !== undefined &&
+          props.onDisconnect !== undefined && (
+            runtimeState === 'connected' || runtimeState === 'connecting' || runtimeState === 'reconnecting' ? (
+              <button
+                type="button"
+                className={cx(styles.button, styles.buttonOutline)}
+                disabled={disabled || pendingRuntime !== null}
+                onClick={() => void handleRuntime('disconnect')}
+              >
+                {pendingRuntime === 'disconnect' ? t('action.disconnecting') : t('action.disconnect')}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={cx(styles.button, styles.buttonOutline)}
+                disabled={disabled || pendingRuntime !== null}
+                onClick={() => void handleRuntime('connect')}
+              >
+                {pendingRuntime === 'connect' ? t('action.connecting') : t('action.connect')}
+              </button>
+            )
+          )}
+        {props.onTest !== undefined && runtime !== undefined && !globallyDisabled && (
+          <button
+            type="button"
+            className={cx(styles.button, styles.buttonOutline)}
+            disabled={disabled || pendingRuntime !== null}
+            onClick={() => void handleTest()}
+          >
+            {pendingRuntime === 'test' ? t('action.testing') : t('action.test')}
+          </button>
+        )}
+        {props.onLoadTools !== undefined && runtime !== undefined && runtime.toolCount > 0 && (
+          <button
+            type="button"
+            className={cx(styles.button, styles.buttonOutline)}
+            disabled={toolsLoading}
+            onClick={() => void handleToggleTools()}
+          >
+            {toolsLoading ? t('tools.loading') : `${t('tools.title')} (${runtime.toolCount})`}
+          </button>
+        )}
+      </div>
+
+      {runtime?.error !== undefined && (
+        <p className={styles.statusErrorText}>{runtimeErrorText(t, runtime.error)}</p>
+      )}
+
+      {runtime === undefined && (props.runtimePhase === 'unavailable' || props.runtimePhase === 'error') && (
+        <p className={styles.hint}>
+          {props.runtimePhase === 'error' ? t('runtime.error') : t('runtime.unavailable')}
+        </p>
+      )}
+
+      {runtimeNote !== null && (
+        <p role="status" className={styles.statusText}>
+          {runtimeNote}
+        </p>
+      )}
+
+      {runtimeFailure !== null && (
+        <div role="alert" className={styles.noticeError}>
+          <span className={styles.noticeText}>{runtimeFailure}</span>
+          <button
+            type="button"
+            aria-label={t('action.dismiss')}
+            className={styles.iconButton}
+            onClick={() => setRuntimeFailure(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {toolsOpen && (
+        <div>
+          {toolsView === null ? (
+            <p className={styles.hint}>{t('tools.loading')}</p>
+          ) : toolsView.tools.length === 0 ? (
+            <p className={styles.hint}>{t('tools.empty')}</p>
+          ) : (
+            <>
+              <ul className={styles.toolList}>
+                {toolsView.tools.map((tool) => (
+                  <li key={tool.publicName} className={styles.toolItem} title={tool.description}>
+                    <span className={styles.toolName}>{tool.rawName}</span>
+                    {tool.description !== '' ? ` — ${tool.description}` : ''}
+                  </li>
+                ))}
+              </ul>
+              {toolsView.truncated && (
+                <p className={styles.hint}>
+                  {t('tools.truncated', { count: toolsView.tools.length, total: toolsView.total })}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {failure !== null && (
         <div role="alert" className={styles.noticeError}>
@@ -342,7 +688,7 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
                       role="switch"
                       className={styles.switchInput}
                       checked={!off}
-                      disabled={disabled || pending}
+                      disabled={rowsDisabled || pending}
                       onChange={(event) => void handleToggle(ws.workspaceId, event.target.checked)}
                     />
                     <span className={styles.switch} aria-hidden="true">
@@ -357,6 +703,26 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
               )
             })}
           </ul>
+        )}
+        {rowsReady && workspaces.length > 1 && (
+          <div className={styles.row}>
+            <button
+              type="button"
+              className={cx(styles.button, styles.buttonOutline)}
+              disabled={rowsDisabled}
+              onClick={() => void handleToggleAll(false)}
+            >
+              {t('row.allOn')}
+            </button>
+            <button
+              type="button"
+              className={cx(styles.button, styles.buttonOutline)}
+              disabled={rowsDisabled}
+              onClick={() => void handleToggleAll(true)}
+            >
+              {t('row.allOff')}
+            </button>
+          </div>
         )}
         {rowsReady && workspaces.length > 0 && (
           <p className={styles.hint}>{t('server.newWorkspaceDefault')}</p>

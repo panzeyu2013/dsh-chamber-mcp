@@ -25,10 +25,20 @@ import {
   HEADER_NAME_PATTERN,
   RESERVED_OVERRIDE_KEYS,
   SERVER_NAME_PATTERN,
+  TIMEOUT_MAX_MS,
+  TIMEOUT_MIN_MS,
   type ServerDef,
 } from '../shared/model.js'
 import type { SettingsKey } from './locales.js'
 import { failureText, type SaveFailure, type SaveOutcome, type ServerSaveInput } from './controller.js'
+import {
+  parseHeaderLines,
+  parseKeyValueLines,
+  parseMcpSnippet,
+  refFromHeaderName,
+  splitCommandLine,
+  type ImportedServer,
+} from './import.js'
 import type { SectionT } from './section.js'
 import { cx, styles } from './styles.js'
 
@@ -42,6 +52,10 @@ export interface AddDraft {
   env: { key: string; value: string }[]
   url: string
   headers: { name: string; ref: string; value: string }[]
+  /** Global enable flag (the document's disabled map, inverted). */
+  enabled: boolean
+  /** Per-server timeout in ms as typed; '' = default. */
+  timeoutMs: string
 }
 
 export const EMPTY_DRAFT: AddDraft = {
@@ -53,13 +67,50 @@ export const EMPTY_DRAFT: AddDraft = {
   env: [{ key: '', value: '' }],
   url: '',
   headers: [{ name: '', ref: '', value: '' }],
+  enabled: true,
+  timeoutMs: '',
+}
+
+/** Structural equality of two drafts (dirty-form protection). */
+export function isDraftDirty(draft: AddDraft, initial: AddDraft): boolean {
+  return JSON.stringify(draft) !== JSON.stringify(initial)
+}
+
+/** Patch a draft from one parsed import (secret values stay write-only). */
+export function draftFromImport(current: AddDraft, server: ImportedServer): AddDraft {
+  const next: AddDraft = {
+    ...current,
+    transport: server.transport,
+    enabled: server.enabled,
+    ...(server.name !== undefined && server.name !== '' ? { name: server.name } : {}),
+    ...(server.timeoutMs !== undefined ? { timeoutMs: server.timeoutMs } : {}),
+  }
+  if (server.transport === 'stdio') {
+    return {
+      ...next,
+      command: server.command ?? '',
+      args: (server.args ?? []).length > 0 ? [...server.args!] : [''],
+      cwd: server.cwd ?? '',
+      env: server.env.length > 0 ? [...server.env, { key: '', value: '' }] : [{ key: '', value: '' }],
+    }
+  }
+  return {
+    ...next,
+    url: server.url ?? '',
+    headers:
+      server.headers.length > 0
+        ? [...server.headers, { name: '', ref: '', value: '' }]
+        : [{ name: '', ref: '', value: '' }],
+  }
 }
 
 /**
  * Prefill a staged draft from an existing server definition (edit flow).
  * Secret values stay blank — a blank input keeps the stored value on save.
  */
-export function draftFromServer(server: ServerDef): AddDraft {
+export function draftFromServer(server: ServerDef, disabled = false): AddDraft {
+  const enabled = !disabled
+  const timeoutMs = server.timeoutMs !== undefined ? String(server.timeoutMs) : ''
   if (server.transport === 'stdio') {
     return {
       name: server.serverName,
@@ -70,6 +121,8 @@ export function draftFromServer(server: ServerDef): AddDraft {
       env: (server.envKeys ?? []).map((key) => ({ key, value: '' })),
       url: '',
       headers: [{ name: '', ref: '', value: '' }],
+      enabled,
+      timeoutMs,
     }
   }
   return {
@@ -81,6 +134,8 @@ export function draftFromServer(server: ServerDef): AddDraft {
     url: server.url,
     env: [{ key: '', value: '' }],
     headers: (server.headers ?? []).map((header) => ({ name: header.name, ref: header.ref, value: '' })),
+    enabled,
+    timeoutMs,
   }
 }
 
@@ -89,6 +144,8 @@ export interface AddProblems {
   name?: 'pattern' | 'duplicate' | 'reserved'
   command?: 'required'
   url?: 'required' | 'invalid'
+  /** Timeout outside the supported bounds / not a whole number. */
+  timeout?: 'range'
   /** Per-row problem key (locales.validation.*), undefined = row fine. */
   env: (SettingsKey | undefined)[]
   headers: (SettingsKey | undefined)[]
@@ -166,6 +223,14 @@ export function evaluateDraft(draft: AddDraft, existingNames: readonly string[])
       if (name !== '') seenNames.add(name)
     }
   }
+
+  const timeout = draft.timeoutMs.trim()
+  if (timeout !== '') {
+    const value = Number(timeout)
+    if (!/^\d+$/.test(timeout) || !Number.isInteger(value) || value < TIMEOUT_MIN_MS || value > TIMEOUT_MAX_MS) {
+      problems.timeout = 'range'
+    }
+  }
   return problems
 }
 
@@ -175,6 +240,7 @@ export function hasProblems(problems: AddProblems): boolean {
     problems.name !== undefined ||
     problems.command !== undefined ||
     problems.url !== undefined ||
+    problems.timeout !== undefined ||
     problems.env.some((p) => p !== undefined) ||
     problems.headers.some((p) => p !== undefined)
   )
@@ -188,6 +254,9 @@ export function hasProblems(problems: AddProblems): boolean {
  */
 export function draftToServer(draft: AddDraft): ServerSaveInput {
   const name = draft.name.trim()
+  const timeout = draft.timeoutMs.trim()
+  const timeoutMs = timeout === '' ? undefined : Number(timeout)
+  const timing = timeoutMs !== undefined ? { timeoutMs } : {}
   const secrets: SecretWriteLike[] = []
   if (draft.transport === 'stdio') {
     const envKeys: string[] = []
@@ -206,8 +275,9 @@ export function draftToServer(draft: AddDraft): ServerSaveInput {
       ...(args.length > 0 ? { args } : {}),
       ...(cwd !== '' ? { cwd } : {}),
       ...(envKeys.length > 0 ? { envKeys } : {}),
+      ...timing,
     }
-    return { server, secrets }
+    return { server, secrets, enabled: draft.enabled }
   }
   const headers: { name: string; ref: string }[] = []
   for (const row of draft.headers) {
@@ -218,8 +288,9 @@ export function draftToServer(draft: AddDraft): ServerSaveInput {
     if (row.value !== '') secrets.push({ ref, value: row.value })
   }
   return {
-    server: { serverName: name, transport: 'streamable-http', url: draft.url.trim(), headers },
+    server: { serverName: name, transport: 'streamable-http', url: draft.url.trim(), headers, ...timing },
     secrets,
+    enabled: draft.enabled,
   }
 }
 
@@ -238,6 +309,12 @@ export interface AddServerFormProps {
   onSave(input: ServerSaveInput): Promise<SaveOutcome>
   /** Called after a successful save (parent closes/announces). */
   onClose(): void
+  /**
+   * Bumped by the section's header Add/Cancel control. When a form is open the
+   * header button routes here instead of tearing the form down, so the form's
+   * own unsaved-changes guard owns every dismissal path.
+   */
+  dismissToken?: number
 }
 
 /** Plain labelled text input row with optional inline problem text. */
@@ -308,6 +385,12 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
   const [attempted, setAttempted] = useState(false)
   const [saving, setSaving] = useState(false)
   const [failure, setFailure] = useState<SaveFailure | null>(null)
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
+  /** Transient paste/import outcome (role="status", never a failure banner). */
+  const [note, setNote] = useState<string | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [importInvalid, setImportInvalid] = useState(false)
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -315,6 +398,26 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
       mounted.current = false
     }
   }, [])
+  // Transient note: auto-retires like the card's failure banner.
+  useEffect(() => {
+    if (note === null) return
+    const timer = window.setTimeout(() => setNote(null), 6000)
+    return () => window.clearTimeout(timer)
+  }, [note])
+  const dirty = isDraftDirty(draft, props.initial)
+  const requestClose = (): void => {
+    if (dirty) setConfirmDiscard(true)
+    else props.onClose()
+  }
+  // The section header's Add/Cancel button routes here while a form is open;
+  // skip the first run (mount) so an initial token never closes a fresh form.
+  const dismissSeen = useRef(props.dismissToken)
+  useEffect(() => {
+    if (props.dismissToken === undefined || dismissSeen.current === props.dismissToken) return
+    dismissSeen.current = props.dismissToken
+    requestClose()
+    // requestClose reads the latest draft through the render closure.
+  })
   const disabled = !writable || saving
 
   const problems = evaluateDraft(draft, props.existingNames)
@@ -326,6 +429,7 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
     (problems.name !== undefined && draft.name.trim() !== '') ||
     (problems.command !== undefined && draft.command.trim() !== '') ||
     (problems.url !== undefined && draft.url.trim() !== '') ||
+    (problems.timeout !== undefined && draft.timeoutMs.trim() !== '') ||
     problems.env.some((problem) => problem !== undefined) ||
     problems.headers.some((problem) => problem !== undefined)
 
@@ -345,6 +449,89 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
       ...prev,
       headers: prev.headers.map((row, i) => (i === index ? { ...row, ...patch } : row)),
     }))
+  }
+
+  /** Clipboard read through the browser API (never available in jsdom tests). */
+  async function readClipboard(): Promise<string | null> {
+    try {
+      const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard
+      if (clipboard === undefined) throw new Error('clipboard unavailable')
+      return await clipboard.readText()
+    } catch {
+      setNote(t('clipboard.readFailed'))
+      return null
+    }
+  }
+
+  async function handlePasteCommand(): Promise<void> {
+    const text = await readClipboard()
+    if (text === null || !mounted.current) return
+    const tokens = splitCommandLine(text)
+    if (tokens.length === 0) return
+    const [command, ...args] = tokens
+    patch({ command: command ?? '', args: args.length > 0 ? args : [''] })
+    setNote(t('paste.argsImported', { count: args.length }))
+  }
+
+  async function handlePasteEnv(): Promise<void> {
+    const text = await readClipboard()
+    if (text === null || !mounted.current) return
+    const rows = parseKeyValueLines(text)
+    if (rows.length === 0) {
+      setNote(t('paste.noneFound'))
+      return
+    }
+    setDraft((prev) => ({
+      ...prev,
+      env: [
+        ...prev.env.filter((row) => row.key.trim() !== '' || row.value !== ''),
+        ...rows,
+        { key: '', value: '' },
+      ],
+    }))
+    setNote(t('paste.envImported', { count: rows.length }))
+  }
+
+  async function handlePasteHeaders(): Promise<void> {
+    const text = await readClipboard()
+    if (text === null || !mounted.current) return
+    const rows = parseHeaderLines(text)
+    if (rows.length === 0) {
+      setNote(t('paste.noneFound'))
+      return
+    }
+    setDraft((prev) => ({
+      ...prev,
+      headers: [
+        ...prev.headers.filter((row) => row.name.trim() !== '' || row.ref.trim() !== '' || row.value !== ''),
+        ...rows.map((row) => ({ name: row.name, ref: refFromHeaderName(row.name), value: row.value })),
+        { name: '', ref: '', value: '' },
+      ],
+    }))
+    setNote(t('paste.headersImported', { count: rows.length }))
+  }
+
+  /** Fill the staged draft from one JSON snippet — never saves anything. */
+  function handleImport(): void {
+    const outcome = parseMcpSnippet(importText)
+    if (!outcome.ok) {
+      setImportInvalid(true)
+      return
+    }
+    setDraft((prev) => draftFromImport(prev, outcome.server))
+    setImportOpen(false)
+    setImportText('')
+    setImportInvalid(false)
+    if (outcome.others.length > 0) {
+      setNote(t('import.multiple', { name: outcome.server.name ?? '', others: outcome.others.join(', ') }))
+    }
+  }
+
+  async function handleImportClipboard(): Promise<void> {
+    const text = await readClipboard()
+    if (text === null || !mounted.current) return
+    setImportText(text)
+    setImportInvalid(false)
   }
 
   function handleSubmit(event: FormEvent): void {
@@ -396,6 +583,63 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
         </p>
       )}
 
+      {note !== null && (
+        <p role="status" className={styles.fieldHint}>
+          {note}
+        </p>
+      )}
+
+      <div className={styles.row}>
+        <button
+          type="button"
+          className={cx(styles.button, styles.buttonOutline)}
+          disabled={disabled}
+          onClick={() => {
+            setImportOpen((open) => !open)
+            setImportInvalid(false)
+          }}
+        >
+          {t('add.importJson')}
+        </button>
+      </div>
+
+      {importOpen && (
+        <div role="dialog" aria-label={t('import.title')} className={styles.dialog}>
+          <span className={styles.fieldLabel}>{t('import.title')}</span>
+          <p className={styles.fieldHint}>{t('import.hint')}</p>
+          <textarea
+            aria-label={t('import.textareaLabel')}
+            className={cx(styles.textarea, importInvalid && styles.inputInvalid)}
+            value={importText}
+            disabled={disabled}
+            spellCheck={false}
+            onChange={(event) => {
+              setImportText(event.target.value)
+              setImportInvalid(false)
+            }}
+          />
+          {importInvalid && <span className={styles.fieldProblem}>{t('import.error')}</span>}
+          <div className={styles.row}>
+            <button
+              type="button"
+              className={cx(styles.button, styles.buttonOutline)}
+              disabled={disabled}
+              onClick={() => void handleImportClipboard()}
+            >
+              {t('import.paste')}
+            </button>
+            <button
+              type="button"
+              className={cx(styles.button, styles.buttonPrimary)}
+              disabled={disabled || importText.trim() === ''}
+              onClick={handleImport}
+            >
+              {t('import.parse')}
+            </button>
+          </div>
+        </div>
+      )}
+
       <Field
         id="mcp-scope-add-name"
         label={t('add.serverName')}
@@ -406,6 +650,27 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
         problem={nameProblem !== undefined ? t(nameProblem === 'pattern' ? 'validation.namePattern' : nameProblem === 'reserved' ? 'validation.nameReserved' : 'validation.duplicateName') : undefined}
         onChange={(name) => patch({ name })}
       />
+
+      <div className={styles.toggleRow}>
+        <span className={styles.switchBox}>
+          <input
+            id="mcp-scope-add-enabled"
+            type="checkbox"
+            role="switch"
+            className={styles.switchInput}
+            checked={draft.enabled}
+            disabled={disabled}
+            onChange={(event) => patch({ enabled: event.target.checked })}
+          />
+          <span className={styles.switch} aria-hidden="true">
+            <span className={styles.switchThumb} />
+          </span>
+        </span>
+        <label htmlFor="mcp-scope-add-enabled" className={styles.toggleLabel}>
+          {t('add.enabled')}
+        </label>
+      </div>
+      <span className={styles.fieldHint}>{t('add.enabledHint')}</span>
 
       <div role="radiogroup" aria-label={t('add.transport')} className={styles.field}>
         <span className={styles.fieldLabel}>{t('add.transport')}</span>
@@ -438,6 +703,18 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
             problem={showCommand !== undefined ? t('validation.commandRequired') : undefined}
             onChange={(command) => patch({ command })}
           />
+
+          <div className={styles.row}>
+            <button
+              type="button"
+              className={cx(styles.button, styles.buttonOutline)}
+              disabled={disabled}
+              title={t('add.pasteCommandHint')}
+              onClick={() => void handlePasteCommand()}
+            >
+              {t('add.pasteCommand')}
+            </button>
+          </div>
 
           <div className={styles.rowsGroup}>
             <span className={styles.fieldLabel}>{t('add.args')}</span>
@@ -486,6 +763,16 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
           <div className={styles.rowsGroup}>
             <span className={styles.fieldLabel}>{t('add.envKey')}</span>
             <p className={styles.fieldHint}>{t('add.envSectionHint')}</p>
+            <div className={styles.row}>
+              <button
+                type="button"
+                className={cx(styles.button, styles.buttonOutline)}
+                disabled={disabled}
+                onClick={() => void handlePasteEnv()}
+              >
+                {t('add.pasteEnv')}
+              </button>
+            </div>
             {draft.env.map((row, index) => {
               // Every env-row problem is about the key, so the key input carries
               // the invalid border: the list below names the problem, the border
@@ -564,6 +851,17 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
           <div className={styles.rowsGroup}>
             <span className={styles.fieldLabel}>{t('add.headerName')}</span>
             <p className={styles.fieldHint}>{t('add.headerSectionHint')}</p>
+            <div className={styles.row}>
+              <button
+                type="button"
+                className={cx(styles.button, styles.buttonOutline)}
+                disabled={disabled}
+                title={t('add.pasteHeadersHint')}
+                onClick={() => void handlePasteHeaders()}
+              >
+                {t('add.pasteHeaders')}
+              </button>
+            </div>
             {draft.headers.map((row, index) => {
               // The problem names the field it belongs to: a ref problem marks
               // the ref input, every other one the header-name input.
@@ -634,12 +932,44 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
         </>
       )}
 
+      <Field
+        id="mcp-scope-add-timeout"
+        label={t('add.timeout')}
+        value={draft.timeoutMs}
+        disabled={disabled}
+        hint={t('add.timeoutHint')}
+        problem={reveal && problems.timeout !== undefined ? t('validation.timeout') : undefined}
+        onChange={(timeoutMs) => patch({ timeoutMs })}
+      />
+
+      {confirmDiscard && (
+        <div className={styles.confirm}>
+          <p className={styles.confirmText}>{t('dirty.confirm')}</p>
+          <div className={styles.confirmActions}>
+            <button
+              type="button"
+              className={cx(styles.button, styles.buttonDanger)}
+              onClick={props.onClose}
+            >
+              {t('dirty.discard')}
+            </button>
+            <button
+              type="button"
+              className={cx(styles.button, styles.buttonOutline)}
+              onClick={() => setConfirmDiscard(false)}
+            >
+              {t('dirty.keepEditing')}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className={styles.formActions}>
         <button
           type="button"
           className={cx(styles.button, styles.buttonMd, styles.buttonOutline)}
           disabled={saving}
-          onClick={props.onClose}
+          onClick={requestClose}
         >
           {t('action.cancel')}
         </button>
