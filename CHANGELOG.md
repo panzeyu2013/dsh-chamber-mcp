@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applier is now a pure tool-scope writer (`tests/host/agents.spec.ts` asserts
   that every push, reconcile and revoke path appends nothing) and the notice is
   derived client-side from `request/header` events.
+- **Workspace switches serialize per card.** Two quick toggles on different
+  workspaces of the same server could report a bogus `conflict`: each save is
+  judged by comparing the landed document against the expectation built from the
+  revision it read, so the second one no longer matched. Every workspace row is
+  now inert while one toggle is in flight (the clicked row included), and a
+  regression test pins the disabled state of both rows.
 - **Reconnect budget is no longer laundered by a successful connect.**
   `connectGeneration` reset the consecutive-failure counter on every connect, so
   a server that connected and immediately crashed was respawned forever at the

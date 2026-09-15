@@ -39,7 +39,7 @@ Current release, compatibility and verification state. Refreshed 2026-09-15.
   workspace's turn carries none (transcript evidence — the driver reports the
   verdict but does not fail on it).
 - **0.0.4 line (working tree):** `npm run check` PASS — `tsc` ×2,
-  **411 tests / 24 files**, build, `verify:package` (42 packed entries; consumer
+  **412 tests / 24 files**, build, `verify:package` (42 packed entries; consumer
   d.ts; react-only client-bundle purity; the packed-bundle artifact check, which
   also drives the injected-tools notice lane; determinism over the whole built
   tree), plus `npm run verify:workflows` PASS. **Live smoke not re-run for this

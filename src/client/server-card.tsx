@@ -467,7 +467,12 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
   /** One workspace row (shared by the exception list and the expanded list). */
   function workspaceRow(ws: WorkspaceItem): JSX.Element {
     const off = !isEnabled(doc.overrides, ws.workspaceId, server.serverName)
-    const pending = pendingWs === ws.workspaceId
+    // ONE toggle per card at a time: the controller judges a save by comparing
+    // the landed document against the expectation it built from the base it
+    // read, so a second overlapping toggle would report a spurious 'conflict'
+    // (or be fenced away) even though nothing is wrong. Every row is inert
+    // while one toggle is in flight, not just the row that was clicked.
+    const pending = pendingWs !== undefined
     const id = `mcp-scope-${server.serverName}-${ws.workspaceId}`
     return (
       <li key={ws.workspaceId} className={styles.wsRow}>

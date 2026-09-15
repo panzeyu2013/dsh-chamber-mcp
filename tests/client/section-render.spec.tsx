@@ -957,6 +957,36 @@ describe('McpScopeSection render', () => {
     expect(writes).toEqual([{ workspaceId: 'ws-1', off: true }])
   })
 
+  it('serializes workspace toggles: every row is inert while one save is in flight', async () => {
+    let release: (outcome: { ok: true }) => void = () => {}
+    const pending = new Promise<{ ok: true }>((resolve) => {
+      release = resolve
+    })
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      { toggleWorkspace: async () => pending },
+      { wsItems: [{ workspaceId: 'ws-1', title: 'one' }, { workspaceId: 'ws-2', title: 'two' }] },
+    )
+    await flush()
+    buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
+    await flush()
+    const inputs = Array.from(mounted.host.querySelectorAll<HTMLInputElement>('.' + styles.wsRow + ' input'))
+    expect(inputs).toHaveLength(2)
+
+    inputs[0]?.click()
+    await flush()
+    // The save is still in flight, so BOTH rows stay inert: an overlapping
+    // toggle on the second row would be judged against a single-change
+    // expectation built from the same base and report a spurious conflict.
+    expect(inputs[0]?.disabled).toBe(true)
+    expect(inputs[1]?.disabled).toBe(true)
+
+    release({ ok: true })
+    await flush()
+    expect(inputs[0]?.disabled).toBe(false)
+    expect(inputs[1]?.disabled).toBe(false)
+  })
+
   it('zh dictionary mirrors the en key set', () => {
     expect(Object.keys(zh).sort()).toEqual(Object.keys(en).sort())
   })
