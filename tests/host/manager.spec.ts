@@ -143,10 +143,10 @@ describe('bridge manager lifecycle', () => {
       manager.reconcile()
       await waitFor(() => stopped(lines, 'fix') === 3, 'removal stop log')
 
-      // 5. Dispose is quiet after full stop.
+      // 5. Dispose is quiet after full stop: dispose() awaits quiescence, so a
+      // synchronous check is both deterministic and stricter than a sleep.
       const count = lines.length
       await dispose()
-      await new Promise((resolve) => setTimeout(resolve, 100))
       expect(lines.length).toBe(count)
     } finally {
       await dispose()
@@ -195,8 +195,10 @@ describe('bridge manager lifecycle', () => {
         'initial sync log',
       )
       const before = lines.length
+      // The listener filters by "ref in use" SYNCHRONOUSLY before queueing any
+      // work, so the negative assertion can be immediate (the old sleep could
+      // pass vacuously and slowed the suite).
       ctx.emit('credentials/reference-updated', credentialRef('UNUSED_REF'))
-      await new Promise((resolve) => setTimeout(resolve, 120))
       expect(lines.length).toBe(before)
     } finally {
       await dispose()
@@ -226,7 +228,12 @@ describe('bridge manager lifecycle', () => {
         'post-restart sync',
       )
       expect(reconnecting()).toBe(1)
-      await new Promise((resolve) => setTimeout(resolve, 120))
+      // Settle the restarted server's sync instead of sleeping: it is the last
+      // activity the coalesced restart can produce, so nothing may follow it.
+      await waitFor(
+        () => lines.filter((l) => l.message.includes('mcp-scope(fix): synced 8 tools')).length === 2,
+        'post-restart sync settled',
+      )
       expect(stopped(lines, 'fix')).toBe(1)
       expect(started(lines, 'fix')).toBe(2)
 
@@ -438,6 +445,59 @@ describe('bridge manager lifecycle', () => {
       }
       expect(thrown).toBeInstanceOf(RuntimeActionError)
       expect((thrown as RuntimeActionError).code).toBe('not-found')
+    } finally {
+      await dispose()
+    }
+  })
+
+  it('projects runtimeStatus onto one serverName without changing the full view', async () => {
+    const { manager, lines, setDoc, dispose } = await boot()
+    try {
+      setDoc({ servers: [stdioServer('fix'), stdioServer('off')], overrides: {}, disabled: { off: true } })
+      manager.reconcile()
+      await waitFor(
+        () => manager.runtimeStatus().servers.some((server) => server.name === 'fix' && server.state === 'connected'),
+        'fix connected',
+      )
+
+      const full = manager.runtimeStatus()
+      expect(Object.keys(full)).toEqual(['v', 'at', 'servers'])
+      expect(full.v).toBe(1)
+      expect(typeof full.at).toBe('number')
+      expect(full.servers.map((server) => server.name)).toEqual(['fix', 'off'])
+      // Calling with an explicit undefined is the unchanged no-argument path.
+      expect(manager.runtimeStatus(undefined).servers).toEqual(full.servers)
+
+      // Same envelope shape, filtered to exactly one entry, byte-identical to
+      // its full-view counterpart (no field added or dropped by the filter).
+      const fixOnly = manager.runtimeStatus('fix')
+      expect(Object.keys(fixOnly)).toEqual(['v', 'at', 'servers'])
+      expect(fixOnly.servers).toHaveLength(1)
+      expect(JSON.stringify(fixOnly.servers)).toBe(JSON.stringify([full.servers[0]]))
+      expect(fixOnly.servers[0]?.state).toBe('connected')
+
+      const offOnly = manager.runtimeStatus('off')
+      expect(JSON.stringify(offOnly.servers)).toBe(JSON.stringify([full.servers[1]]))
+      expect(offOnly.servers[0]).toEqual({
+        name: 'off',
+        state: 'disabled',
+        attempts: 0,
+        maxAttempts: RECONNECT_DEFAULTS.maxAttempts,
+        toolCount: 0,
+      })
+
+      // Unknown / never-tracked name: a normal view with an empty list, and no
+      // process is started by reading it.
+      expect(manager.runtimeStatus('ghost')).toEqual({ v: 1, at: expect.any(Number), servers: [] })
+      expect(started(lines, 'ghost')).toBe(0)
+
+      // A tracked handle the document no longer names stays visible in both
+      // views (transient orphan) and filters exactly like a document server.
+      setDoc({ servers: [], overrides: {} })
+      const orphan = manager.runtimeStatus()
+      expect(orphan.servers.map((server) => server.name)).toEqual(['fix'])
+      expect(JSON.stringify(manager.runtimeStatus('fix').servers)).toBe(JSON.stringify(orphan.servers))
+      expect(manager.runtimeStatus('off').servers).toEqual([])
     } finally {
       await dispose()
     }

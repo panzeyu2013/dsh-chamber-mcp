@@ -65,6 +65,11 @@ for (const file of workflowFiles) {
       continue
     }
     if (shaPattern.test(version)) {
+      // A bare SHA hides which release it is: every pin carries its tag comment
+      // so a bump can be reviewed (and re-resolved) without the GitHub API.
+      if (!/#\s*v?\d+\.\d+\.\d+/.test(rawLine)) {
+        fail(file + ': ' + action + ' is SHA-pinned without a "# vX.Y.Z" comment')
+      }
       const prev = seenActions.get(action)
       if (prev !== undefined && prev !== version) {
         fail(`${file}: action ${action} pinned at multiple SHAs (${prev} vs ${version})`)
@@ -84,13 +89,40 @@ if (!/concurrency:\s*\n\s*group:\s*release-publish/.test(releaseYaml)) {
 if (!/cancel-in-progress:\s*false/.test(releaseYaml)) {
   fail('release.yml: concurrency.cancel-in-progress must be false')
 }
+/** One step block, from its "- name:" line to the next step. */
+function stepBlock(text, name) {
+  const start = new RegExp('- name:\\s*' + name + '\\b').exec(text)
+  if (start === null) return undefined
+  const rest = text.slice(start.index)
+  const next = /\n[ \t]*- name:/.exec(rest.slice(1))
+  return next === null ? rest : rest.slice(0, next.index + 1)
+}
 const mutationStep = /name:\s*Create GitHub Release/.exec(releaseYaml)
 const gateStep = /name:\s*Full gate/.exec(releaseYaml)
-if (mutationStep && gateStep && mutationStep.index < gateStep.index) {
+if (mutationStep === null || gateStep === null) {
+  // Both names are required: a rename used to silently disable this ordering check.
+  fail('release.yml: expected a "Full gate" step and a "Create GitHub Release" step (rename detected)')
+} else if (mutationStep.index < gateStep.index) {
   fail('release.yml: the GitHub-Release mutation step must come AFTER the full gate')
 }
-if (!/refuse|already published|stale draft/i.test(releaseYaml)) {
-  fail('release.yml: missing refuse-published-release guard (softprops silently updates existing releases)')
+const refuseStep = stepBlock(releaseYaml, 'Refuse re-publishing an existing release')
+if (refuseStep === undefined) {
+  fail('release.yml: missing the "Refuse re-publishing an existing release" step (softprops silently updates existing releases)')
+} else {
+  // The guard must INSPECT the release and fail closed — prose in a comment or a
+  // step name does not count.
+  if (!/gh release view/.test(refuseStep) || !/gh release delete/.test(refuseStep) || !/exit 1/.test(refuseStep)) {
+    fail('release.yml: the refuse step no longer inspects the release and fails closed (expected gh release view / gh release delete / exit 1)')
+  }
+  if (!/if:.*inputs\.dry_run/.test(refuseStep)) {
+    fail('release.yml: the refuse step must be skipped on a dry run (expected "if: !inputs.dry_run")')
+  }
+}
+const publishStep = stepBlock(releaseYaml, 'Create GitHub Release with tgz asset')
+if (publishStep === undefined) {
+  fail('release.yml: missing the "Create GitHub Release with tgz asset" step')
+} else if (!/if:.*inputs\.dry_run/.test(publishStep)) {
+  fail('release.yml: the release mutation step must be skipped on a dry run (expected "if: !inputs.dry_run")')
 }
 
 // ci.yml trigger parity

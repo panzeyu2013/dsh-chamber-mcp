@@ -17,6 +17,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { registerInjectionRow, type InjectionRegistrationHost } from './injection-row.js'
 import type { CredentialInfo as CredentialInfoView } from '@deepseek-ai/dsh-credentials/types'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client' // 'settings.section' SlotMap entry + ctx.settingsScope merge (type-only)
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client' // 'tool.call.toolview' SlotMap entry (type-only)
@@ -144,6 +145,7 @@ export function apply(ctx: Context): void {
 
   // (a) dictionaries — one registration, both built-in locales.
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'mcp-scope: dictionaries')
+
   const t = ctx.locale.bind(NS)
 
   // (b/c) controller over the bound namespace scope + the credentials wire.
@@ -155,6 +157,19 @@ export function apply(ctx: Context): void {
   })
   const remote = ctx.remote as unknown as McpRemoteWire
   const controller = new McpScopeController(scope, remoteCredentials(remote))
+  // (a2) conversation-lane notice: "MCP tools injected" (optional seat — a
+  // deployment without the conversation service simply never renders it). The
+  // row is DERIVED from the session's own `request/header` events, so neither
+  // half writes a private session event (see `src/client/injection.ts`); the
+  // settings document supplies the server identity each public name belongs to.
+  registerInjectionRow(ctx as unknown as InjectionRegistrationHost, {
+    servers: () => controller.store.getSnapshot().doc.servers,
+    onError: (error) => {
+      // Contained like the tool-row lane: the notice stays off, the plugin apply
+      // and the rest of the UI keep working.
+      logger?.warn(`mcp-scope: conversation-lane notice could not register — the injected-tools row stays off: ${String(error)}`)
+    },
+  })
   // Live runtime status/actions over the Connection carrier's JSON routes.
   // Degradable by construction: without the route the store reports
   // "unavailable" and the document UI keeps working.
@@ -203,7 +218,7 @@ export function apply(ctx: Context): void {
         inject: () => ({
           ...face,
           hooks: { ...face.hooks, runtime },
-          refreshRuntime: (options?: { silent?: boolean }) => runtime.refresh(options),
+          refreshRuntime: (options?: { silent?: boolean; server?: string }) => runtime.refresh(options),
           connectServer: (serverName: string) => runtime.act(serverName, 'connect'),
           disconnectServer: (serverName: string) => runtime.act(serverName, 'disconnect'),
           testServer: (serverName: string) => runtime.test(serverName),

@@ -14,7 +14,8 @@ const PKG_VERSION = PKG_META.version
 // Freshly packed from the working tree on every run (see packPluginTgz).
 const TGZ = packPluginTgz()
 
-const PORT = 32132
+const PORT = Number(process.env.DSH_SMOKE_PORT_M1 ?? 32132)
+const MOCK_PORT = Number(process.env.DSH_SMOKE_PORT_MOCK ?? 39001)
 const HOME = join(SMOKE, 'm1-home')
 const ON_DIR = join(SMOKE, 'm1-on')
 const OFF_DIR = join(SMOKE, 'm1-off')
@@ -30,7 +31,7 @@ for (const dir of [HOME, ON_DIR, OFF_DIR]) mkdirSync(dir, { recursive: true })
 rmSync(REQ_LOG, { force: true })
 
 // mock LLM child (kept alive for the duration of this process)
-const mock = spawn(NODE, [join(ROOT, 'scripts', 'smoke', 'mock-llm.mjs'), '39001'], { stdio: ['ignore', 'pipe', 'pipe'] })
+const mock = spawn(NODE, [join(ROOT, 'scripts', 'smoke', 'mock-llm.mjs'), String(MOCK_PORT)], { stdio: ['ignore', 'pipe', 'pipe'] })
 mock.stdout.on('data', (d) => process.stdout.write(`[mock] ${d}`))
 await new Promise((r) => setTimeout(r, 800))
 
@@ -88,7 +89,7 @@ try {
   }
   say(`installed: ${PKG_NAME}@${installed.version} from ${TGZ.split('/').pop()}`)
 
-  await inst.boot(60_000, { DEEPSEEK_BASE_URL: 'http://127.0.0.1:39001' })
+  await inst.boot(60_000, { DEEPSEEK_BASE_URL: `http://127.0.0.1:${MOCK_PORT}` })
 
   // credentials: provider key + server env token
   await inst.rpc('credentials/set', { ref: 'DEEPSEEK_API_KEY', value: 'sk-mock-123' })

@@ -12,8 +12,14 @@ const run = (cmd, args) => execFileSync(cmd, args, { cwd: root, stdio: 'inherit'
 // 1. typecheck
 run('node', [join(root, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.json'])
 
+// 1b. wipe the output directory FIRST: lib/ is the whole publish surface
+// (package.json files: ["lib"]) and every emitter only ADDS files, so a removed
+// or renamed source would otherwise keep shipping its last compiled copy — a
+// stale module that still documents behaviour the tree no longer has. Emit
+// everything from scratch instead.
+rmSync(join(root, 'lib'), { recursive: true, force: true })
+
 // 2. declarations for both entries
-rmSync(join(root, 'lib', 'types'), { recursive: true, force: true })
 mkdirSync(join(root, 'lib', 'types'), { recursive: true })
 run('node', [join(root, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.types.json'])
 

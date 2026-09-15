@@ -10,6 +10,8 @@
  *
  * Wire shape (versioned, additive):
  *   GET  /api/mcp-scope.status            → { ok, value: { v: 1, at, servers } }
+ *        [?server=NAME]                       (absent/empty = full view; NAME = that
+ *                                             single entry; unknown = servers: [])
  *   POST /api/mcp-scope.action            → { ok, value: { name, state } }
  *                                              | { ok:false, error:{code,message} }
  *   GET  /api/mcp-scope.tools?server=NAME → { ok, value: { tools, truncated } }
@@ -43,6 +45,12 @@ const json = (value: unknown, status = 200): Response =>
 
 const failure = (code: string, message: string, status: number): Response =>
   json({ ok: false, error: { code, message } }, status)
+
+/** One shared wording for every out-of-contract server-name field (body or query). */
+const SERVER_NAME_ERROR_MESSAGE = 'server must be 1-32 chars of [A-Za-z0-9_-]'
+
+/** Business failure of a server-name field outside the contract. */
+const badServerName = (): Response => failure('bad-request', SERVER_NAME_ERROR_MESSAGE, 400)
 
 /** Status code of one business failure code (default 500). */
 function statusOf(code: string): number {
@@ -82,7 +90,7 @@ async function readActionBody(
   }
   const body = parsed as { action?: unknown; server?: unknown }
   if (typeof body.server !== 'string' || !SERVER_NAME_PATTERN.test(body.server)) {
-    return failure('bad-request', 'server must be 1-32 chars of [A-Za-z0-9_-]', 400)
+    return badServerName()
   }
   if (body.action !== 'connect' && body.action !== 'disconnect' && body.action !== 'test') {
     return failure('bad-request', 'unknown action', 400)
@@ -104,7 +112,26 @@ export function registerMcpScopeRoutes(ctx: Context, manager: ManagerHandle, log
           path: MCP_SCOPE_STATUS_PATH,
           methods: ['GET'],
           requestBody: 'buffered',
-          fetch: () => Promise.resolve(json({ ok: true, value: manager.runtimeStatus() })),
+          fetch: (request) => {
+            // A repeated param resolves to its first value (URLSearchParams.get)
+            // deterministically. Absent or empty 'server' keeps the untouched
+            // full-document view (backward compatible).
+            const server = new URL(request.url).searchParams.get('server')
+            if (server !== null && server !== '' && !SERVER_NAME_PATTERN.test(server)) {
+              return Promise.resolve(badServerName())
+            }
+            try {
+              const value =
+                server === null || server === ''
+                  ? manager.runtimeStatus()
+                  : manager.runtimeStatus(server)
+              return Promise.resolve(json({ ok: true, value }))
+            } catch (error) {
+              // Never throw into the carrier: a failed read folds into the
+              // same business envelope every other route uses.
+              return Promise.resolve(actionFailure(error))
+            }
+          },
         }),
         scope.connection.fetch.register({
           path: MCP_SCOPE_ACTION_PATH,
@@ -134,7 +161,7 @@ export function registerMcpScopeRoutes(ctx: Context, manager: ManagerHandle, log
           fetch: (request) => {
             const server = new URL(request.url).searchParams.get('server') ?? ''
             if (!SERVER_NAME_PATTERN.test(server)) {
-              return Promise.resolve(failure('bad-request', 'server must be 1-32 chars of [A-Za-z0-9_-]', 400))
+              return Promise.resolve(badServerName())
             }
             try {
               const listed = manager.toolList(server)

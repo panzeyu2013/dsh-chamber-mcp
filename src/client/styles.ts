@@ -22,11 +22,14 @@
  *   - buttons: the `ui-primitives` Button capsule at `size="sm"` — 28px high,
  *     radius 14px, 12px/18px text, 0 10px padding — with the `outline`
  *     (0.5px border-l3 + transparent fill) and `primary`
- *     (button-primary-fill / label-primary-foreground) palettes. The section
+ *     (button-info-fill / label-primary-foreground, the brand-blue control
+ *     fill) palettes. The section
  *     header action is literally the official `settings.action` seat's
  *     `<Button variant="outline" size="sm">`;
- *   - cards: 0.5px border-l4 + radius 16px + bg-layer-3, hover border
- *     label-dimmed (`ModelsSection` `.rowCard`, `PluginCard` `.card`);
+ *   - cards: radius 14px + `elevation-stroke` + bg-layer-3, 12px/14px inset —
+ *     the settings panel's 14px card recipe, where the hairline is drawn by the
+ *     elevation stroke instead of a `border`, so the card never doubles an
+ *     outline;
  *   - the staged add/edit form: the official editing-surface fill
  *     (bg-module-platform + radius 12px + 14px/16px padding;
  *     `ModelsSection` `.editor` / `.addCard`);
@@ -39,7 +42,7 @@
  *     (24px, radius 12px, ghost-active fill + inset ring when selected)
  *     geometries;
  *   - the per-workspace switch: the `ui-primitives` Switch geometry verbatim
- *     (36x20 track, radius 10px, 16px thumb, brand-primary when on) driven by
+ *     (36x20 track, radius 10px, 16px thumb, the accent when on) driven by
  *     the native checkbox's `:checked`, since this plugin owns a controlled
  *     input rather than the primitive;
  *   - notices: 12px/18px success text for the saved note, state-error text on
@@ -50,6 +53,19 @@
  * from the theme (the rule the chamber gates with S1–S7, see
  * `dsh-chamber/scripts/dev/verify-style-tokens.mjs`). This sheet declares no
  * custom properties of its own, so it cannot collide with a future token.
+ *
+ * Accent discipline: the deepseek blue is spent ONLY on interactive/selected
+ * states — the switch-on track, focus rings, and the primary control fill —
+ * through `--dsw-alias-state-business-primary` (deepseek-500 in light,
+ * deepseek-400 in dark) and the control fill pair
+ * `--dsw-alias-button-info-fill`/`-hover`. Normal state text, borders and
+ * surfaces stay monochrome (`label-*`, `border-l*`). The alias was verified by
+ * grepping the chamber's vendored theme
+ * (`@deepseek-ai/dsh-client-ui-theme/lib/client.js`, which declares both
+ * aliases over the `--dsw-static-deepseek-500/-450/-400/-600` primitives) and
+ * the pinned `ui-primitives` sheets, which already read
+ * `state-business-primary` for focus outlines; the concatenated alias the
+ * vendored sheet also carries is deliberately not used.
  */
 
 /**
@@ -79,6 +95,8 @@ export const styles = {
   noticeOk: 'mcpScope_noticeOk',
   noticeError: 'mcpScope_noticeError',
   noticeText: 'mcpScope_noticeText',
+  staleBanner: 'mcpScope_staleBanner',
+  staleText: 'mcpScope_staleText',
   list: 'mcpScope_list',
   card: 'mcpScope_card',
   cardDisabled: 'mcpScope_cardDisabled',
@@ -86,6 +104,13 @@ export const styles = {
   cardName: 'mcpScope_cardName',
   cardMeta: 'mcpScope_cardMeta',
   cardActions: 'mcpScope_cardActions',
+  cardRefresh: 'mcpScope_cardRefresh',
+  cardRefreshBusy: 'mcpScope_cardRefreshBusy',
+  injectionRow: 'mcpScope_injectionRow',
+  injectionIcon: 'mcpScope_injectionIcon',
+  injectionTitle: 'mcpScope_injectionTitle',
+  injectionDetail: 'mcpScope_injectionDetail',
+  injectionTotal: 'mcpScope_injectionTotal',
   tag: 'mcpScope_tag',
   code: 'mcpScope_code',
   badges: 'mcpScope_badges',
@@ -201,7 +226,7 @@ export const css = `
 /* The card-header element receives focus after a save; keep the ring on the
    text rather than on a full-width box. */
 .mcpScope_focusRing:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline: 2px solid var(--dsw-alias-state-business-primary);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -234,7 +259,7 @@ export const css = `
 
 .mcpScope_button:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--dsw-alias-border-l3);
+  box-shadow: 0 0 0 2px var(--dsw-alias-state-business-primary);
 }
 
 /* The form footer's commit/dismiss pair is the full-size figma capsule
@@ -257,12 +282,12 @@ export const css = `
 }
 
 .mcpScope_buttonPrimary {
-  background: var(--dsw-alias-button-primary-fill);
+  background: var(--dsw-alias-button-info-fill);
   color: var(--dsw-alias-label-primary-foreground);
 }
 
 .mcpScope_buttonPrimary:hover:not(:disabled) {
-  background: var(--dsw-alias-button-primary-hover);
+  background: var(--dsw-alias-button-info-hover);
 }
 
 .mcpScope_buttonDanger {
@@ -295,7 +320,7 @@ export const css = `
 }
 
 .mcpScope_linkButton:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline: 2px solid var(--dsw-alias-state-business-primary);
   outline-offset: 1px;
   border-radius: 4px;
 }
@@ -328,7 +353,7 @@ export const css = `
 }
 
 .mcpScope_iconButton:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline: 2px solid var(--dsw-alias-state-business-primary);
   outline-offset: 1px;
 }
 
@@ -378,6 +403,27 @@ export const css = `
   overflow-wrap: anywhere;
 }
 
+/* Stale-while-revalidate: the last good status stays readable behind one
+   compact line. A normal (non-accent) surface — it is informational, not an
+   interactive or selected state. */
+.mcpScope_staleBanner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.mcpScope_staleText {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* ---- server cards ---- */
 
 .mcpScope_list {
@@ -393,15 +439,15 @@ export const css = `
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px 16px 14px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: 16px;
+  padding: 12px 14px;
+  border-radius: 14px;
   background: var(--dsw-alias-bg-layer-3);
-  transition: border-color .16s, background .16s;
+  box-shadow: var(--dsw-elevation-stroke);
+  transition: background .16s;
 }
 
 .mcpScope_card:hover {
-  border-color: var(--dsw-alias-label-dimmed);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 /* A globally disabled server keeps its card readable but visibly out of play. */
@@ -434,6 +480,62 @@ export const css = `
   align-items: center;
   gap: 4px;
   margin-left: auto;
+}
+
+/* The card's own status refresh: a small icon control beside the row actions
+   (the ink/geometry are the icon-button vocabulary, see .mcpScope_iconButton). */
+.mcpScope_cardRefresh {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 11px;
+}
+
+.mcpScope_cardRefreshBusy {
+  animation: mcpScope_spin 900ms linear infinite;
+}
+
+@keyframes mcpScope_spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- injected-tools notice (one line in the conversation lane) ---- */
+
+.mcpScope_injectionRow {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.mcpScope_injectionIcon {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.mcpScope_injectionTitle {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.mcpScope_injectionDetail {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.mcpScope_injectionTotal {
+  color: var(--dsw-alias-label-tertiary);
 }
 
 /* ---- transport tag (ui-primitives Tag, tone="outline") ---- */
@@ -731,11 +833,11 @@ export const css = `
 }
 
 .mcpScope_switchInput:checked + .mcpScope_switch {
-  background: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-state-business-primary);
 }
 
 .mcpScope_switchInput:focus-visible + .mcpScope_switch {
-  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline: 2px solid var(--dsw-alias-state-business-primary);
   outline-offset: 2px;
 }
 
@@ -811,7 +913,7 @@ export const css = `
 
 .mcpScope_input:focus {
   outline: none;
-  border-color: var(--dsw-alias-brand-primary);
+  border-color: var(--dsw-alias-state-business-primary);
 }
 
 .mcpScope_input::placeholder {
@@ -840,7 +942,7 @@ export const css = `
 
 .mcpScope_textarea:focus {
   outline: none;
-  border-color: var(--dsw-alias-brand-primary);
+  border-color: var(--dsw-alias-state-business-primary);
 }
 
 .mcpScope_textarea:disabled {
@@ -920,7 +1022,7 @@ export const css = `
 }
 
 .mcpScope_choiceInput:focus-visible + .mcpScope_choicePill {
-  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline: 2px solid var(--dsw-alias-state-business-primary);
   outline-offset: 2px;
 }
 
@@ -1008,7 +1110,7 @@ export const css = `
 }
 
 .mcpScope_toolHead:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline: 2px solid var(--dsw-alias-state-business-primary);
   outline-offset: 1px;
 }
 
@@ -1246,7 +1348,8 @@ export const css = `
     transition: none;
   }
 
-  .mcpScope_form {
+  .mcpScope_form,
+  .mcpScope_cardRefreshBusy {
     animation: none;
   }
 

@@ -57,11 +57,22 @@ chamber's current anchor CLI, read at run time. Migration recipe:
   keyed `tool.call.toolview` slot (never a wildcard — none exists), at shadowing
   rank 1 (an official row for the same name wins; a same-key/same-priority pair
   throws in the slot core), discovered client-side from the staged session's
-  event window — `request/header` tools AND `tool/call` names, because the window
-  is a bounded tail page while headers are emitted at loop boundaries rather
-  than per turn — under a 256-entry cap. Always degradable: an unregistered,
+  event window — `request/header` tools, `tool/call` names, AND the inner names of
+  `tool/ptc-dispatch-start` / `tool/ptc-dispatch` events (under a `ptc` agent
+  preset the header and the call both say only `run_code`, so the dispatch events
+  are the only place an MCP name appears), because the window is a bounded tail
+  page while headers are emitted at loop boundaries rather than per turn — under
+  a 256-entry cap. Always degradable: an unregistered,
   over-cap or unresolvable name must keep rendering the shipped generic row, and
   nothing in this lane may throw into a session or settings publish path.
+- No custom session events. The host half never appends a private event type:
+  the persisted envelope's `ignorable?: true` marker is the only admission a
+  reader honors for an unknown type, this generation has no write path that can
+  set it, and `validateStoredEvents` then refuses the WHOLE log — including for
+  the harness that wrote it. The injected-tools notice is derived client-side
+  from the harness's own `request/header` events (`src/client/injection.ts`);
+  anything that needs session visibility rides known event types read back in
+  the browser half.
 - Locale discipline: every user-visible string lives in
   `src/client/locales.ts` (en/zh parity is compile-enforced + tested).
 - Secrets never ride the settings document or any API response; credential

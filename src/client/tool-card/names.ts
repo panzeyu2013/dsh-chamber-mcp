@@ -137,6 +137,14 @@ function eventToolNames(event: { readonly type?: unknown; readonly data?: unknow
       // event renders. This is what makes discovery independent of whether the
       // describing header is still inside the paged window.
       return mcpName((event.data as { name?: unknown } | undefined)?.name)
+    case 'tool/ptc-dispatch-start':
+    case 'tool/ptc-dispatch':
+      // Programmatic tool calls (`{ rootCallId, parentCallId, subCallId, name,
+      // arguments, … }`). Under a `ptc` agent preset the model-facing call is
+      // `run_code` and the header lists only that tool, so an MCP tool is
+      // visible to this lane ONLY here — without these two types the transcript
+      // would render every MCP call with the generic row.
+      return mcpName((event.data as { name?: unknown } | undefined)?.name)
     default:
       return []
   }
@@ -144,9 +152,11 @@ function eventToolNames(event: { readonly type?: unknown; readonly data?: unknow
 
 /**
  * Collect every distinct MCP public tool name visible in one session event
- * window, in first-seen order: the tools offered by each `request/header` plus
- * the tools actually called. A window with neither yields nothing (no
- * registration, no custom row).
+ * window, in first-seen order: the tools offered by each `request/header`, the
+ * tools actually called (`tool/call`), and the tools dispatched from inside a
+ * programmatic call (`tool/ptc-dispatch-start` / `tool/ptc-dispatch` — the only
+ * place an MCP name appears under a `ptc` agent preset). A window with none of
+ * them yields nothing (no registration, no custom row).
  *
  * @param entries - `SessionEventWindow.entries` (structural: no package import).
  * @returns distinct `mcp__…` public names.

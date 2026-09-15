@@ -101,7 +101,17 @@ class Harness {
     // The agent object itself is the scope key (production: createScope(loopCtx, agent)).
     const agent = {
       id,
-      session: { header: { cwd, origin: origin ?? undefined } },
+      session: {
+    header: { cwd, origin: origin ?? undefined },
+    // Spy for the session-write contract: the applier must NEVER append. A
+    // third-party event type is required-on-read (the envelope's `ignorable`
+    // marker has no write path in this generation), so one append would make the
+    // stored session unreadable to every reader, the writing harness included.
+    // The notice is derived client-side from `request/header` events instead.
+    append(type: string, data: unknown): void {
+      appended.push({ type, data })
+    },
+  },
     } as unknown as Agent
     const scope = createScope(this.factoryCtx, agent as never)
     ;(agent as unknown as { ctx: Context }).ctx = scope.ctx
@@ -184,6 +194,8 @@ async function mount(): Promise<Harness> {
   return h
 }
 
+const appended: { type: string; data: unknown }[] = []
+
 describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () => {
   it('serves tools only to enabled-workspace agents; the global layer stays empty', async () => {
     const h = await mount()
@@ -222,6 +234,43 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       expect(h.ctx.tools.get(TOOL_B)).toBeUndefined()
       // A scope with no key (unscoped read) must not see them either.
       expect(h.ctx.tools.schemas().some((s) => s.name === TOOL_A)).toBe(false)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('never writes a session event (the notice is derived client-side)', async () => {
+    const h = await mount()
+    try {
+      const wsA = await h.addWorkspace('a')
+      const agentA = h.spawnAgent('agent-a', wsA.path)
+      // Prove the spy is LIVE before trusting an empty result, then clear it:
+      // adoption itself is part of the exercised surface.
+      appended.length = 0
+      ;(agentA.session as unknown as { append(type: string, data: unknown): void }).append('control/probe', {})
+      expect(appended).toHaveLength(1)
+      appended.length = 0
+      h.createAgent(agentA)
+
+      // Every path that used to append an injected-tools notice: adoption, first
+      // sync, idempotent re-push, a second server, a settings flip, an empty
+      // generation, a revoke and plugin teardown.
+      h.push('files', 1, new Map<string, ToolDefinition>([[TOOL_A, def(TOOL_A)], [TOOL_B, def(TOOL_B)]]))
+      h.applier.reconcile()
+      h.push('other', 1, new Map<string, ToolDefinition>([['mcp__other__only', def('mcp__other__only')]]))
+      h.overrides = { [wsA.id]: { files: true } }
+      h.applier.reconcile()
+      h.push('files', 2, new Map())
+      h.applier.revokeServer('other')
+      h.applier.dispose()
+
+      // A third-party session event carries no `ignorable` marker (the write
+      // entry has no option for it in this generation) and would therefore make
+      // the whole stored log REFUSE to load — including for the harness that
+      // wrote it. The applier must stay a pure tool-scope writer, and the
+      // conversation notice is derived from the harness's own `request/header`
+      // events (src/client/injection.ts).
+      expect(appended).toEqual([])
     } finally {
       h.cleanup()
     }

@@ -38,6 +38,13 @@ afterEach(() => {
  * A name that is not declared there resolves to nothing — the declaration is
  * dropped and the surface silently renders unthemed (upstream itself reads
  * `--dsw-alias-label-error`, which nothing declares; this sheet must not).
+ *
+ * The accent entries the blue interactive states use
+ * (`--dsw-alias-state-business-primary`, `--dsw-alias-button-info-fill/-hover`)
+ * and `--dsw-elevation-stroke` were verified against the chamber's vendored
+ * theme bundle (`@deepseek-ai/dsh-client-ui-theme/lib/client.js`, which
+ * declares them over the `--dsw-static-deepseek-*` primitives) and against the
+ * pinned `ui-primitives` sheets, which already read them.
  */
 const THEME_TOKENS = new Set([
   '--dsh-content-font-delta',
@@ -53,11 +60,10 @@ const THEME_TOKENS = new Set([
   '--dsw-alias-border-l2',
   '--dsw-alias-border-l3',
   '--dsw-alias-border-l4',
-  '--dsw-alias-brand-primary',
   '--dsw-alias-button-ghost-active-border',
   '--dsw-alias-button-ghost-active-fill',
-  '--dsw-alias-button-primary-fill',
-  '--dsw-alias-button-primary-hover',
+  '--dsw-alias-button-info-fill',
+  '--dsw-alias-button-info-hover',
   '--dsw-alias-interactive-bg-hover',
   '--dsw-alias-interactive-bg-hover-danger',
   '--dsw-alias-label-caption',
@@ -66,9 +72,14 @@ const THEME_TOKENS = new Set([
   '--dsw-alias-label-primary-foreground',
   '--dsw-alias-label-secondary',
   '--dsw-alias-label-tertiary',
+  '--dsw-alias-state-business-primary',
   '--dsw-alias-state-error-primary',
   '--dsw-alias-state-success-primary',
   '--dsw-alias-state-warn-primary',
+  // The panel card's hairline is drawn by this elevation shorthand (declared by
+  // the theme as `0 0 0 .5px var(--dsw-elevation-stroke-color)`, and already
+  // read by the pinned ui-primitives sheets) — not by a `border`.
+  '--dsw-elevation-stroke',
 ])
 
 /** Innermost `selector { body }` pairs — the same lexical rule the chamber gate uses. */
@@ -139,6 +150,61 @@ describe('mcp-scope stylesheet', () => {
         )
       }
     }
+  })
+
+  it('paints the official panel card recipe: r14 + elevation stroke + 12/14 inset, no border', () => {
+    const card = rules(css).find((rule) => rule.selector === '.mcpScope_card')
+    expect(card, 'no rule for .mcpScope_card').toBeDefined()
+    expect(card!.body).toMatch(/border-radius:\s*14px/)
+    expect(card!.body).toMatch(/box-shadow:\s*var\(--dsw-elevation-stroke\)/)
+    expect(card!.body).toMatch(/padding:\s*12px 14px/)
+    // The hairline is the elevation stroke now — a border would double it.
+    expect(card!.body).not.toMatch(/border\s*:/)
+  })
+
+  it('spends the deepseek accent only on interactive and selected states', () => {
+    const bodyOf = (selector: string): string => {
+      const rule = rules(css).find((candidate) => candidate.selector === selector)
+      if (rule === undefined) throw new Error(`no rule for ${selector}`)
+      return rule.body
+    }
+    const accent = 'var(--dsw-alias-state-business-primary)'
+    // selected + focused controls (the accent states)
+    expect(bodyOf('.mcpScope_switchInput:checked + .mcpScope_switch')).toContain(`background: ${accent}`)
+    expect(bodyOf('.mcpScope_switchInput:focus-visible + .mcpScope_switch')).toContain(accent)
+    expect(bodyOf('.mcpScope_focusRing:focus-visible')).toContain(accent)
+    // primary control fill
+    expect(bodyOf('.mcpScope_buttonPrimary')).toContain('var(--dsw-alias-button-info-fill)')
+    expect(bodyOf('.mcpScope_buttonPrimary:hover:not(:disabled)')).toContain('var(--dsw-alias-button-info-hover)')
+    // normal state (rows, banner, card surface) stays monochrome
+    expect(bodyOf('.mcpScope_wsState')).toContain('var(--dsw-alias-label-tertiary)')
+    expect(bodyOf('.mcpScope_staleBanner')).not.toContain(accent)
+    expect(bodyOf('.mcpScope_card')).not.toContain('state-business-primary')
+    expect(bodyOf('.mcpScope_card')).not.toContain('button-info')
+    // and no rule outside the interactive set paints it
+    const accentRules = rules(css)
+      .filter((rule) => /--dsw-alias-(?:state-business-primary|button-info-(?:fill|hover))/.test(rule.body))
+      .map((rule) => rule.selector)
+      .sort()
+    expect(accentRules).toEqual(
+      [
+        '.mcpScope_button:focus-visible',
+        '.mcpScope_buttonPrimary',
+        '.mcpScope_buttonPrimary:hover:not(:disabled)',
+        '.mcpScope_choiceInput:focus-visible + .mcpScope_choicePill',
+        '.mcpScope_focusRing:focus-visible',
+        '.mcpScope_iconButton:focus-visible',
+        // the injected-tools notice: its glyph is the plugin's identity mark, so
+        // it carries the accent while the row text stays monochrome
+        '.mcpScope_injectionIcon',
+        '.mcpScope_input:focus',
+        '.mcpScope_linkButton:focus-visible',
+        '.mcpScope_switchInput:checked + .mcpScope_switch',
+        '.mcpScope_switchInput:focus-visible + .mcpScope_switch',
+        '.mcpScope_textarea:focus',
+        '.mcpScope_toolHead:focus-visible',
+      ].sort(),
+    )
   })
 
   it('is balanced CSS and exports exactly the classes it styles', () => {
@@ -232,6 +298,7 @@ describe('components consume the style seat', () => {
         writable
         workspaceStatus="ready"
         workspaces={[{ workspaceId: 'ws-1', path: '/w', title: 'work', sessionIds: [] }]}
+        onRefresh={async () => {}}
         onEdit={() => {}}
         onRemove={async () => ({ ok: true })}
         onToggle={async () => ({ ok: true })}
@@ -247,6 +314,7 @@ describe('components consume the style seat', () => {
       styles.tag,
       styles.cardMeta,
       styles.cardActions,
+      styles.cardRefresh,
       styles.button,
       styles.buttonDanger,
       styles.buttonOutline,

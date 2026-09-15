@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { Instance, SMOKE, ROOT, NODE, ANCHOR_CLI, cliVersion, log, packPluginTgz } from './instance.mjs'
 
-const PORT = 32131
+const PORT = Number(process.env.DSH_SMOKE_PORT_M0 ?? 32131)
 const HOME = join(SMOKE, 'm0-home')
 const PKG_META = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
 const PKG_NAME = PKG_META.name

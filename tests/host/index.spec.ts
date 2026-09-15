@@ -47,7 +47,12 @@ describe('plugin entry shape', () => {
       },
     } as never)
     await ctx.plugin(entry)
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    // The route mount runs behind the plugin's nested inject activation: poll
+    // for it instead of sleeping a fixed 30 ms (which flakes red under load and
+    // can pass vacuously on a fast machine).
+    for (let attempt = 0; attempt < 200 && routes.length < 3; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
     expect(installedNs).toBe('mcp-scope')
     expect(routes.sort()).toEqual([
       '/api/mcp-scope.action',

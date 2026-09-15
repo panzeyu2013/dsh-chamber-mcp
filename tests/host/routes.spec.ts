@@ -37,6 +37,20 @@ function fakeManager(patch: Partial<ManagerHandle> = {}): ManagerHandle {
   }
 }
 
+type FakePhase = 'connected' | 'stopped' | 'disabled' | 'unknown'
+
+/** One server entry of the fake runtime view (shape mirrors ServerRuntimeView). */
+const serverView = (
+  name: string,
+  state: FakePhase,
+): { name: string; state: FakePhase; attempts: number; maxAttempts: number; toolCount: number } => ({
+  name,
+  state,
+  attempts: 0,
+  maxAttempts: 10,
+  toolCount: state === 'connected' ? 4 : 0,
+})
+
 async function mount(manager: ManagerHandle): Promise<Map<string, RegisteredRoute>> {
   const routes = new Map<string, RegisteredRoute>()
   const ctx = new Context()
@@ -221,5 +235,180 @@ describe('mcp-scope runtime routes', () => {
       ok: true,
       value: { tools: [{ publicName: 'mcp__x__t', rawName: 't', description: 'd' }], truncated: false, total: 1 },
     })
+  })
+
+  it('serves the full view for an absent or empty server param (backward compatible)', async () => {
+    const seen: (string | undefined)[] = []
+    const routes = await mount(
+      fakeManager({
+        runtimeStatus: (serverName?: string) => {
+          seen.push(serverName)
+          return { v: 1 as const, at: 7, servers: [serverView('github', 'connected')] }
+        },
+      }),
+    )
+    const route = routes.get(MCP_SCOPE_STATUS_PATH)
+    for (const url of [
+      'http://local' + MCP_SCOPE_STATUS_PATH,
+      'http://local' + MCP_SCOPE_STATUS_PATH + '?',
+      'http://local' + MCP_SCOPE_STATUS_PATH + '?server=',
+      'http://local' + MCP_SCOPE_STATUS_PATH + '?other=1',
+    ]) {
+      const response = await get(route, url)
+      expect(response.status).toBe(200)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(await response.json()).toEqual({
+        ok: true,
+        value: { v: 1, at: 7, servers: [serverView('github', 'connected')] },
+      })
+    }
+    // Every full-view read is the untouched no-argument manager call.
+    expect(seen).toEqual([undefined, undefined, undefined, undefined])
+  })
+
+  it('filters the runtime status to exactly one entry with ?server=NAME', async () => {
+    const seen: (string | undefined)[] = []
+    const routes = await mount(
+      fakeManager({
+        runtimeStatus: (serverName?: string) => {
+          seen.push(serverName)
+          const servers = [serverView('github', 'connected'), serverView('linear', 'stopped')]
+          return {
+            v: 1 as const,
+            at: 7,
+            servers: servers.filter((entry) => serverName === undefined || entry.name === serverName),
+          }
+        },
+      }),
+    )
+    const response = await get(
+      routes.get(MCP_SCOPE_STATUS_PATH),
+      'http://local' + MCP_SCOPE_STATUS_PATH + '?server=linear',
+    )
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(await response.json()).toEqual({
+      ok: true,
+      value: { v: 1, at: 7, servers: [serverView('linear', 'stopped')] },
+    })
+    expect(seen).toEqual(['linear'])
+  })
+
+  it('returns a normal ok view with servers: [] for an unknown ?server name', async () => {
+    const routes = await mount(
+      fakeManager({
+        runtimeStatus: (serverName?: string) => ({
+          v: 1 as const,
+          at: 7,
+          servers: [serverView('github', 'connected')].filter(
+            (entry) => serverName === undefined || entry.name === serverName,
+          ),
+        }),
+      }),
+    )
+    const response = await get(
+      routes.get(MCP_SCOPE_STATUS_PATH),
+      'http://local' + MCP_SCOPE_STATUS_PATH + '?server=ghost',
+    )
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(await response.json()).toEqual({ ok: true, value: { v: 1, at: 7, servers: [] } })
+  })
+
+  it('resolves a repeated ?server param to its first value deterministically', async () => {
+    const seen: (string | undefined)[] = []
+    const routes = await mount(
+      fakeManager({
+        runtimeStatus: (serverName?: string) => {
+          seen.push(serverName)
+          return {
+            v: 1 as const,
+            at: 7,
+            servers: [serverView('github', 'connected'), serverView('linear', 'stopped')].filter(
+              (entry) => entry.name === serverName,
+            ),
+          }
+        },
+      }),
+    )
+    const route = routes.get(MCP_SCOPE_STATUS_PATH)
+    const first = await get(route, 'http://local' + MCP_SCOPE_STATUS_PATH + '?server=github&server=linear')
+    expect(first.status).toBe(200)
+    expect(await first.json()).toEqual({
+      ok: true,
+      value: { v: 1, at: 7, servers: [serverView('github', 'connected')] },
+    })
+    const reversed = await get(route, 'http://local' + MCP_SCOPE_STATUS_PATH + '?server=linear&server=github')
+    expect(await reversed.json()).toEqual({
+      ok: true,
+      value: { v: 1, at: 7, servers: [serverView('linear', 'stopped')] },
+    })
+    expect(seen).toEqual(['github', 'linear'])
+  })
+
+  it('rejects an out-of-contract ?server with the shared 400 envelope, never reading the manager', async () => {
+    let reads = 0
+    const routes = await mount(
+      fakeManager({
+        runtimeStatus: () => {
+          reads += 1
+          return { v: 1 as const, at: 7, servers: [] }
+        },
+      }),
+    )
+    const route = routes.get(MCP_SCOPE_STATUS_PATH)
+    for (const server of ['x'.repeat(2_000), 'has space', 'a'.repeat(33), 'x@y', 'a/b']) {
+      const response = await get(
+        route,
+        'http://local' + MCP_SCOPE_STATUS_PATH + '?server=' + encodeURIComponent(server),
+      )
+      expect(response.status).toBe(400)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      const body = (await response.json()) as { ok: boolean; error: { code: string; message: string } }
+      expect(body.ok).toBe(false)
+      expect(body.error.code).toBe('bad-request')
+      expect(body.error.message).toBe('server must be 1-32 chars of [A-Za-z0-9_-]')
+      expect(JSON.stringify(body)).not.toContain(server)
+    }
+    expect(reads).toBe(0)
+    // The status route reuses the action route's exact server-name wording.
+    const actionBad = await post(routes.get(MCP_SCOPE_ACTION_PATH), 'http://local' + MCP_SCOPE_ACTION_PATH, {
+      action: 'connect',
+      server: 'has space',
+    })
+    expect(actionBad.status).toBe(400)
+    expect(await actionBad.json()).toEqual({
+      ok: false,
+      error: { code: 'bad-request', message: 'server must be 1-32 chars of [A-Za-z0-9_-]' },
+    })
+  })
+
+  it('keeps the action and tools routes unchanged while the status filter is in use', async () => {
+    const routes = await mount(
+      fakeManager({
+        runtimeStatus: (serverName?: string) => ({
+          v: 1 as const,
+          at: 7,
+          servers: serverName === undefined ? [serverView('x', 'connected')] : [],
+        }),
+        toolList: (serverName: string) =>
+          serverName === 'x' ? { tools: [], truncated: false, total: 0 } : undefined,
+      }),
+    )
+    const status = await get(
+      routes.get(MCP_SCOPE_STATUS_PATH),
+      'http://local' + MCP_SCOPE_STATUS_PATH + '?server=x',
+    )
+    expect(await status.json()).toEqual({ ok: true, value: { v: 1, at: 7, servers: [] } })
+    const action = await post(routes.get(MCP_SCOPE_ACTION_PATH), 'http://local' + MCP_SCOPE_ACTION_PATH, {
+      action: 'test',
+      server: 'x',
+    })
+    expect(await action.json()).toEqual({ ok: true, value: { ok: true, toolCount: 3 } })
+    const tools = await get(routes.get(MCP_SCOPE_TOOLS_PATH), 'http://local' + MCP_SCOPE_TOOLS_PATH + '?server=x')
+    expect(tools.status).toBe(200)
+    expect(await tools.json()).toEqual({ ok: true, value: { tools: [], truncated: false, total: 0 } })
+    const toolsBad = await get(routes.get(MCP_SCOPE_TOOLS_PATH), 'http://local' + MCP_SCOPE_TOOLS_PATH)
+    expect(toolsBad.status).toBe(400)
   })
 })

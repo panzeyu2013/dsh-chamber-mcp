@@ -28,6 +28,7 @@ import { createAgentApplier, type AgentApplier, type ApplierLogger } from './age
 import { createTransport } from './transport.js'
 import {
   probeServer,
+  safeErrorText,
   startServerSupervisor,
   RECONNECT_DEFAULTS,
   type ProbeResult,
@@ -102,8 +103,14 @@ export interface ManagerHandle {
   reconcile(): void
   /** Stop every supervisor, quiesce the mutation chain, revoke live registrations. */
   dispose(): Promise<void>
-  /** Runtime status of every server the document names (plus tracked orphans). */
-  runtimeStatus(): RuntimeStatusView
+  /**
+   * Runtime status. Called with no argument: every server the document names
+   * (plus tracked orphans) — the unchanged full view. Called with a
+   * `serverName`: the same shape with `servers` filtered to that single
+   * entry; an unknown / untracked name yields `servers: []` (still a normal
+   * view, never an error).
+   */
+  runtimeStatus(serverName?: string): RuntimeStatusView
   /** Committed tool identity of one server, capped for the wire. */
   toolList(serverName: string): ToolListView | undefined
   /** Manual reconnect: clears the manual-stop latch and starts the server. */
@@ -260,8 +267,13 @@ export function createManager(options: ManagerOptions): ManagerHandle {
 
   const enqueue = (work: () => Promise<void>): void => {
     const run = mutations.then(work)
-    // The chain tail must survive a failed mutation; the worker owns reporting.
-    mutations = run.catch(() => {})
+    // The chain tail must survive a failed mutation. A fire-and-forget worker
+    // has no caller to report through, so a rejection is logged here: without
+    // it a failing stopServer/handle.dispose() silently aborts the rest of the
+    // reconcile (later servers never start or stop) with zero diagnostics.
+    mutations = run.catch((error) => {
+      logger.error(`mcp-scope: queued mutation failed: ${safeErrorText(error)}`)
+    })
   }
 
   /** Same chain, but the caller can await this mutation's settlement. */
@@ -291,7 +303,15 @@ export function createManager(options: ManagerOptions): ManagerHandle {
       reconnect: options.reconnect,
       onDefsChanged: (name, syncId, defs) => {
         if (disposed) return
-        applier.pushServerState(name, { epoch, syncId, defs })
+        // The applier reads live settings/workspace sources and registers into
+        // agent scopes; a throw here would escape into the supervisor and be
+        // misread as a connection failure (closing a healthy child every cycle).
+        // The generation is already committed, so contain it and keep serving.
+        try {
+          applier.pushServerState(name, { epoch, syncId, defs })
+        } catch (error) {
+          logger.error(`mcp-scope(${name}): could not push the committed tool generation to live agents: ${safeErrorText(error)}`)
+        }
       },
     })
     tracked.set(serverName, { handle, defFingerprint: fingerprint(server) })
@@ -316,7 +336,7 @@ export function createManager(options: ManagerOptions): ManagerHandle {
    * when the restart was queued; false when one for the same serverName is
    * already pending and this request was absorbed (IMPL-3).
    */
-  function restartServer(serverName: string, next?: ServerDef): boolean {
+  function restartServer(serverName: string): boolean {
     // Coalesce same-tick restart requests per serverName: while a restart is
     // queued, further requests for the same name (e.g. a burst of
     // credential events) are absorbed — the running restart's next connect
@@ -328,21 +348,18 @@ export function createManager(options: ManagerOptions): ManagerHandle {
     enqueue(async () => {
       pendingRestarts.delete(serverName)
       if (disposed) return
-      // Presence is judged LIVE at run time (never from the stale snapshot the
-      // caller captured): a server removed from the document while this
-      // restart was queued must be stopped with revocation, or its tools
-      // would outlive it (the queued removal reconcile finds nothing tracked).
-      // A globally disabled server is "not present" for supervision: a
-      // credential update must not silently bring it back up.
+      // Presence AND the definition are judged LIVE at run time, never from a
+      // snapshot the caller captured: a server removed while this restart was
+      // queued must be stopped with revocation (or its tools would outlive it),
+      // and a definition edited while it waited must not be superseded by the
+      // stale captured command/URL. A globally disabled server is "not present"
+      // for supervision: a credential update must not silently bring it back up.
       const doc = options.getDoc()
-      const present =
-        next !== undefined &&
-        doc.servers.some((s) => s.serverName === next.serverName) &&
-        !isServerDisabled(doc, next.serverName) &&
-        !manualStopped.has(next.serverName)
+      const live = doc.servers.find((s) => s.serverName === serverName)
+      const present = live !== undefined && !isServerDisabled(doc, serverName) && !manualStopped.has(serverName)
       const current = tracked.get(serverName)
       if (current === undefined) {
-        if (present) await startServer(next as ServerDef)
+        if (present) await startServer(live)
         return
       }
       if (!present) {
@@ -351,10 +368,10 @@ export function createManager(options: ManagerOptions): ManagerHandle {
       }
       // Stop first (its defs stay committed and visible — same semantics as a
       // crash: tools keep failing calls until the fresh generation re-syncs),
-      // then start the replacement definition.
+      // then start the CURRENT definition.
       await stopServer(serverName, false)
       if (disposed) return
-      await startServer(next as ServerDef)
+      await startServer(live)
     })
     return true
   }
@@ -404,7 +421,7 @@ export function createManager(options: ManagerOptions): ManagerHandle {
       for (const server of affected) {
         // Log only when the restart is actually queued (a same-tick second
         // event for this server is absorbed by the coalescing gate).
-        if (restartServer(server.serverName, server)) {
+        if (restartServer(server.serverName)) {
           logger.info(`mcp-scope(${server.serverName}): credential ref "${ref}" updated — reconnecting`)
         }
       }
@@ -459,7 +476,7 @@ export function createManager(options: ManagerOptions): ManagerHandle {
   }
 
   const manager: ManagerHandle = {
-    runtimeStatus(): RuntimeStatusView {
+    runtimeStatus(serverName?: string): RuntimeStatusView {
       const doc = options.getDoc()
       const servers: ServerRuntimeView[] = []
       const inDoc = new Set<string>()
@@ -468,10 +485,17 @@ export function createManager(options: ManagerOptions): ManagerHandle {
         servers.push(viewOf(server.serverName, isServerDisabled(doc, server.serverName)))
       }
       // Tracked handles the document no longer names (transient orphan).
-      for (const serverName of tracked.keys()) {
-        if (!inDoc.has(serverName)) servers.push(viewOf(serverName, false))
+      for (const name of tracked.keys()) {
+        if (!inDoc.has(name)) servers.push(viewOf(name, false))
       }
-      return { v: 1, at: Date.now(), servers }
+      // Per-server projection: filter the SAME entries the full view would
+      // carry, so the returned single entry is byte-identical either way. An
+      // unknown / untracked name is an empty list, never an error.
+      return {
+        v: 1,
+        at: Date.now(),
+        servers: serverName === undefined ? servers : servers.filter((server) => server.name === serverName),
+      }
     },
 
     toolList(serverName: string): ToolListView | undefined {

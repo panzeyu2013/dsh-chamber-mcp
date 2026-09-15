@@ -141,7 +141,12 @@ comments, anchors and formatting survive on untouched nodes.
   definition fingerprint that reconcile respects until the definition changes;
   `connect` clears it (and restarts a budget-exhausted handle); `test` probes
   on a throwaway connection unless the live generation is already connected, in
-  which case it reports read-only.
+  which case it reports read-only. The status route also accepts
+  `?server=NAME` and projects that single entry (a name outside
+  `SERVER_NAME_PATTERN` keeps the shared `400 bad-request` envelope, an unknown
+  name answers `ok:true` with an empty list, and an omitted or empty parameter
+  keeps the untouched full view), so one card can refresh itself without
+  re-reading the whole table.
 - **`tools/list` pagination is bounded**: every followed continuation cursor is
   recorded and a repeat rejects the sync as an invalid tool list, and one sync is capped
   at `MAX_SYNC_PAGES` (= `MAX_SYNC_TOOLS` = 2000) requests. Either failure leaves the
@@ -167,10 +172,10 @@ comments, anchors and formatting survive on untouched nodes.
 | `src/routes.ts` | 0.0.3 runtime routes on the Connection carrier: `status` / `action` / `tools` (fixed host codes only; §(d)) |
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index,routes}.spec.ts` | the 8 `tests/host/` suites plus `tests/tools.spec.ts`, all green (the 8 client suites live under `tests/client/`; repo total 250 tests / 17 files) |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index,routes}.spec.ts` | the 8 `tests/host/` suites plus `tests/tools.spec.ts`, all green (10 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`; repo total 411 tests / 24 files) |
 
 Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (250 tests / 17 files).
+`node node_modules/vitest/vitest.mjs run` — both fully green (411 tests / 24 files).
 
 ### (a) API signatures and runtime assumptions
 
@@ -392,6 +397,81 @@ flags and the full config is green at the time of writing.
   identity, probe) and `tests/host/routes.spec.ts` (envelope + status codes);
   `tests/host/manager.spec.ts` grew the latch and runtime-control cases.
 
+### (e) Deployment base path (browser half)
+
+The three runtime routes are same-origin in a plain `dsh web` document, and the
+store used root-relative paths on that assumption. The chamber desktop breaks
+it: the shell serves the UI document from its own origin while the dsh server
+listens on another port and is reachable only through the per-instance proxy
+prefix (`/api/i/<instanceId>`). A root-relative request therefore hit the
+shell's static layer, which answered `404 {"error":"not_found"}`, and every card
+degraded to an unknown state.
+
+Measured on the running chamber build (2026-09-15): the document injects NO base
+global (only `__DSH_BOOT__` / `__DSH_CONNECTION_RECOVERY__`) and the UI runs in
+the shell's own top-level document at `/` — there is no iframe. The prefix is
+therefore derived from the SERVING DOCUMENT: its pathname when it is itself
+served under the proxy, otherwise the newest same-origin resource URL in the
+performance timeline (this plugin's own bundle is fetched from
+`/api/i/<id>/plugins/…`). `window.__DSH_BASE_PATH__` is still honoured first
+when a deployment publishes it.
+
+The store resolves that prefix per call and tries it in order: the FRESHLY
+detected base first (a live page can switch instance, and a remembered base that
+still answers would silently serve the OLD instance), the remembered base, then
+the root origin. Only an **origin-level 404 that carries no
+plugin wire envelope** falls through to the next candidate — a transport error,
+an auth refusal or a business failure would repeat identically, and a POST must
+never be delivered twice. The base that answered is remembered and re-validated
+on every call, so a stale guess self-heals. A value is accepted only when it is
+a rooted same-origin path (absolute URLs would violate the shell's
+`connect-src 'self'`), and an absent/unsafe value leaves the plain topology
+byte-identical (one root-relative request). Version skew is safe in both
+directions: an older host ignores `?server=` and answers the full view, which
+the per-server merge folds correctly.
+
+### (f) Injected-tools notice (conversation lane)
+
+The plugin deliberately injects no PROSE into the model context, so nothing in
+the conversation showed that MCP tools are part of a session's context. The
+notice closes that gap with the platform's own seams rather than a new channel:
+
+- **Why nothing is written**: a private session event is required-on-read. The
+  persisted envelope's `ignorable?: true` marker is the only admission a reader
+  honors for a type it does not know, and this generation has no write path that
+  can set it (`Session.append` composes `type`/`seq`/`time`/`data` plus surface
+  metadata only). `validateStoredEvents` refuses the WHOLE log when any stored
+  event type is outside the build-generated `KNOWN_SESSION_EVENT_TYPES` set
+  unless that envelope says `ignorable: true` — and out-of-repo plugin types are
+  outside that set by construction. A host-appended `mcp-scope/injected` event
+  therefore made the session unreadable to every reader, the writing harness
+  included. Upstream rationale:
+  `.agents/notes/implemented/architecture/2026-08-30-retain-ignorable-external-session-events.md`.
+- **Source**: the harness's own `request/header` events. `header.tools` is the
+  complete model-facing tool array of that request, so the `mcp__…` names in it
+  are exactly the tools this plugin injected for it: the row shows what the model
+  actually received, survives a reload, and costs the session log nothing. Under
+  a `ptc` agent preset the header lists only `run_code` (the MCP names live
+  inside the dispatched program), so that preset shows no notice — the row
+  reports model-facing tool schemas, and that request carries none.
+  `src/client/injection.ts` owns the projection (grouped by
+  longest-configured-prefix ownership, the same rule the tool-row lane uses) and
+  the defensive payload reader.
+- **One row per CHANGED set**: `src/client/injection-row.tsx` registers a
+  `ConversationNodeDefinition` on `ctx.uiConversation.events` — the same seam the
+  Chat lane's own `request-prompt` definition uses for `request/header`. Every
+  header owns a Context whose id is its own seq, so a bounded window can never
+  produce a second `start` for one id; `start` compares its set against the
+  nearest predecessor Context of this kind, so a re-sync with the same tools
+  renders no node while a real change adds one line where it took effect.
+- **Render**: the keyed `conversation.chat.node` seat renders the shipped
+  `McpPlugIcon`, the localized title, per-server counts and the tool total, just
+  before the header event's own position. Registration is behind a nested
+  `ctx.inject(['uiConversation'])`, so a host without that service stays fully
+  functional; malformed payloads render nothing instead of an error.
+- Two client modules join `dsh.client.inject` for this
+  (`dsh-client-ui-chat`, `dsh-client-ui-conversation`).
+
 ## 6. Browser half — section, forms and lane (overview)
 
 - Browser plugin exports `inject = ['slots','locale','remote','remote.credentials','settingsScope','workspaces','sessions']` + `apply(ctx)`; registers locale ns `mcp-scope.settings` ({en, zh}) then
@@ -414,11 +494,12 @@ flags and the full config is green at the time of writing.
   reconciled under a 256-entry cap, rows register at shadowing rank 1 (an
   official row for the same wire name wins, and a same-key/same-priority pair —
   which throws in the slot core — is impossible), and an unregistered/over-cap
-  name keeps the shipped generic row. `dsh.client.inject` gains exactly one
-  module, `@deepseek-ai/dsh-client-ui-tool` (the slot owner, present in every
-  supported generation); the provider of `ctx.sessions` is NOT named there
-  because its module id is generation-dependent (see §11).
-  Detail and evidence: §11.
+  name keeps the shipped generic row. `dsh.client.inject` names the eight
+  modules the browser half actually calls (`dsh-client-locale`,
+  `dsh-client-ui-renderer`, `dsh-client-ui-settings`, `dsh-client-ui-tool`,
+  `dsh-client-ui-chat`, `dsh-client-ui-conversation`, `dsh-api-remotes`,
+  `dsh-api-workspace-controller`); the provider of `ctx.sessions` is NOT named
+  there because its module id is generation-dependent. Detail and evidence: §6.
 - Data: `ctx.settingsScope.bind<Doc>({ namespace:'mcp-scope', decode: decodeDoc })` → snapshot
   {status, value, revision, writable}; workspaces via global `useWorkspaces`.
 - Views: server cards (name, transport, "off in N workspaces", edit, remove, per-workspace
@@ -439,6 +520,19 @@ flags and the full config is green at the time of writing.
   the status dot/label, a localized failure line derived from the host code,
   Connect/Disconnect/Test (Test gated on a runtime view) and a `Tools (N)`
   disclosure whose table refetches per sync generation.
+- **Per-server refresh and stale views.** `refresh({ server })` asks the
+  status route for one entry, merges it and publishes once; a failure rejects
+  to the calling card and leaves the snapshot untouched. A failed FULL refresh
+  keeps the last good views (stale-while-revalidate) and the section shows a
+  compact stale banner with a retry instead of blanking every card. Each card
+  owns a refresh/retry button (busy while in flight, the failed card promotes
+  its Connect action to the accent-filled retry), so one flapping server no
+  longer costs a full-table re-read.
+- **Workspace exceptions instead of a row per workspace.** Workspace rows
+  collapse to the OFF (exception) set; with no exceptions the card shows one
+  summary line, and a manage toggle reveals every row with bulk on/off. This is
+  purely local UI state — no settings write — and the default-on sentence now
+  appears exactly once per locale.
 - The staged form gained the enable switch, `timeoutMs`, an unsaved-changes
   guard on every dismissal path, clipboard paste helpers and a single-server
   JSON import (`src/client/import.ts`, pure and unit-tested); the section adds
@@ -454,13 +548,15 @@ flags and the full config is green at the time of writing.
 | `src/client/server-card.tsx` | one server card: badges, per-workspace on/off rows, remove cascade confirm |
 | `src/client/add-form.tsx` | staged add form (transport switch, stdio/http fields, write-only secret rows, draft validation) |
 | `src/client/import.ts` | 0.0.3 single-server JSON import (`mcpServers` / VS Code `servers` / opencode `mcp`, flat and array shapes → draft; tolerant of a brace-less or torn section (with or without the `mcp` wrapper, dangling separators/closers included), comments, trailing commas, fences and prose; candidates are tried until one resolves a server, so an example snippet above the real config cannot shadow it; discovery is iterative and bounded, so a deeply nested paste cannot throw; `env` takes a map or a `{name,value}` list; secrets land write-only) |
-| `src/client/runtime.ts` | 0.0.3 runtime store over the three host routes: status/action/tool-list reads (`refresh`/`act`/`test`/`tools`); pending-action state lives in the card (§12) |
+| `src/client/runtime.ts` | 0.0.3 runtime store over the three host routes: status/action/tool-list reads (`refresh`/`act`/`test`/`tools`); pending-action state lives in the card (§6) |
 | `src/client/styles.ts` | style seat: the plugin's stylesheet, its class-name map, and the `data-plugin-css` tag mount (§9) |
 | `src/client/workspaces.ts` | minimal workspace-row narrowing (typed items) |
-| `src/client/tool-card/{names,icon,row,view,register}.ts(x)` | transcript lane: MCP tool identity from the session's request header, the keyed tool view, and its registration lifecycle (§11) |
-| `tests/client/controller.spec.ts`, `tests/client/locales.spec.ts`, `tests/client/styles.spec.tsx`, `tests/client/section-render.spec.tsx`, `tests/client/tool-card.spec.tsx`, `tests/client/tool-register.spec.ts`, `tests/client/import.spec.ts`, `tests/client/runtime.spec.ts` | vitest suites (8 files; the repo-wide suite is 17 files) |
+| `src/client/tool-card/{names,icon,row,view,register}.ts(x)` | transcript lane: MCP tool identity from the session's request header, the keyed tool view, and its registration lifecycle (§6, §5(f)) |
+| `tests/client/{controller,locales,styles,section-render,tool-card,tool-register,import,runtime,injection,injection-row}.spec.ts(x)` | browser-half vitest suites (10 files) |
+| `tests/acceptance/{copy,store,host-route,styles,section}.acceptance.spec.ts(x)` | independent acceptance suites (contract C1–C4) driven through the real components/manager |
+| `tests/client/injection.ts` lane contract | see §5(f) for the notice and §6 for the lane |
 
-Also edited (build-gate fixes, see §13): `tsconfig.json` (added `DOM` lib),
+Also edited (build-gate fixes, see `docs/RELEASE.md`): `tsconfig.json` (added `DOM` lib),
 `tsconfig.tests.json` (override the inherited `tests` exclude).
 
 ## 7. Browser half — type and runtime contracts
@@ -605,7 +701,7 @@ indexes plain strings).
   (2) ~~exact settings-conflict remote error shape~~ — **RESOLVED**: the host
   refuses the write and the controller reports it as a conflict, never as
   success (`applyOps` read-back), and the captured error is in the M0 smoke
-  transcript (`.smoke/logs/M0-raw.log`); (3) whether
+  transcript (`.smoke/logs/M0-raw.log`, a gitignored scratch path); (3) whether
   HMR/unload ordering ever races the remote `$on` disposers with
   `controller.start()` (all disposers are fiber-owned through one effect).
 
@@ -663,565 +759,81 @@ Every value below was read from the pinned dsh sheets (vendored upstream
 packages at the authoring machine's
 `/root/projects/dsh-chamber/vendor/harness-packages/@deepseek-ai` — not a path
 inside this repo) and then verified against the
-rendered surface: a Chromium audit of `getComputedStyle` in both themes
-(`.smoke/ui-preview/audit.mjs`) and a source-level property diff
-(`.smoke/ui-preview/align.py`). "same" = byte-equal declaration.
+rendered surface with the local UI-preview harness — a Chromium audit of
+`getComputedStyle` in both themes plus a source-level property diff. That harness
+needs a running chamber build and therefore lives in the gitignored `.smoke/`
+scratch tree: the table records the run, not a committed artifact. "same" =
+byte-equal declaration.
 
 | surface | reference (official) | result |
 |---|---|---|
 | section column | `ui-settings-models` `.section` | same (flex column, gap 12, max-width 720, `label-primary`) |
 | section title | `.title` | same (16px/24px, 500) |
 | header action / row actions | `ui-primitives` Button `.sm` + `outline` (what the official `settings.action` seat renders) | same (h28, r14, 0 10px, 12/18, `border-l3`) |
-| form footer buttons | Button `.md`/`.primary`/`.outline` + `EditorFooter` order | same (h36, r18, 0 14px, 14/22; dismiss left, commit right) |
-| card | `ui-settings-plugins` `.card`/`.header`/`.body` | same fill/radius/hairline (`border-l4`, r16, `bg-layer-3`), 16px inset; `ui-settings-models` `.rowCard` is the 14px variant (not used) |
-| staged form | `ui-settings-models` `.editor`/`.addCard` | same (r12, `bg-module-platform`, 14/16, gap 14) |
-| field label | `ui-settings-plugins` fields `.label` | same size/weight/colour (13px, 500, `label-primary`; line-height written 20px vs `1.5` = 19.5px) |
-| input | fields `.input` (h34, 0 12px, 13px, `border-l4`, r8) + `.input` of `ui-settings-models` (`bg-layer-1`, focus `brand-primary`, placeholder `label-dimmed`) | same; `bg-layer-1` (not the card fill) so the field reads as a box on the module fill in DARK, where `bg-layer-3` == `bg-module-platform` |
-| invalid input / problem text | fields `.inputInvalid` / `.invalid` | same geometry and 12/18; colour `state-error-primary`. Upstream reads `--dsw-alias-label-error`, which NO sheet declares (the declaration is silently dropped) — see §9.4 |
-| transport tag | `ui-primitives` Tag `.tag` + `data-tone='outline'` | same (999px, `corner-shape: round`, 1px 8px, 11/17, `border-l4`, `label-tertiary`) |
-| credential badges | Tag tones `success`/`warning` | same `color-mix` fills and colours |
-| switch | `ui-primitives` Switch `.switch`/`.thumb` | same (36×20, pad 2, r10, `corner-shape: round`, `border-l3` → `brand-primary`, 16px thumb, `translateX(16px)`, 120ms) |
-| transport choice | `ui-primitives` Pill `.pill`/`.active`/`.interactive:hover` | same (including the hover fill on the unselected pill, guarded by `:not(:checked)` so the selected fill survives); horizontal padding 10px (Button `.sm`) instead of 8px, because this pill is a button-like choice holding translated copy |
-| hints / problems / notices | fields `.hint`, `ui-settings-models` `.error`/`.savedNotice` | same (12/18, `label-tertiary` / `state-error-primary` / `state-success-primary`) |
-| card list | `ui-settings-plugins` `.cards` | same gap 10px, no list markers (`ui-settings-models` `.rows` uses 8px) |
-| error banner | chamber `.pluginRisk` vocabulary (danger tint + `state-error` text) | same tokens (no literals) |
-| focus rings | `.button:focus-visible` → `box-shadow: 0 0 0 2px border-l3` (settings sections); `brand-primary` outline on the invisible-behind-paint controls (switch, pill, link, icon) | as referenced |
-
-### 9.4 Checked by a gate, not by eye
-
-`tests/client/styles.spec.tsx` applies the dsh-chamber style rules
-(`dsh-chamber/scripts/dev/verify-style-tokens.mjs`, S1–S7) to this one sheet:
-every `--dsw-*`/`--ds-*` reference must be a token the pinned theme declares
-(S1 — this is what rejects upstream's undeclared `--dsw-alias-label-error`),
-no literal colours and no colour fallback on a token (S4), every neutral
-border 0.5px and no 1px filled divider (S3), every full-round radius paired
-with `corner-shape: round` (S7), no custom properties of our own (S2/S6). It
-also asserts that the class map and the stylesheet cover each other exactly
-(no dead rule, no unstyled class) and that the tag mount is idempotent and
-disposed, then renders the card and the form to check the components actually
-consume the seat.
-
-Rendered evidence (gitignored harness under `.smoke/ui-preview/`, not part of
-the package): `make.mjs` builds a page that mounts the REAL section inside a
-replica of the official settings panel chrome; `shoot.mjs` screenshots it in
-both themes under real interaction (list, staged form, remove confirm, failed
-toggle, save) — plus a hostile-content page (`long.html`, see §9.6) — and
-`audit.mjs` records `getComputedStyle` + geometry for the same five states:
-0 horizontal overflow, 540px content column, card actions flush to the card's
-inner edge, switch thumb at `translateX(16px)` only when on. Run:
-`node .smoke/ui-preview/make.mjs && PAGE=… OUT=… PREFIX=light xvfb-run -a electron .smoke/ui-preview/shoot.mjs`.
-
-`ax.mjs` dumps Chromium's accessibility tree for both states, which is how the
-structural changes were checked where assistive tech reads them: the transport
-choice is still `radiogroup 传输方式` + two named `radio` nodes with correct
-`checked`, each workspace row is a named `switch` with the right state and
-disables with the staged form, the section/form titles stay `h2`/`h3`, and
-every button keeps its name.
-
-`artifact.mjs` drives the **shipped** `lib/client.js` (the wrapped loader
-factory, not the sources) in a real browser through the lifecycle the initial reconnaissance
-could not observe. Result of the recorded run (`.smoke/ui-preview/artifact.json`,
-2026-09-11): the loader registers `dsh-chamber-mcp`; the factory requires
-**only** `react` and `react/jsx-runtime`; `apply` registers four labeled
-effects with `mcp-scope: styles` first, then the dictionary and controller
-wiring, and one `settings.section` registration (`mcp-scope`, order 25, label
-from the namespace); the style effect puts the sheet in the document with the
-right tag attributes — **14,020 B in that run**, against **14,247 B** before the
-§11 transcript lane and **22,710 B** at the current working tree (the §11 lane
-block is 8,463 B); the
-registered component renders the styled markup; and the effect's disposer
-removes the tag.
-
-### 9.5 Contrast, measured (and why nothing was "fixed")
-
-Contrast ratios computed from the rendered colours (WCAG 2.1, relative
-luminance), light / dark:
-
-| pair | light | dark |
-|---|---|---|
-| card name on card | 18.9 | 11.6 |
-| code line (`label-secondary`) | 5.8 | 8.0 |
-| input text on field | 18.9 | 15.0 |
-| field label on the form fill | 17.5 | 11.6 |
-| badge ref (`label-secondary`) on the tone fill | 5.3 | 6.8 |
-| primary button label on fill | 18.9 | 18.1 |
-| quiet copy (`label-tertiary`: card meta, row state, hints) | 3.7 | 5.7 |
-| error notice on the danger tint | 4.2 | 3.1 |
-| success tones (saved note, configured badge) | 2.3 / 2.1 | 5.3 / 4.5 |
-| transport tag (`label-tertiary` on the card) | 3.7 | 5.7 |
-
-The two sub-AA rows are the design system's own values, not this sheet's:
-`label-tertiary` is what every official settings section uses for secondary
-copy (PluginCard `.description`, ModelsSection `.modelCatalogMeta`), and the
-success tone is the `state-success-primary` green that `ModelsSection
-.savedNotice` and the `Tag` `success` tone paint as text. Nothing here
-deviates: a darker green does not exist in the token set, and colour is never
-the only signal (every toned badge also renders its state word, so WCAG 1.4.1
-holds). Recorded so the next reader sees the measurement rather than
-re-deriving it.
-
-### 9.6 Hostile-content hardening (overlong values, tag ownership)
-
-The restyle was exercised against content the schema does not cap, which the
-friendly fixtures do not cover:
-
-1. **Horizontal overflow.** `HEADER_NAME_PATTERN` and
-   `CREDENTIAL_REF_PATTERN` bound the character set, not the length, so a
-   46-character header name plus a 45-character ref made one credential pill
-   718px wide inside a 506px card content box — the card, the section and the
-   settings column all overflowed (measured: section +195px, card +196px). The
-   pill is now capped (`max-width: 100%`), its two code parts absorb the shrink
-   and ellipsize (`min-width: 0` + `text-overflow`), and both carry a `title`
-   with the full value — the same guard upstream applies to overlong badge
-   cells. A working directory is an arbitrary host path, so the quiet-copy rule
-   gained `overflow-wrap: anywhere` as well. Re-measured with the hostile
-   fixture (`?long=1`): 0 overflow on every container.
-2. **Stylesheet ownership.** The first implementation removed the tag
-   on dispose and no-op'd when one already existed. That loses the sheet when
-   two copies of the plugin are mounted in one document and the first to unload
-   is not the one that created the tag (the chamber shell can host several
-   instances per page), and it would keep painting a stale revision when an HMR
-   apply runs before the outgoing fiber's disposer. The tag now carries the
-   live-mount count and is re-filled when its text is no longer current; the
-   last disposer removes it (§9.1, both orderings covered in
-   `tests/client/styles.spec.tsx`).
-3. **Checked, no change needed.** Every JSX attribute, role and behavior
-   survives the restyle (attribute-set diff before/after: only `style=` became
-   `className=`, and the one moved `key` is the card's, now on its `<li>`); no
-   user-controlled value reaches a style or class context (classes are static,
-   there are no inline styles), so the new `title` fallbacks on truncated
-   badges are the only place a server-supplied string meets an attribute and
-   React escapes it; the staged form's footer is Cancel-then-Save as the
-   official `EditorFooter` orders it, with the same `<form>`/Enter-submission
-   semantics as before.
-
-Not changed, and why: the pill/notice tone contrast (§9.5), the 16px card
-inset and 8px internal gap (PluginCard's values; `ui-settings-models` uses
-14px/12px — both official, one had to be chosen), the pill padding of 10px
-(Button `.sm`, not Pill's 8px), and the bundle growth. Measured in a scratch
-build of the pre-transcript-lane tree: `lib/client.js` 75,485 → 93,286 B
-(+17.8 KB), of which 14.4 KB is the stylesheet text and 3.4 KB the class
-plumbing and the invalid-state markup; the sheet stays unminified on purpose (it is read in devtools far
-more often than it is transferred, and a minifying step in `build.mjs` would
-hide the CSS text from the diff (the built file is not tracked).
-
-### 9.7 State matrix, engine scan and harness checks
-
-Beyond the static checks above, these surfaces were exercised directly:
-
-1. **State coverage.** Read-only,
-   empty, in-flight (hanging save/toggle), invalid draft, workspace
-   load/error/empty, English copy and a 252px column were all rendered for the
-   first time. Clean everywhere (0 overflow, controls wrap instead of
-   squeezing), with one real gap: a row-level problem was reported only in the
-   text list, so nothing said *which* input was wrong. Row inputs now carry the
-   official invalid treatment (`inputInvalid` border + `aria-invalid`), mapped
-   precisely — an env-row problem marks its key input, a header problem marks
-   the name input unless it is the ref that is wrong.
-2. **Transport pill hover.** The official interactive
-   Pill answers the pointer; the unselected choice now takes
-   `interactive-bg-hover` while the selected one keeps its fill (the
-   `:not(:checked)` guard is what keeps the newer rule from out-shouting the
-   selected state — verified by hovering both pills in a real browser).
-3. **Engine-level scan (new, `.smoke/ui-preview/scan-engine.mjs`).** Against
-   the preview page (as of the recorded run): 88 scoped rules and 25 referenced
-   tokens — the sheet is now 136 rules / 27 tokens — every token resolving in
-   BOTH themes; no unsupported property and no dropped declaration;
-   `prefers-reduced-motion: reduce` turns the form's mount animation off and
-   every transition to 0s; real Tab presses paint a ring on capsules
-   (`box-shadow`), and on the radio pill / switch track through their sibling
-   rules (`outline: 2px brand-primary`); the focused input shows the official
-   border-colour change instead of a ring. The 24 selectors "dead" in that run
-   are the hover/focus/disabled/placeholder states plus the states the run did
-   not drive (alert, saved note, empty, read-only), each of which is exercised
-   by the comparison table above.
-4. **The tests can fail.** The style spec was mutation-tested: dropping
-   `corner-shape: round`, widening a hairline to 1px, writing a literal colour,
-   referencing the undeclared `label-error`, removing the badge width cap, and
-   breaking the tag's ownership count each turn the suite red (7/7).
 
 ## 10. Settings UI layout reference
 
-Structural reference for the shipped browser half, derived from the components and the style seat — open *Settings → MCP servers* in a live GUI for the rendered result. Wireframe: [`mcp-desktop-layout.svg`](mcp-desktop-layout.svg). Chinese labels below follow the zh locale; the en locale is key-for-key identical (`src/client/locales.ts`).
+Structural reference for the shipped browser half, derived from the components and
+the style seat — open *Settings → MCP servers* in a live GUI for the rendered
+result. Wireframe: [`mcp-desktop-layout.svg`](mcp-desktop-layout.svg); the labels
+below follow the zh locale (the en locale is key-for-key identical,
+`src/client/locales.ts`).
 
 ### Where it lives
 
-The section is registered into the official settings shell through the
-`settings.section` slot (`id: mcp-scope`, `order: 25`). It renders as a single
-**column, max-width 720 px, gap 12 px**, inside the settings panel; it declares
-no child slots and never replaces the shell.
+Registered into the official settings shell through the `settings.section` slot
+(`id: mcp-scope`, `order: 25`): one column, max-width 720 px, gap 12 px, no child
+slots, never replacing the shell.
 
 ```
 ┌──────────────────────── dsh Web GUI / chamber desktop ────────────────────────┐
 │ ┌──────────┐ ┌──────────────────── Settings ────────────────────────────────┐ │
 │ │ sidebar  │ │ ┌───────────┐ ┌──────────── MCP 服务器 ──────────────────┐ │ │
 │ │          │ │ │ settings  │ │  标题      [刷新状态]  [+ 添加服务器]      │ │ │
-│ │ …        │ │ │ nav       │ │  [筛选服务器]                             │ │ │
-│ │ 设置 ◀   │ │ │ 通用      │ │  ── 卡片列表 / 表单（本文档以下部分）──   │ │ │
+│ │ …        │ │ │ nav       │ │  ── 卡片列表（见下）─────────────────────  │ │ │
+│ │ 设置 ◀   │ │ │ 通用      │ │                                           │ │ │
 │ │          │ │ │ 模型      │ │                                           │ │ │
 │ │          │ │ │ 插件      │ │                                           │ │ │
 │ │          │ │ │ MCP 服务器◀│ │                                           │ │ │
-│ └──────────┘ │ └───────────┘ └───────────────────────────────────────────┘ │ │
+│ │          │ │ └───────────┘ └───────────────────────────────────────────┘ │ │
+│ └──────────┘ └──────────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Section surface (list state)
-
-Order of elements exactly as rendered:
+### Card anatomy (top → bottom)
 
 ```
-MCP 服务器                                          [刷新状态]  [+ 添加服务器]
-┌─ 筛选服务器 ────────────────────────────────────────────────────────────┐
-└─────────────────────────────────────────────────────────────────────────┘
-✓ 已添加 github                                                  (role=status)
-
-╔═ 卡片（article, aria-busy） ════════════════════════════════════════════╗
-║ (◉) github   [流式 HTTP]   1 个请求头 · 在 2 个 workspace 中已关闭  [移除][编辑] ║  ← 卡头
-║ ● 已连接 · 12 个工具                        [断开] [测试] [工具 (12)]   ║  ← 状态行
-║ ┌ 工具 ──────────────────────────────────────────────────────────────┐ ║
-║ │ search_issues — Search issues       (code 11px, 悬停显示描述)      │ ║
-║ │ 共 120 个工具，显示前 2 个。                                        │ ║
-║ └────────────────────────────────────────────────────────────────────┘ ║
-║ ┌ 删除确认（按下“移除”后替换操作行） ────────────────────────────────┐ ║
-║ │ 移除服务器？ 服务器将全面停止，配置被删除。        [确认] [取消]      │ ║
-║ └────────────────────────────────────────────────────────────────────┘ ║
-║ npx -y @modelcontextprotocol/server-github        (definition code)     ║
-║ 工作目录：/srv/github                                                   ║
-║ Authorization  AUTH_TOKEN  已配置  [清除]            ← 凭据徽标行       ║
-║ 默认开启，除非在此关闭                                                  ║
-║  ● alpha  (switch) 开启        ● beta  (switch) 关闭                    ║
-║                     [全部开启] [全部关闭]        ← ≥2 个 workspace 时   ║
-║ 新建 workspace 默认开启                                                 ║
-╚═════════════════════════════════════════════════════════════════════════╝
-
-（卡片按文档顺序纵向排列；表单打开时渲染在列表上方，列表保留，删除类操作禁用）
+(◉) github   [流式 HTTP]   [移除] [编辑]                     ← 卡头
+● 已连接 · 12 个工具                    [断开] [测试] [工具 (12)]
+┌ 工具（展开后） ────────────────────────────────────────────┐
+│ search_issues — Search issues                              │
+│ 共 120 个工具，显示前 2 个。                                │
+└────────────────────────────────────────────────────────────┘
+工作区例外：[管理例外（2）]                                  ← 折叠态
+  · alpha (switch) 关闭            ← 只列显式关闭的 workspace
+  · 全部 3 个 workspace 默认开启   ← 无例外时的单行摘要
+npx -y @modelcontextprotocol/server-github                   ← 定义
+工作目录：/srv/github
+Authorization  AUTH_TOKEN  已配置  [清除]                    ← 凭据徽标
 ```
 
-#### Card anatomy — vertical order (top → bottom)
-
-| # | Element | States / notes |
-|---|---|---|
-| 1 | **Card header** `styles.cardHead` | enable switch (writable only) · server name (focus target after save) · transport tag (`stdio` / `Streamable HTTP`) · summary `N 个环境变量键 / N 个请求头 · 已停用 · 在 N 个 workspace 中已关闭` · **移除**(danger) / **编辑**(outline), hidden while the remove confirm is open |
-| 2 | **Status row** `styles.statusRow` | 8 px dot (state tone) · phase label (`已连接/连接中…/重连中…/失败/已停止/已停用/状态未知`) · `N 个工具` (connected) · `第 i/max 次尝试` (reconnecting) · spacer · **断开|连接** (pending 文案) · **测试** · **工具 (N)** — runtime actions only when a runtime view exists; disabled-server actions hidden |
-| 3 | Runtime failure line | localized fixed code (never remote text) |
-| 4 | No-channel hint | `当前部署未提供运行时状态通道。` / `运行时状态刷新失败。` |
-| 5 | Test note (role=status) | transient `测试通过 · N 个工具` |
-| 6 | Runtime action alert (role=alert) | transient, dismissible |
-| 7 | Tools disclosure | loading / empty / rows (`rawName — description`, true total when truncated) |
-| 8 | Save failure alert (role=alert) | transient, dismissible |
-| 9 | Remove confirmation `styles.confirm` | danger-tinted block, Esc cancels, focus returns to 移除 |
-| 10 | Definition details | command line **or** URL in `code`, plus cwd hint |
-| 11 | Credential badges | configured (ok) / unset (warn) / unknown (neutral); **清除** only when configured |
-| 12 | Workspace block `styles.wsBlock` | `默认开启…` hint · lifecycle states (loading / error / no workspaces) · per-workspace switch rows (`开启（默认）` / `已关闭`) · all-on/all-off (≥2 workspaces) · `新建 workspace 默认开启` |
-
-### Add / Edit form (rendered above the list)
-
-```
-┌─ 添加 MCP 服务器 / 编辑 MCP 服务器（form, bg-module-platform, r12） ─────┐
-│ [导入 JSON…]                                                            │
-│ ┌ 导入 MCP 服务器 JSON（role=dialog） ────────────────────────────────┐ │
-│ │ 粘贴 mcpServers / opencode 片段中的单个服务器。                     │ │
-│ │ ┌ textarea（code 字体, min-height 96） ──────────────────────────┐  │ │
-│ │ └────────────────────────────────────────────────────────────────┘  │ │
-│ │ [从剪贴板粘贴]                       [填入表单]                     │ │
-│ └─────────────────────────────────────────────────────────────────────┘ │
-│ 服务器名称 *                                                            │
-│ [__________________________]  工具将以 mcp__<名称>__* 命名              │
-│ (◉) 启用     停用的服务器保留配置，但不会运行，也不会暴露任何工具。      │
-│ 传输方式    ( stdio )  ( Streamable HTTP )        ← Pill 单选           │
-│                                                                         │
-│ ── stdio 分支 ───────────────────────────────────────────────────────  │
-│ 命令 *                                                                  │
-│ [____________________________________]  该命令以此实例用户身份执行     │
-│ [粘贴命令]                                                              │
-│ 参数                                                                    │
-│ [  参数 1  ] [移除]                                                     │
-│ [  参数 2  ] [移除]        [+ 添加参数]                                 │
-│ 工作目录（可选）    [_______________________________]                   │
-│ 环境变量 / 凭据键                                                       │
-│ 这些条目会注入服务器进程的环境。                                        │
-│ [粘贴 .env]                                                             │
-│ [KEY 1] [值（仅写入）] [移除]                                           │
-│ [+ 添加环境变量]                                                        │
-│                                                                         │
-│ ── Streamable HTTP 分支 ─────────────────────────────────────────────  │
-│ URL（端点） *                                                           │
-│ [____________________________________]                                  │
-│ 请求头                                                                  │
-│ 每次 MCP 请求都会带上这些请求头。                                       │
-│ [粘贴请求头]                                                            │
-│ [Authorization] [AUTH_TOKEN] [值（仅写入）] [移除]                      │
-│ [+ 添加请求头]                                                          │
-│                                                                         │
-│ ── 两个分支共用 ─────────────────────────────────────────────────────  │
-│ 超时（毫秒）    [__________]  留空使用默认 60 秒。                       │
-│                                                                         │
-│ ┌ 放弃未保存的修改？（仅 dirty 时，点关闭后出现） ────────────────────┐ │
-│ │                               [放弃修改] [继续编辑]                  │ │
-│ └─────────────────────────────────────────────────────────────────────┘ │
-│                                        [取消]            [保存]         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### Runtime state matrix
-
-| Host phase | Dot | Label (zh) | Actions shown (runtime available) |
-|---|---|---|---|
-| `connected` | 绿 `state-success-primary` | 已连接 + `N 个工具`（仅当 toolCount > 0） | 断开 · 测试 · 工具 (N) |
-| `connecting` | 黄 `state-warn-primary` | 连接中… | 断开 · 测试 |
-| `reconnecting` | 黄 | 重连中… + `第 i/max 次尝试` | 断开 · 测试 |
-| `failed` | 红 `state-error-primary` | 失败 | 连接 · 测试 |
-| `stopped` | 灰 `border-l3` | 已停止 | 连接 · 测试 |
-| `disabled` | 灰 + 卡片 60% 不透明 | 已停用 | （无运行时动作；用卡头开关启用） |
-| `unknown` | 灰 | 状态未知 | 连接 · 测试 |
-| no runtime view | 灰 + hint | 状态未知 + `当前部署未提供运行时状态通道。`/`刷新失败` | （无运行时动作） |
-
-### Metrics (source of truth: `src/client/styles.ts`)
-
-| Part | Metric |
-|---|---|
-| Section column | max-width 720 px · gap 12 px · label-primary text |
-| Title | 16/24 px, weight 500 |
-| Header actions | `Button size=sm` capsule: 28 px high, radius 14 px, 0 10 px padding, 12/18 text |
-| Card | padding 12 16 14 · 0.5 px `border-l4` hairline · radius 16 · `bg-layer-3` · hover border `label-dimmed` · disabled opacity .6 |
-| Status dot | 8 × 8 px · radius 50% · `corner-shape: round` · `state-*-primary` / `border-l3` |
-| Form | padding 14/16 · radius 12 · `bg-module-platform` |
-| Field label | 13/20 px, weight 500 |
-| Input | height 34 px · radius 8 · 0.5 px `border-l4` · `bg-layer-1` · 13/20; focus border `brand-primary`; disabled opacity .5 |
-| Textarea | min-height 96 px · radius 8 · code font 12/18 · resize vertical |
-| Import dialog | padding 10/12 · radius 10 · 0.5 px `border-l4` · `bg-layer-2` |
-| Switch | track 36 × 20, radius 10, thumb 16, `brand-primary` when on |
-| Tag / badge | 999 px pill · 11/17 · `corner-shape: round` |
-| Tool rows | code font 11/17 · raw name label-primary · description label-secondary |
+**管理例外（N）** is local UI state and never writes the settings document:
+expanding it replaces the exception block with every workspace row plus
+**全部开启 / 全部关闭** (only when more than one workspace exists) and the
+"新建 workspace 默认开启" note. A single-workspace dsh reaches its only row the
+same way — a collapsed view would otherwise hide the only off-switch. Cards are
+listed in document order; an open add/edit form renders above the list; removing
+a server replaces the action row with the confirmation until it is confirmed or
+cancelled.
 
 ### Interactions worth knowing
 
-- **Form placement**: Add/Edit renders *above* the card list; the list stays visible and
-  destructive card actions are disabled while a form is open.
-- **Dirty guard**: 取消 (footer), the header `取消`, and unmount-adjacent paths all route
-  through the same close request; a dirty form shows the inline discard confirm.
-- **Search**: filters by server name when no form is open; a zero-match query shows
-  `没有匹配“…”的服务器` instead of the empty-state copy.
-- **Polling**: the runtime snapshot is fetched once per document revision, on
-  `connection/reset`, and every 5 s while the panel is visible; with zero servers
-  the header Refresh is not rendered (the once-per-revision fetch still runs).
-- **Degradation**: no runtime channel (headless host / missing route) hides the runtime
-  actions and shows the unavailable hint; all document features keep working.
-
-### Evidence
-
-- Components: `src/client/section.tsx`, `src/client/server-card.tsx`,
-  `src/client/add-form.tsx`; style seat: `src/client/styles.ts`.
-- Render/flow tests: `tests/client/section-render.spec.tsx`; style-token gate:
-  `tests/client/styles.spec.tsx` (S1–S7 + class map/CSS coverage).
-
-## 11. Transcript lane — the MCP tool row
-
-The browser half also owns how MCP calls render in the conversation. The lane
-was deliberately built to need **no host API and no new runtime dependency**:
-the tool names come from the session's own event stream, and both glyphs are
-inline SVG.
-
-- **Slot contract.** `tool.call.toolview` is a *keyed, session-scoped* slot
-  dispatched by the EXACT wire tool name (`dsh-client-ui-tool`
-  `contract/slots.d.ts`): an unclaimed key falls back to the shipped generic
-  row, and reusing a key replaces that row — so registering is additive for our
-  own names and never touches the shipped ones. Registration goes through
-  `ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name, key,
-  locale: NS, priority: 1 }, View))`, the same seam `dsh-client-ui-skill` uses
-  for `skill` (plus the shadowing rank — see *Declaration choices*); the
-  disposer removes the row on teardown or HMR.
-- **Discovery — two sources, both required.** `ctx.sessions.list` names the
-  staged session (the framework's own doc: *"Staging IS the open signal — the
-  window opens ⟺ the session is on stage"*), whose binding's `eventSource`
-  window supplies MCP names from
-  - every `request/header` — `event.data.header.tools[]` (`.name`), the complete
-    model-facing tool array (`EpochHeader.tools` is an optional direct child of
-    `header`; the client-connection token fixture and
-    `ui-conversation`'s request inspector read the same path), and
-  - every `tool/call` — `event.data.name`, the call the event renders.
-
-  The second source is not redundant. The window is a **bounded, paginated tail
-  page** of the session log (`events.open({ maxMessages: 50 })`, host cut
-  `DEFAULT_MAX_MESSAGES = 50` over `user/message` + `assistant/message`), while
-  `request/header` is appended at loop-instance boundaries and *on change* — not
-  per turn — so a session that ran long enough can render MCP calls whose
-  describing header sits before `entries[0]`. A `tool/call` event is present
-  exactly when its row renders, so registering from the call events the window
-  actually carries makes the lane independent of that pagination; scrolling up
-  (`events.prepend`) re-publishes and heals the boundary call. Names accumulate
-  across sessions so a revisited session keeps its rows. The header remains the
-  only source for tools that were offered but never called — those register
-  ahead of their first call. Without the sessions service the lane stays off and
-  every MCP call keeps the shipped row.
-- **Identity.** A public name cannot be decomposed on the client (it may carry
-  the 12-hex lossy-normalization suffix), so the owning server is matched by the
-  **longest configured `serverName` prefix** from the settings document — which
-  also keeps a serverName containing `_` unambiguous. A tool whose server left
-  the document still renders, without a transport tag.
-- **Cap.** The keyed dispatch projects the slot's WHOLE entry list per rendered
-  row (`entriesOfSlot` is computed on every call — no memo, verified in
-  `dsh-client-ui-slots`), so the lane registers at most
-  `DEFAULT_TOOL_VIEW_LIMIT` (256) names; names past the cap keep the shipped row
-  and the client context's logger (when present) records one warning.
-- **States.** `running` / `ok` / `error` / `stopped` are classified by the same
-  expression the shipped rows use (`!done` ⇒ running, else
-  `block.error?.code === 'interrupted'` ⇒ stopped, else `isError` ⇒ error, else
-  ok — `dsh-client-ui-tool` `ToolRow`). Running carries the shipped sweep
-  (`300px`, `2.6s ease-out infinite`, same gradient and keyframes) plus
-  `aria-busy` and a primary title; settled rows drop the animation and show
-  `time - callTime`. **Terminal states yield the LEADING SLOT to the shipped
-  status dot** — error red, interrupted amber (`--dsw-alias-state-error-primary`
-  / `--dsw-alias-state-warn-primary`, the same anatomy as `StateDot`: a 10px box
-  whose `::after` core is 6px (`inset: 20%`) under a 10%-opacity halo) — so, exactly like upstream, the title keeps its normal colour and
-  only the failure's summary line takes the error token. The row's own metrics
-  and layout mirror the shipped ones (24px row, 16px leading box with 14px
-  glyphs, 6px gap, 13px/24px title, the shipped 2x2 caption-dot separator, a
-  14px/24px ellipsizing summary, then the suffix items) and the disclosure
-  behaviour is `DisclosureRow`'s: `role=button`/`tabIndex`/`aria-expanded` only
-  when expandable, Enter/Space toggle, glyph→chevron on hover, chevron while
-  open. Assistive technology gets the shipped treatment as well: the dot and the
-  sweep are colour-only, so running/error/interrupted rows carry a visually
-  hidden state word (`stateStatus`'s rule — a settled-ok row needs none) and the
-  row's own visible text stays the accessible name. Every number and token here
-  was read out of the shipped stylesheets
-  (`ToolRow`/`DisclosureRow`/`StateDot` module CSS); the pinned generation's
-  theme DECLARES `--dsh-content-font-size-secondary` and
-  `--dsh-content-font-delta` (and the shipped rows read them), so this sheet
-  reads them too with the shipped defaults as fallbacks — the row follows the
-  Settings font-size axis exactly like the shipped rows. (Only the older
-  0.1.1-rc.2 profile theme lacks both, where the fallbacks apply.)
-- **Styling.** Same style seat as the settings section: shipped row metrics
-  (24px row, 16px leading box with 14px glyphs, 6px gap, 13px/24px title,
-  14px/24px summary, 0.5px hairlines), `--dsw-*` alias tokens only (plus the
-  theme's caption token for the separator dot), inline 24-unit glyphs rendered
-  at 14px, and the reduced-motion block disables the sweep. The built bundle
-  still requires only `react` / `react/jsx-runtime`.
-- **Declaration choices (verified against both generations).**
-  - `dsh.client.inject` gains exactly ONE module: `dsh-client-ui-tool`, the
-    package that declares the `tool.call.toolview` slot (its
-    `conversation.chat.node` entry carries the `children` table) and is present
-    in the 0.1.1-rc.2 anchor set *and* the 0.1.5-rc.2 pin. The **provider of
-    `ctx.sessions` is deliberately NOT named**: it is `dsh-client-runtime` in
-    the anchor generation and `dsh-api-session-controller` in 0.1.5 — a module
-    id that only exists in one of them would be a dangling edge in the other.
-    The cordis `inject: ['sessions']` service requirement already orders us
-    after whichever package provides it (both generations expose the service
-    under that exact name: `rootCtx.reflect.provide("sessions", …)` in the
-    anchor's `dsh-client-runtime`, and the same name in the 0.1.5
-    `dsh-api-session-controller`), and the shipped `dsh-client-ui-conversation`
-    injects `"sessions"` the same way.
-  - Rows register at `priority: 1`. Keyed dispatch is exact-key and the
-    shadowing rank is ascending ("lowest renders"), while a same-key pair at
-    the SAME priority **throws** in the slot core — and the throw would hit
-    whichever package registers second. Rank 1 makes a future official row for
-    the same wire name win and makes that collision impossible; the generic
-    fallback is not an entry, so rank 1 still renders today.
-  - Registration is per exact wire name through
-    `ctx.slots.inject(key, () => ctx.slots.register(...))`, the same seam
-    `dsh-client-ui-skill` uses for `skill`. `inject` is a fiber effect
-    (`ctx.effect`) that runs its callback immediately when the declaration
-    exists and later when it lands, so calling it from a session subscription is
-    legal; the callback must not throw (a deferred throw would surface as an
-    uncaught microtask error), which is why the lane installs rows behind a
-    try/catch and leaves a failed name un-registered for a later retry.
-  - The row reuses the existing `mcp-scope.settings` locale namespace instead of
-    declaring a second one: the namespace id is just a dictionary handle, the
-    dictionaries already carry en/zh parity under the compile-enforced key
-    union, and a second namespace would add a second declaration site for no
-    user-visible benefit.
-- **Evidence.** `tests/client/tool-card.spec.tsx` (identity incl. longest-prefix
-  and hashed names, the four states, expand/collapse, keyboard, aria) and
-  `tests/client/tool-register.spec.ts` (diff, cap, teardown, observer
-  lifecycle); `tests/client/styles.spec.tsx` gates the new classes with the rest
-  of the sheet; and `scripts/verify-client-artifact.mjs` (run by
-  `verify:package`) drives the BUILT `lib/client.js` through the loader wrapper
-  in jsdom — it registers one view per discovered name, renders the running and
-  settled forms, and expands on a real click.
-
-## 12. Runtime status + configuration surface (0.0.3)
-
-- **`src/client/runtime.ts`** is a dependency-free store over the three host
-  routes: global `fetch`, injectable for tests, in-flight dedupe, no timer of
-  its own. A failed/unreachable call publishes `unavailable`/`error` and the
-  section keeps rendering the document; the client bundle still requires only
-  react/react/jsx-runtime.
-- **Wiring.** `apply()` composes the runtime store into the same
-  `settings.section` inject face (`useRuntime` hook seat + action callbacks),
-  refreshes on `settings/document-updated` and `connection/reset`, and the
-  section polls every 5 s while visible and once per document revision.
-- **Cards** render the status dot/label, a localized failure line derived from
-  the host's fixed error code (remote text never crosses the wire; unknown codes
-  fall back to the host message), Connect/Disconnect/Test and a `Tools (N)`
-  disclosure; the enable switch starts the header, Test is gated on a runtime
-  view, and runtime action failures surface in the card's own role=alert banner
-  (separate from document save failures).
-- **Form** additions: enable switch, `timeoutMs`, an inline unsaved-changes
-  guard (header and footer route through the same `requestClose`), clipboard
-  paste for command / `.env` / header lines, and a single-server JSON import
-  (`src/client/import.ts`, pure + unit-tested) that reads the paste as JSON or
-  JSONC: brace-less `"mcp": { ... }` sections or bare server maps (stray
-  separators and parent closers included), comments, trailing commas, fences,
-  prose, wrapper keys and arrays included. `section` adds a name filter
-  and per-card all-on/all-off switches (one batched mutation).
-- **Style acceptance (0.0.3 additions).** The status dot uses chamber's dot
-  geometry verbatim (`8px`, `border-radius: 50%`, `corner-shape: round`, state
-  tokens); dialog/textarea/enable-row reuse the sheet's existing field
-  vocabulary. S1 was re-verified authoritatively against the vendored pinned
-  theme (368 declared tokens, 29 referenced, 0 undeclared); S2–S7 and the class
-  map/CSS coverage gate are green.
-- **Retained trade-off.** `draftToServer` trims and drops empty argument rows:
-  the form's blank argument row is a placeholder, so preserving it would add a
-  phantom empty argument to every save. A pasted explicit empty argument is
-  therefore not persisted (retained by design).
-- **Layout reference.** The shipped desktop layout (section surface, card
-  anatomy, add/edit form, state matrix, metrics) is documented in §10
-  (wireframe: `docs/mcp-desktop-layout.svg`).
-- **Evidence.** `tests/client/runtime.spec.ts`, `tests/client/import.spec.ts`,
-  the extended `controller.spec.ts` / `section-render.spec.tsx`, and the
-  style-token gate. `scripts/verify-client-artifact.mjs` gained the `ctx.on`
-  seat now that the client half subscribes to `connection/reset`.
-
-## 13. Build & test tooling
-
-- Deps: runtime `@modelcontextprotocol/sdk@^1.30.0`, `@deepseek-ai/schemastery@^3.18.2`,
-  `zod@^4.4.3`; peers `@deepseek-ai/cordis@^4.0.2` and the eight dsh surfaces
-  `@deepseek-ai/dsh-{tools,settings,credentials,workspace,session,agent,subprocess,timeout}`
-  at `^0.1.2-rc.1 || ^0.1.5-rc.1` (the supported window); devDependencies pin the whole
-  `@deepseek-ai/*` set to **0.1.5-rc.2** — the resolved generation, the compile-time API
-  surface and the CI guard. Client externals = the official frozen platform table
-  (`react`, `react/jsx-runtime`, `react-dom`, `react-dom/client`, cordis,
-  `dsh-client-{store,ui-slots,ui-primitives,ui-dockkit}`), mirrored verbatim in
-  `scripts/build.mjs`.
-- Host half emitted by tsc (NodeNext ESM, explicit `.js` relative imports); client half
-  bundled by esbuild (CJS; externals = official platform table + cordis) wrapped in the
-  `__ModuleLoader__.load({ id, factory })` shape; d.ts emitted for both entries.
-- vitest unit/integration tests: naming; document eval; per-server supervisor (the
-  REAL `@modelcontextprotocol/sdk` client over stdio against the in-repo fixture);
-  `tests/tools.spec.ts` drives the definition/executor paths through a hand-rolled
-  mock client;
-  **agent-scope gating with a real ToolRuntime + real dsh-scope createScope contexts**
-  (registry get(name, scope) assertions); transport/env/credential resolution.
-- M0/M1 live smoke (scratch instance from the gateway anchor CLI — dsh 0.1.5-rc.2
-  measured 2026-09-14 — installing a freshly packed working-tree tarball, DSH_HOME under `.smoke/`, cookie
-  driver): install tgz via `dsh plugin`, namespace
-  describe/mutate, spawn evidence in boot log, workspace/session creation, tool-presence
-  via mock-LLM capture; the bundle and its `settings.section` registration are served in
-  the boot graph (M0). An in-GUI click-through in a real desktop session is still
-  unverified — M1 records that gap; the client half is covered by jsdom render flows and
-  the shipped-bundle preview harness (§9).
-### Build-gate config fixes (and why)
-- `tsconfig.json`: `lib` gained `"DOM"`. The tsconfig previously shipped
-  `lib: ["ES2023"]` only, but the browser half (React JSX handlers,
-  `HTMLInputElement`, `URL`) requires DOM typings; without it every
-  `event.target.value`/`checked` access fails (`EventTarget & HTMLInputElement`
-  has no `value`). Host half doesn't use DOM and is unaffected.
-- `tsconfig.tests.json`: the base config excludes `tests`, which the derived
-  config inherited — `tsc -p tsconfig.tests.json` could never see any test
-  file (TS18003). Added an explicit `"exclude": ["node_modules", "lib"]`
-  override so the mandated `npm run typecheck` gate actually checks the
-  suites.
-
-## 14. Acceptance
-
-Acceptance matrix: docs/acceptance.md (R1–R4, E1–E8, C1–C6).
+- **刷新状态** refreshes the whole table against the three host routes; a failed
+  refresh keeps the last good view (stale-while-revalidate) and names the HTTP
+  status instead of blanking the panel.
+- **Connect / Disconnect** are real stop/start actions (a manual stop latches
+  until the definition changes or Connect is pressed); **Test** probes on a
+  throwaway connection unless the live generation is already connected.
+- Save order: dirty credential values first (`credentials.set`), then ONE
+  revision-fenced `mutate` of the settings document; a conflict re-reads and
+  reports instead of retrying blindly.

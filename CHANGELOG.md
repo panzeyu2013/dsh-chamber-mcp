@@ -15,6 +15,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The injected-tools notice poisoned the session log.** The applier appended a
+  private `mcp-scope/injected` / `mcp-scope/injected-updated` session event
+  through `agent.session.append`. A third-party event is required-on-read: the
+  envelope's `ignorable?: true` marker is the only way a reader may skip a type
+  it does not know, and this generation has no write path that can set it
+  (`Session.append` composes `type`/`seq`/`time`/`data` plus surface metadata
+  only, and `KNOWN_SESSION_EVENT_TYPES` is generated from the harness's own
+  `SessionEventMap`, so out-of-repo types are never in it). `validateStoredEvents`
+  therefore refused the whole stored session — for every reader, the harness that
+  wrote the event included, so affected sessions could not be opened at all. The
+  applier is now a pure tool-scope writer (`tests/host/agents.spec.ts` asserts
+  that every push, reconcile and revoke path appends nothing) and the notice is
+  derived client-side from `request/header` events.
+- **Reconnect budget is no longer laundered by a successful connect.**
+  `connectGeneration` reset the consecutive-failure counter on every connect, so
+  a server that connected and immediately crashed was respawned forever at the
+  initial delay: `maxAttempts` could never be reached, the tools were never
+  unregistered and the card never left `connected`. Only a connection that stays
+  up past the stability window (`maxDelayMs`) ends the outage now — upstream
+  `dsh-mcp-client` pins that exact case ("a crash loop with briefly successful
+  connects still exhausts the cap") — while the wire counter still reads 0 while
+  connected. `tests/host/server.spec.ts` covers both directions.
+- **Host-side failures can no longer take the process down or masquerade as
+  connection failures.** The reconnect give-up continuation pushed the empty
+  generation with no rejection handler, so a throwing applier path became an
+  UNHANDLED rejection (Node exits 1). The applier push and the
+  `agent/created`–adoption path are now contained with a logged error (a
+  synchronous listener throw otherwise vetoes the agent's own publication), and a
+  fire-and-forget mutation failure is logged instead of silently aborting the
+  rest of a reconcile.
+- **A queued credential restart starts the live definition.** The restart used
+  the definition captured by the caller, so a settings edit racing a credential
+  update could spawn the superseded command/URL until the reconcile behind it
+  corrected it; the queued work now re-resolves the server from the live
+  document.
+- **Client devDependencies pinned exactly.** `dsh-client-ui-chat` and
+  `dsh-client-ui-conversation` were the only devDeps with a caret range, against
+  the repo's "one resolved generation" rule; both now pin `0.1.5-rc.2` like the
+  rest of the dev tree.
+- **Stale compiled artifacts can no longer ship, and the pack gate now notices.**
+  `lib/` is the whole publish surface (`files: ["lib"]`) while every emitter only
+  ADDS files, so a deleted or renamed source kept shipping its last compiled
+  copy — the removed `mcp-scope/injected` contract stayed in the tarball after
+  its source was deleted. `scripts/build.mjs` now wipes `lib/` before emitting,
+  and `verify:package` fails when a packed module or declaration has no current
+  `src/` counterpart (packed entries: 43 → 42).
+- **Release dry-run gate now actually gates.** `.github/workflows/release.yml`
+  compared the typed boolean input `dry_run` against the string `'true'`, which
+  is never equal, so a manual dispatch with `dry_run: true` still ran the
+  stale-draft deletion and the GitHub Release step — a "dry" run could publish.
+  Both guards now read `!inputs.dry_run`.
 - **Import parser tolerance (client half).** `parseMcpSnippet`
   (`src/client/import.ts`) now reads what real config files produce instead of
   only whole, strict JSON documents: a bare `"mcp": { ... }` section or a bare
@@ -59,6 +110,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns `empty` instead of throwing on non-string input. Extraction
   strategies are skipped above 4 MB and the wrapper walks use a head index plus
   a node budget, bounding the work a paste can trigger.
+- **Deployment base path (client half).** The runtime panel's three requests
+  (`src/client/runtime.ts`) were built as root-relative paths. That is correct
+  for a plain `dsh web` document, but the chamber desktop serves the UI from the
+  app shell's own origin while the dsh server listens on a different port and is
+  reachable only through the per-instance proxy prefix (`/api/i/<instanceId>`):
+  the shell's static layer answered the root-relative request with
+  `404 {"error":"not_found"}`, so the panel reported a failed refresh and every
+  card showed an unknown state. The store now resolves that prefix (same-origin
+  path only — absolute or unsafe values are refused), remembers the base that
+  answered, and falls back to the root origin when a candidate is not mounted;
+  a plain `dsh web` document is untouched (no prefix, one request). Only an
+  origin-level 404 that carries no plugin wire envelope triggers the fallback,
+  so a POST is never delivered twice and a business failure is never retried.
+  Runtime failures now name the HTTP status in the diagnostic text.
+
+### Added
+
+- **Workspace exceptions panel (browser half).** A card now lists only the
+  EXCEPTIONS — the workspaces explicitly switched off — or one "all N workspaces
+  are on by default" line when there are none, and a **Manage exceptions (N)**
+  toggle reveals every row plus **All on / All off** (once more than one
+  workspace exists) and the default-on note. The toggle is local UI state and
+  never writes the settings document, and a single-workspace dsh reaches its only
+  row through it instead of having it hidden.
+- **Per-server runtime refresh.** `GET /api/mcp-scope.status?server=NAME`
+  projects a single server (an invalid name keeps the existing `400`
+  `bad-request` envelope, an unknown name answers `ok:true` with an empty list,
+  and omitting the parameter keeps the full view), and the browser store's
+  `refresh({ server })` merges that one entry and rejects on failure without
+  touching the snapshot. A failed full refresh now retains the last good views
+  (stale-while-revalidate) instead of blanking the panel.
+
+- **MCP tool rows under a `ptc` agent preset (client half).** The transcript
+  lane discovered MCP names from `request/header` tools and `tool/call` names
+  only. Under a `ptc` agent preset both carry just `run_code` — the model
+  sees the MCP tools as programmatic bindings, and an MCP call is dispatched
+  from inside the program — so the plugin's row was never registered and every
+  MCP call rendered with the generic row. The window scan now also reads the
+  inner names of `tool/ptc-dispatch-start` / `tool/ptc-dispatch` events, which
+  is where those names actually appear. (The model context itself was never
+  missing them: the session's system message carries all `mcp__…` bindings.)
+
+- **Injected-tools notice in the conversation (one row per changed set).** A
+  session now shows that MCP tools are part of its context without the user
+  having to call one first — `MCP tools injected · zotero (43) · email (18)`
+  plus the tool total, with the shipped plug glyph. The row is DERIVED from the
+  harness's own `request/header` events (`header.tools` is the complete
+  model-facing tool array of that request), so it reports exactly what that
+  request carried, survives a reload and writes nothing into the session (under
+  a `ptc` agent preset the header lists only `run_code`, so no notice appears
+  there).
+  `src/client/injection-row.tsx` rides the official seams the shipped lanes
+  use — `ctx.uiConversation.events.register` (the seam the Chat lane's own
+  `request-prompt` definition uses for the same event type) and the keyed
+  `conversation.chat.node` seat — with one Context per header, so an unchanged
+  set renders no row and a real change adds one line where it took effect. Both
+  are optional and additive: a deployment without the conversation service
+  keeps working and simply shows no row (a malformed payload renders nothing).
+
+### Changed
+
+- **Verification hardening (release gates).** `verify:package` now builds
+  explicitly before packing (some pack paths skip the `prepack` hook, which
+  shipped whatever `lib/` happened to hold and made the determinism check
+  compare a stale build against a fresh one), compares the WHOLE built tree
+  across two builds instead of two bundles, fails on packed artifacts that have
+  no current `src/` counterpart, and enforces package.json ↔ package-lock root
+  version identity. `verify:workflows` now requires the refuse-republish step's
+  real body (`gh release view` / `gh release delete` / `exit 1`), the
+  dry-run skip on both release-mutation steps, a `# vX.Y.Z` comment on every
+  SHA pin, and both step names for the gate-before-mutation ordering.
+  `verify-client-artifact` drives the injected-tools notice lane in the packed
+  bundle (definition, match rule, keyed view and a rendered row), so a dropped
+  registration fails the release gate instead of passing silently.
 
 ## [0.0.3] - 2026-09-15
 

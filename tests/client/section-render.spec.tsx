@@ -13,11 +13,17 @@ import { McpScopeSection, type McpScopeSectionProps } from '../../src/client/sec
 // pull the slot/locale module augmentations (register-site decls) into this program
 import type {} from '../../src/client/index.ts'
 import { en, zh, countKey, type SettingsKey } from '../../src/client/locales.ts'
+import { styles } from '../../src/client/styles.ts'
 import { EMPTY_DRAFT, evaluateDraft } from '../../src/client/add-form.tsx'
 import type { CredentialInfo } from '@deepseek-ai/dsh-credentials/types'
 import type { McpScopeDoc, WorkspaceOverrides } from '../../src/shared/model.ts'
 import type { SaveOutcome, ServerSaveInput } from '../../src/client/controller.ts'
-import type { RuntimeSnapshot, RuntimeTestResult, RuntimeToolEntry } from '../../src/client/runtime.ts'
+import type {
+  RuntimeSnapshot,
+  RuntimeTestResult,
+  RuntimeToolEntry,
+  ServerRuntimeView,
+} from '../../src/client/runtime.ts'
 
 function t(key: SettingsKey, params?: Record<string, string | number>): string {
   return en[key].replace(/\{(\w+)\}/g, (_, name) => String(params?.[name] ?? ''))
@@ -48,6 +54,7 @@ interface Actions {
   disconnectServer?(serverName: string): Promise<unknown>
   testServer?(serverName: string): Promise<RuntimeTestResult>
   loadTools?(serverName: string): Promise<{ tools: RuntimeToolEntry[]; truncated: boolean; total: number }>
+  refreshRuntime?(options?: { silent?: boolean; server?: string }): Promise<void>
 }
 
 const OK = async () => ({ ok: true as const })
@@ -94,7 +101,7 @@ function propsOf(live: LiveState, actions: Actions): McpScopeSectionProps {
     unsetCredential: actions.unsetCredential ?? OK,
     useRuntime: ((selector: (s: unknown) => unknown) =>
       selector(live.runtime ?? EMPTY_RUNTIME)) as unknown as McpScopeSectionProps['useRuntime'],
-    refreshRuntime: NOOP_REFRESH,
+    refreshRuntime: actions.refreshRuntime ?? NOOP_REFRESH,
     connectServer: actions.connectServer ?? NOOP,
     disconnectServer: actions.disconnectServer ?? NOOP,
     testServer: actions.testServer ?? (async () => ({ ok: true })),
@@ -235,12 +242,14 @@ describe('McpScopeSection render', () => {
     // header names ride the badge rows
     expect(text).toContain('Authorization')
     expect(text).toContain('AUTH')
-    // workspace rows
-    expect(text).toContain('alpha')
+    // workspace rows: exceptions only — ws-b is OFF for fixture, so ONLY that
+    // row renders; ws-a (on by default) stays collapsed away.
     expect(text).toContain('beta')
-    expect(text).toContain(en['server.newWorkspaceDefault'])
-    expect(text).toContain(en['row.on'])
+    expect(text).not.toContain('alpha')
     expect(text).toContain(en['row.off'])
+    expect(text).toContain(t('row.manage', { count: 1 }))
+    // the all-on card summarizes instead of listing every workspace
+    expect(text).toContain(t(countKey('row.allOnDefault', 2), { count: 2 }))
     // no describe has run: badges are neutral 'unknown', not 'Not configured'
     expect(text).toContain(en['secret.unknown'])
     expect(text).not.toContain(en['secret.unset'])
@@ -294,7 +303,8 @@ describe('McpScopeSection render', () => {
   it('shows a per-card role="alert" banner when a card action fails (not a section-top notice)', async () => {
     const doc: McpScopeDoc = {
       servers: [stdioServer('a', ['TOK'])],
-      overrides: {},
+      // ws-1 is an explicit OFF exception, i.e. a visible row by default
+      overrides: overridesOf({ 'ws-1': ['a'] }),
     }
     const mounted = mountSection(
       doc,
@@ -355,6 +365,9 @@ describe('McpScopeSection render', () => {
         ],
       },
     )
+    await flush()
+    // The bulk switches live in the expanded (all-rows) view.
+    buttonByText(mounted.host, t('row.manage', { count: 0 }))!.click()
     await flush()
     buttonByText(mounted.host, en['row.allOff'])!.click()
     await flush()
@@ -714,6 +727,234 @@ describe('McpScopeSection render', () => {
     expect(mounted.text()).toContain('npx2')
     expect(mounted.live.doc.servers[0]?.serverName).toBe('alpha2')
     expect(document.activeElement?.id).toBe('mcp-scope-card-alpha2')
+  })
+
+  it("refreshes only the clicked card's server and reports a rejection inline", async () => {
+    const calls: ({ silent?: boolean; server?: string } | undefined)[] = []
+    let fail = false
+    let release = (): void => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const mounted = mountSection(
+      { servers: [stdioServer('a'), httpServer('b', 'http://x/mcp', [])], overrides: {} },
+      {
+        refreshRuntime: async (options) => {
+          calls.push(options)
+          if (options?.server === 'a') await gate
+          if (fail) throw new Error('runtime route is not mounted at this origin (HTTP 404)')
+        },
+      },
+    )
+    await flush()
+    const refreshButton = (name: string): HTMLButtonElement => {
+      const button = mounted.host.querySelector<HTMLButtonElement>(
+        `button[aria-label="${en['runtime.refresh']}: ${name}"]`,
+      )
+      if (button === null) throw new Error(`missing refresh button for ${name}`)
+      return button
+    }
+    // Every card carries its own refresh affordance; the mount pass was full.
+    expect(refreshButton('a')).toBeDefined()
+    expect(refreshButton('b')).toBeDefined()
+    expect(calls.filter((options) => options?.server !== undefined)).toEqual([])
+
+    refreshButton('a').click()
+    await flush()
+    // Exactly one request, scoped to the clicked server (never the whole table).
+    expect(calls.filter((options) => options?.server !== undefined)).toEqual([{ server: 'a', silent: true }])
+    expect(refreshButton('a').disabled).toBe(true)
+    expect(refreshButton('a').className).toContain(styles.cardRefreshBusy)
+    release()
+    await flush()
+    expect(refreshButton('a').disabled).toBe(false)
+    expect(refreshButton('a').className).not.toContain(styles.cardRefreshBusy)
+
+    // A rejection is owned by the card: localized line, host detail in title.
+    fail = true
+    refreshButton('a').click()
+    await flush()
+    const line = Array.from(mounted.host.querySelectorAll<HTMLParagraphElement>('p[title]')).find(
+      (node) => node.textContent === en['runtime.error'],
+    )
+    expect(line?.className).toContain(styles.statusErrorText)
+    expect(line?.getAttribute('title')).toContain('runtime route is not mounted')
+  })
+
+  it("marks a failed card's reconnect as the primary action and freezes refresh while reconnecting", async () => {
+    const doc: McpScopeDoc = { servers: [stdioServer('a')], overrides: {} }
+    const view = (state: 'failed' | 'reconnecting'): ServerRuntimeView => ({
+      name: 'a',
+      state,
+      attempts: 2,
+      maxAttempts: 5,
+      toolCount: 0,
+    })
+    const failed = mountSection(doc, {}, { runtime: { phase: 'ready', servers: { a: view('failed') } } })
+    await flush()
+    expect(buttonByText(failed.host, en['action.connect'])!.className).toContain(styles.buttonPrimary)
+    failed.unmount()
+
+    const reconnecting = mountSection(doc, {}, {
+      runtime: { phase: 'ready', servers: { a: view('reconnecting') } },
+    })
+    await flush()
+    const refresh = reconnecting.host.querySelector<HTMLButtonElement>(
+      `button[aria-label="${en['runtime.refresh']}: a"]`,
+    )
+    expect(refresh!.disabled).toBe(true)
+    expect(reconnecting.text()).toContain(t('status.retry', { attempt: 2, max: 5 }))
+  })
+
+  it('keeps the stale views behind one banner and retries the full refresh from it', async () => {
+    const calls: ({ silent?: boolean; server?: string } | undefined)[] = []
+    const doc: McpScopeDoc = { servers: [stdioServer('a')], overrides: {} }
+    const staleView: ServerRuntimeView = {
+      name: 'a',
+      state: 'connected',
+      attempts: 0,
+      maxAttempts: 5,
+      toolCount: 3,
+    }
+    const mounted = mountSection(
+      doc,
+      {
+        refreshRuntime: async (options) => {
+          calls.push(options)
+        },
+      },
+      { runtime: { phase: 'error', at: 9, servers: { a: staleView }, error: 'polls are failing' } },
+    )
+    await flush()
+    expect(mounted.text()).toContain(en['runtime.stale'])
+    expect(mounted.text()).toContain(en['status.connected']) // the kept view still renders
+    expect(mounted.text()).toContain(t('status.tools', { count: 3 }))
+    buttonByText(mounted.host, en['action.retry'])!.click()
+    await flush()
+    // The banner retries the WHOLE snapshot, not one card's view.
+    expect(calls.filter((options) => options?.server === undefined)).toHaveLength(2)
+    expect(calls.filter((options) => options?.server !== undefined)).toHaveLength(0)
+    mounted.unmount()
+
+    // Without a kept view there is nothing stale: no banner, today's message.
+    const empty = mountSection(doc, {}, {
+      runtime: { phase: 'unavailable', servers: {}, error: 'no runtime route' },
+    })
+    await flush()
+    expect(empty.text()).not.toContain(en['runtime.stale'])
+    expect(empty.text()).toContain(en['runtime.unavailable'])
+  })
+
+  it('collapses workspace rows to exceptions, summarizes all-on and never writes on expansion', async () => {
+    const writes: string[] = []
+    const mounted = mountSection(
+      { servers: [stdioServer('a')], overrides: overridesOf({ 'ws-1': ['a'] }) },
+      {
+        toggleWorkspace: async () => {
+          writes.push('toggle')
+          return { ok: true }
+        },
+        toggleWorkspaces: async () => {
+          writes.push('toggleAll')
+          return { ok: true }
+        },
+        setServerEnabled: async () => {
+          writes.push('enabled')
+          return { ok: true }
+        },
+      },
+      {
+        wsItems: [
+          { workspaceId: 'ws-1', title: 'one' },
+          { workspaceId: 'ws-2', title: 'two' },
+        ],
+      },
+    )
+    await flush()
+    // Default: the OFF exception only; the on-by-default row is collapsed away.
+    expect(mounted.text()).toContain('one')
+    expect(mounted.text()).not.toContain('two')
+    expect(mounted.text()).not.toContain(en['server.defaultOn'])
+    buttonByText(mounted.host, t('row.manage', { count: 1 }))!.click()
+    await flush()
+    // Expanded: ALL rows + the bulk switches + the one default-on sentence.
+    expect(mounted.text()).toContain('two')
+    expect(mounted.text()).toContain(en['server.defaultOn'])
+    expect(mounted.text()).toContain(en['row.on'])
+    expect(buttonByText(mounted.host, en['row.allOn'])).toBeDefined()
+    expect(buttonByText(mounted.host, en['row.allOff'])).toBeDefined()
+    expect(writes).toEqual([]) // expansion is local UI state, not a settings write
+    buttonByText(mounted.host, en['row.manageHide'])!.click()
+    await flush()
+    expect(mounted.text()).not.toContain('two')
+    expect(writes).toEqual([])
+    mounted.unmount()
+
+    // Zero exceptions: exactly ONE summary line and no rows at all.
+    const allOn = mountSection(
+      { servers: [stdioServer('a')], overrides: {} },
+      {},
+      {
+        wsItems: [
+          { workspaceId: 'ws-1', title: 'one' },
+          { workspaceId: 'ws-2', title: 'two' },
+        ],
+      },
+    )
+    await flush()
+    const summary = t(countKey('row.allOnDefault', 2), { count: 2 })
+    expect(allOn.text().split(summary).length - 1).toBe(1)
+    expect(allOn.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(0)
+    expect(allOn.text()).not.toContain('one')
+    expect(allOn.text()).not.toContain('two')
+  })
+
+  it('orders the card actions edit-then-remove and outlines the remove button', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {},
+      { wsItems: [{ workspaceId: 'ws-1', title: 'work' }] },
+    )
+    await flush()
+    const actionTexts = Array.from(mounted.host.querySelectorAll('header button')).map((button) =>
+      button.textContent?.trim(),
+    )
+    const editIndex = actionTexts.indexOf(en['server.edit'])
+    const removeIndex = actionTexts.indexOf(en['server.remove'])
+    expect(editIndex).toBeGreaterThanOrEqual(0)
+    expect(removeIndex).toBeGreaterThan(editIndex)
+    const remove = buttonByText(mounted.host, en['server.remove'])
+    expect(remove?.className).toContain(styles.buttonOutline)
+    expect(remove?.className).toContain(styles.buttonDanger)
+  })
+
+  it('keeps the workspace exception control reachable with a SINGLE workspace', async () => {
+    const writes: { workspaceId: string; off: boolean }[] = []
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {
+        toggleWorkspace: async (workspaceId, _serverName, off) => {
+          writes.push({ workspaceId, off })
+          return { ok: true }
+        },
+      },
+      { wsItems: [{ workspaceId: 'ws-1', title: 'only-one' }] },
+    )
+    await flush()
+    // Collapsed: the single ON workspace is summarized, not listed.
+    expect(mounted.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(0)
+    const toggle = buttonByText(mounted.host, t('row.manage', { count: 0 }))
+    expect(toggle).toBeDefined()
+    toggle?.click()
+    await flush()
+    const rows = mounted.host.querySelectorAll('.' + styles.wsRow)
+    expect(rows).toHaveLength(1)
+    expect(mounted.text()).toContain('only-one')
+    const input = rows[0]?.querySelector('input')
+    expect(input).not.toBeNull()
+    input?.click()
+    await flush()
+    expect(writes).toEqual([{ workspaceId: 'ws-1', off: true }])
   })
 
   it('zh dictionary mirrors the en key set', () => {

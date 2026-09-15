@@ -52,11 +52,10 @@ export const en = {
   'server.removeConfirmTitle': 'Remove server?',
   'server.removeConfirmBody': 'The server stops everywhere and its configuration is deleted. Credentials that no remaining server references are cleared as well.',
   'server.defaultOn': 'On by default unless turned off here',
-  'server.newWorkspaceDefault': 'New workspaces default to on',
   'server.cwd': 'Working directory: {path}',
 
   // per-workspace rows
-  'row.on': 'On (default)',
+  'row.on': 'On',
   'row.off': 'Off',
 
   // credential badges / secret controls (tri-state: configured / unset / unknown)
@@ -138,6 +137,10 @@ export const en = {
   'search.none': 'No server matches "{query}"',
   'row.allOn': 'All on',
   'row.allOff': 'All off',
+  'row.manage': 'Manage exceptions ({count})',
+  'row.manageHide': 'Hide workspaces',
+  'row.allOnDefault.one': '{count} workspace is on by default',
+  'row.allOnDefault.other': 'All {count} workspaces are on by default',
   'server.enableToggle': 'Enable server',
   'server.disabledTag': 'Disabled',
 
@@ -158,8 +161,10 @@ export const en = {
   'action.test': 'Test',
   'action.testing': 'Testing…',
   'action.testOk': 'Test OK · {count} tools',
+  'action.retry': 'Retry',
   'runtime.unavailable': 'Runtime status is unavailable here (no connection route in this deployment).',
   'runtime.error': 'Runtime status could not be refreshed.',
+  'runtime.stale': 'Status may be out of date',
   'runtime.error.connection-failed': 'Connection failed',
   'runtime.error.gave-up': 'Reconnect attempts exhausted',
   'runtime.error.reconnect-disabled': 'Connection lost and reconnect is disabled',
@@ -195,6 +200,11 @@ export const en = {
   'error.saveFailed': 'Save failed, please retry.',
   'error.secretWriteFailed': 'Failed to write credential(s): {refs}',
   'error.unexpected': 'Unexpected error.',
+
+  // injected-tools notice (conversation lane)
+  'injection.title': 'MCP tools injected',
+  'injection.entry': '{name} ({count})',
+  'injection.total': '{count} tools in context',
 } as const satisfies Record<string, string>
 
 export type SettingsKey = keyof typeof en
@@ -205,7 +215,7 @@ export type SettingsKey = keyof typeof en
  * right one (other locales carry identical mirrors for key parity).
  */
 export function countKey(
-  kind: 'server.envKeys' | 'server.headers' | 'server.offWorkspaces',
+  kind: 'server.envKeys' | 'server.headers' | 'server.offWorkspaces' | 'row.allOnDefault',
   count: number,
 ): SettingsKey {
   return `${kind}.${count === 1 ? 'one' : 'other'}` as SettingsKey
@@ -256,11 +266,10 @@ export const zh: Record<SettingsKey, string> = {
   'server.removeConfirmTitle': '移除服务器？',
   'server.removeConfirmBody': '该服务器将在所有 workspace 停止并删除配置；其余服务器不再引用的凭据也会一并清除。',
   'server.defaultOn': '默认开启，除非在此关闭',
-  'server.newWorkspaceDefault': '新 workspace 默认开启',
   'server.cwd': '工作目录：{path}',
 
   // per-workspace rows
-  'row.on': '开启（默认）',
+  'row.on': '开启',
   'row.off': '已关闭',
 
   // credential badges / secret controls (tri-state: configured / unset / unknown)
@@ -342,6 +351,14 @@ export const zh: Record<SettingsKey, string> = {
   'search.none': '没有匹配“{query}”的服务器',
   'row.allOn': '全部开启',
   'row.allOff': '全部关闭',
+  'injection.title': 'MCP 工具已注入',
+  'injection.entry': '{name}（{count}）',
+  'injection.total': '上下文内共 {count} 个工具',
+
+  'row.manage': '管理例外（{count}）',
+  'row.manageHide': '收起 workspace',
+  'row.allOnDefault.one': '该 workspace 默认开启（{count} 个）',
+  'row.allOnDefault.other': '全部 {count} 个 workspace 默认开启',
   'server.enableToggle': '启用服务器',
   'server.disabledTag': '已停用',
 
@@ -362,8 +379,10 @@ export const zh: Record<SettingsKey, string> = {
   'action.test': '测试',
   'action.testing': '测试中…',
   'action.testOk': '测试通过 · {count} 个工具',
+  'action.retry': '重试',
   'runtime.unavailable': '当前部署未提供运行时状态通道。',
   'runtime.error': '运行时状态刷新失败。',
+  'runtime.stale': '状态可能过期',
   'runtime.error.connection-failed': '连接失败',
   'runtime.error.gave-up': '重连次数已耗尽',
   'runtime.error.reconnect-disabled': '连接丢失且未启用重连',

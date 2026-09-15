@@ -398,6 +398,12 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
         lastError = `giving up after ${policy.maxAttempts} consecutive failed reconnect attempts`
         log.error(`${label}: giving up after ${policy.maxAttempts} consecutive failed reconnect attempts — tools unregistered; reload the plugin or restart the Host to reconnect`)
         unregister()
+      }).catch((error) => {
+        // `unregister` pushes through the caller's applier path; a throw there
+        // must not become an UNHANDLED rejection (Node would take the whole
+        // Host down). The committed state is already empty, so report and stay
+        // consistent. Every other chain tail in this module is caught too.
+        log.error(`${label}: unregister push after giving up failed: ${fmtError(error)}`)
       })
       return
     }
@@ -498,11 +504,14 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
     if (!isCurrent(generationClient)) return
     connected = true
     connectedAt = Date.now()
-    // The outage is over: the attempt counter describes the current outage,
-    // so a connected snapshot must never report a stale failure count.
-    const attemptsBeforeRecovery = failedAttempts
-    failedAttempts = 0
-    if (attemptsBeforeRecovery > 0) log.info(`${label}: reconnected and re-synced tools (attempt ${attemptsBeforeRecovery}/${policy.maxAttempts})`)
+    // The budget is deliberately NOT reset here: a connect that immediately
+    // crashes must still count against `maxAttempts`. Upstream mcp-client pins
+    // this exact case ("a crash loop with briefly successful connects still
+    // exhausts the cap", reconnect.spec.ts) — only a connection that stayed up
+    // past the stability window ends the outage, and `scheduleReconnect` is the
+    // single place that resets the counter. The WIRE view still reads 0 while
+    // connected (see `snapshot`), so a healthy card never shows a stale count.
+    if (failedAttempts > 0) log.info(`${label}: reconnected and re-synced tools (attempt ${failedAttempts}/${policy.maxAttempts})`)
   }
 
   /** The in-flight (or last settled) connection attempt; dispose awaits it for quiescence. */
@@ -525,7 +534,10 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
 
   const snapshot = (): ServerSnapshot => {
     const base = {
-      attempts: failedAttempts,
+      // The wire counter describes the CURRENT outage: 0 while connected, the
+      // live accrued count while down (the budget itself is never reset by a
+      // successful connect — see connectGeneration).
+      attempts: connected ? 0 : failedAttempts,
       maxAttempts: policy.maxAttempts,
       toolCount: master.size,
       ...(nextRetryAt !== undefined ? { nextRetryAt } : {}),

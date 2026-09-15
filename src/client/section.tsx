@@ -63,7 +63,13 @@ export interface McpScopeSectionProps {
   unsetCredential: McpScopeFace['unsetCredential']
   /** Live runtime-status store (host routes over the Connection carrier). */
   useRuntime: SnapshotHook<RuntimeSnapshot>
-  refreshRuntime(options?: { silent?: boolean }): Promise<void>
+  /**
+   * Refresh the runtime snapshot. With `server` the store re-pulls ONLY that
+   * server's view and merges it (a failure rejects: the card renders it);
+   * without it the whole map is refreshed, retaining the previous views when
+   * the pass fails (stale-while-revalidate).
+   */
+  refreshRuntime(options?: { silent?: boolean; server?: string }): Promise<void>
   connectServer(serverName: string): Promise<unknown>
   disconnectServer(serverName: string): Promise<unknown>
   testServer(serverName: string): Promise<RuntimeTestResult>
@@ -148,27 +154,48 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
   const visibleServers = needle === ''
     ? doc.servers
     : doc.servers.filter((server) => server.serverName.toLowerCase().includes(needle))
+  // Stale-while-revalidate: the snapshot kept its last good server views while
+  // reporting an error/unavailable phase. With no views there is nothing stale
+  // to keep, and the per-card degradation messages stay as they are.
+  const staleRuntime =
+    (runtime.phase === 'error' || runtime.phase === 'unavailable') &&
+    Object.keys(runtime.servers).length > 0
+  /** A full refresh whose failure is already published into the snapshot phase. */
+  const refreshAllQuietly = (): void => {
+    void refreshRuntime().catch(() => {})
+  }
+  /** Per-card refresh: the store merges only that server's view. */
+  const refreshOneServer = (serverName: string): Promise<void> =>
+    refreshRuntime({ server: serverName, silent: true })
 
   async function handleAdd(input: ServerSaveInput): Promise<SaveOutcome> {
     setBusy(true)
-    const outcome = await props.addServer(input)
-    if (mounted.current) setBusy(false)
-    if (!mounted.current || !outcome.ok) return outcome // form reports failures itself
-    setStaged(null)
-    setJustSaved({ name: input.server.serverName, kind: 'added' })
-    return outcome
+    try {
+      const outcome = await props.addServer(input)
+      if (!mounted.current || !outcome.ok) return outcome // form reports failures itself
+      setStaged(null)
+      setJustSaved({ name: input.server.serverName, kind: 'added' })
+      return outcome
+    } finally {
+      // A REJECTING save (not just an `ok:false` outcome) must not latch the
+      // header buttons off for the rest of the panel's lifetime.
+      if (mounted.current) setBusy(false)
+    }
   }
 
   async function handleEdit(input: ServerSaveInput): Promise<SaveOutcome> {
     if (staged?.mode !== 'edit') return { ok: false, reason: 'save-failed' }
     const originalName = staged.original.serverName
     setBusy(true)
-    const outcome = await props.replaceServer(originalName, input)
-    if (mounted.current) setBusy(false)
-    if (!mounted.current || !outcome.ok) return outcome // form reports failures itself
-    setStaged(null)
-    setJustSaved({ name: input.server.serverName, kind: 'updated' })
-    return outcome
+    try {
+      const outcome = await props.replaceServer(originalName, input)
+      if (!mounted.current || !outcome.ok) return outcome // form reports failures itself
+      setStaged(null)
+      setJustSaved({ name: input.server.serverName, kind: 'updated' })
+      return outcome
+    } finally {
+      if (mounted.current) setBusy(false)
+    }
   }
 
   return (
@@ -180,7 +207,7 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
           <button
             type="button"
             className={cx(styles.button, styles.buttonOutline)}
-            onClick={() => void refreshRuntime()}
+            onClick={refreshAllQuietly}
           >
             {t('runtime.refresh')}
           </button>
@@ -253,6 +280,15 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
         </p>
       )}
 
+      {staleRuntime && (
+        <div className={styles.staleBanner} role="status">
+          <span className={styles.staleText}>{t('runtime.stale')}</span>
+          <button type="button" className={cx(styles.button, styles.buttonOutline)} onClick={refreshAllQuietly}>
+            {t('action.retry')}
+          </button>
+        </div>
+      )}
+
       {doc.servers.length === 0 && staged === null ? (
         <p className={styles.empty}>{t('empty.servers')}</p>
       ) : needle !== '' && visibleServers.length === 0 ? (
@@ -285,6 +321,7 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
                     : undefined
                 }
                 runtimePhase={runtime.phase}
+                onRefresh={refreshOneServer}
                 onConnect={props.connectServer}
                 onDisconnect={props.disconnectServer}
                 onTest={props.testServer}

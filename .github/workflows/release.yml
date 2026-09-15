@@ -111,7 +111,7 @@ jobs:
       # A published release for this version is therefore a hard stop; only
       # stale drafts from an aborted run are deleted first.
       - name: Refuse re-publishing an existing release
-        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true') }}
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -137,7 +137,7 @@ jobs:
       # ------------------------------------------------------------------
 
       - name: Create GitHub Release with tgz asset
-        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true') }}
+        if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           name: dsh-chamber-mcp v${{ env.PKG_VERSION }}

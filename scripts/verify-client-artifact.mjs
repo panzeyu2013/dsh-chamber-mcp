@@ -73,6 +73,8 @@ const t = (key, params) =>
   String(dictionary[key] ?? key).replace(/\{(\w+)\}/g, (_, name) => String(params?.[name] ?? ''))
 
 const registrations = []
+/** Conversation-event definitions the notice lane registers (optional service). */
+const noticeDefinitions = []
 const listeners = new Set()
 const entries = [
   {
@@ -146,11 +148,32 @@ const ctx = {
     list: source(() => ({ current: 's1' })),
     binding: (id) => (id === 's1' ? { eventSource: source(() => ({ entries })) } : undefined),
   },
+  /**
+   * Optional-service seam. The tool lane registers through
+   * `slots.inject('tool.call.toolview', …)`; the injected-tools notice lane
+   * registers through `inject(['uiConversation'], …)`. Both are exercised here
+   * so a DROPPED or failed notice registration fails this gate instead of
+   * passing silently.
+   */
+  inject(names, callback) {
+    if (!Array.isArray(names) || !names.includes('uiConversation')) return
+    callback({
+      effect: ctx.effect,
+      slots: ctx.slots,
+      uiConversation: {
+        events: {
+          register(definition) {
+            noticeDefinitions.push(definition)
+            return () => {}
+          },
+        },
+      },
+    })
+  },
   slots: {
-    // The settings section is not mounted here: only the tool lane's slot is
-    // declared, so the registration path under test is the transcript lane.
+    // The settings section is not mounted here.
     inject(key, callback) {
-      if (key !== 'tool.call.toolview') return () => {}
+      if (key !== 'tool.call.toolview' && key !== 'conversation.chat.node') return () => {}
       const off = callback()
       return typeof off === 'function' ? off : () => {}
     },
@@ -167,7 +190,10 @@ const ctx = {
 bundle.apply(ctx)
 if (!bundle.inject.includes('sessions')) fail('the browser half no longer injects the sessions service')
 
-const keys = registrations.map((entry) => entry.spec.key).sort()
+const keys = registrations
+  .map((entry) => entry.spec.key)
+  .filter((key) => key.startsWith('mcp__'))
+  .sort()
 check('one keyed view per discovered MCP tool', keys.length === 3)
 check('the fixture tool is registered', keys.includes('mcp__fixture__greet'))
 check('the http tool is registered', keys.includes('mcp__github__search_issues'))
@@ -176,7 +202,29 @@ check('non-MCP names stay on the shipped row', !keys.includes('bash'))
 // Shadowing rank 1: an official row for the same wire name must be able to win,
 // and a same-key/same-priority pair (which throws in the slot core) must be
 // impossible by construction.
-check('rows register at shadowing rank 1', registrations.every((entry) => entry.spec.priority === 1))
+check(
+  'rows register at shadowing rank 1',
+  registrations
+    .filter((entry) => entry.spec.name === 'tool.call.toolview')
+    .every((entry) => entry.spec.priority === 1),
+)
+
+// The injected-tools notice is DERIVED from request/header events by the packed
+// bundle: its definition and keyed view must both be registered (the lane
+// contains its own failures, so a silent drop would otherwise pass the gate).
+check('the notice definition is registered on the conversation service', noticeDefinitions.length === 1)
+const notice = noticeDefinitions[0]
+check('the notice definition owns its own kind', notice !== undefined && notice.kind === 'mcp-scope-injected')
+check(
+  'the notice definition matches request/header only',
+  notice !== undefined &&
+    notice.match({ type: 'request/header', seq: 7 }) !== null &&
+    notice.match({ type: 'tool/call', seq: 8, data: { name: 'mcp__fixture__greet' } }) === null,
+)
+check(
+  'the notice chat-node view is registered for its kind',
+  registrations.some((entry) => entry.spec.key === 'mcp-scope-injected'),
+)
 
 const viewOf = (key) => {
   const entry = registrations.find((candidate) => candidate.spec.key === key)
@@ -284,6 +332,19 @@ check('a click expands the shipped row', head.getAttribute('aria-expanded') === 
 check('the expanded body carries the token-styled blocks', expanded.includes('mcpScope_toolBody') && expanded.includes('mcpScope_toolCode'))
 check('the expanded body shows the raw arguments', expanded.includes('name') && expanded.includes('world'))
 check('the expanded body shows the result', expanded.includes('hello world'))
+
+// The notice row itself, rendered from the packed bundle.
+const noticeView = registrations.find((entry) => entry.spec.key === 'mcp-scope-injected')?.component
+if (noticeView === undefined) fail('the packed bundle registered no notice view')
+await act(async () => {
+  reactRoot.render(
+    React.createElement(noticeView, { t, node: { data: { servers: [{ name: 'fixture', toolCount: 2 }] } } }),
+  )
+})
+const noticeMarkup = host.innerHTML
+check('the notice row renders from the packed bundle', noticeMarkup.includes('data-mcp-injection'))
+check('the notice row shows the server and its tool count', noticeMarkup.includes('fixture (2)'))
+check('the notice row shows the tool total', noticeMarkup.includes('2 tools in context'))
 
 await act(async () => {
   reactRoot.unmount()

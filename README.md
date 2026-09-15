@@ -82,12 +82,13 @@ What the install does:
      row's value input is write-only.
    - **Streamable HTTP** — URL and header rows (name + write-only credential
      ref).
-2. A new server is **on by default in every workspace** of this dsh. Under the
-   server card, switch individual workspaces off — their sessions' model-facing
-   tool set no longer includes `mcp__<serverName>__*` — or use **All on /
-   All off** to move every workspace at once (shown when more than one
-   workspace exists). The switch beside the server name
-   is the **global** enable: a disabled server is not started and exposes no
+2. A new server is **on by default in every workspace** of this dsh. The card
+   lists the **exceptions** only: the workspaces explicitly switched off, or one
+   "all N workspaces are on by default" line when there are none. **Manage
+   exceptions (N)** reveals every workspace row — switching one off drops
+   `mcp__<serverName>__*` from that workspace's sessions — plus **All on /
+   All off** once more than one workspace exists. The switch beside the server
+   name is the **global** enable: a disabled server is not started and exposes no
    tools anywhere, while its configuration stays on disk.
 3. Each card also carries its live **runtime status** (connected / connecting /
    reconnecting / failed / stopped / disabled / unknown), a localized failure line,
@@ -306,10 +307,10 @@ through its own settings namespace and per-agent tool scopes (`docs/design.md`).
 ```sh
 npm install            # dev deps (all @deepseek-ai/* pinned to one dsh generation)
 npm run typecheck      # src + tests
-npm test               # vitest suite (250 tests, 17 files)
+npm test               # vitest suite (411 tests, 24 files)
 npm run check          # full gate: typecheck + tests + build + package verify
 npm run verify:package # pack → contents whitelist → consumer d.ts → built host entry import → bundle purity → MCP-row artifact check → determinism
-npm run verify:client-artifact # drive the BUILT client bundle in jsdom (MCP row registration/render/expand)
+npm run verify:client-artifact # drive the BUILT client bundle in jsdom (MCP row + injected-tools notice registration/render/expand)
 npm run pack:tgz       # build + .smoke/dsh-chamber-mcp-<ver>.tgz
 npm run test:smoke     # live M0/M1 smoke (needs the chamber-anchored dsh CLI; see docs/RELEASE.md)
 npm run verify:workflows # action pins + release-structure invariants

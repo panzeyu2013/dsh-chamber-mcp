@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Package-content and consumer verification (CI gate `verify:package`):
- *  1. npm pack (prepack runs the build) into a scratch dir;
+ *  1. explicit build, then npm pack into a scratch dir;
  *  2. assert the tarball carries exactly the publish surface (no src/tests/
  *     .smoke/node_modules leakage; lib + cordis.patch.yml + LICENSE + README);
  *  3. extract the tarball and typecheck a small consumer against BOTH
@@ -24,7 +24,18 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const pkgName = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).name
+const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+const pkgName = pkg.name
+// Version identity (AGENTS.md): package.json == package-lock \`packages[""]\`.
+// No other gate compares the lock's root version, so a hand bump that forgot
+// \`npm install --package-lock-only\` would ship a mismatched pair silently.
+const lockRoot = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8')).packages?.['']
+if (lockRoot?.version !== pkg.version || lockRoot?.name !== pkg.name) {
+  throw new Error(
+    'package.json ' + pkg.name + '@' + pkg.version + ' != package-lock root '
+    + String(lockRoot?.name) + '@' + String(lockRoot?.version) + ' — regenerate the lockfile',
+  )
+}
 const scratch = join(root, '.smoke', 'verify')
 const tsc = join(root, 'node_modules', 'typescript', 'bin', 'tsc')
 // npm must never write to the (possibly read-only) user HOME: redirect its
@@ -36,7 +47,13 @@ rmSync(scratch, { recursive: true, force: true })
 mkdirSync(join(scratch, 'dist'), { recursive: true })
 mkdirSync(join(scratch, 'consumer', 'node_modules'), { recursive: true })
 
-// 1. pack
+// 1. build, then pack. `npm pack` normally runs the `prepack` hook, but a pack
+// that runs without it (npm configuration, or the packed file list being
+// gathered before the hook) ships whatever `lib/` happens to hold — and the
+// determinism check at the end would then compare that STALE build against a
+// fresh one and report a false "not deterministic". Building here keeps the
+// whole gate self-sufficient and makes the packed artifact provably current.
+run(process.execPath, [join(root, 'scripts', 'build.mjs')], root)
 run('npm', ['pack', '--pack-destination', join(scratch, 'dist'), '--loglevel=error'], root, npmEnv)
 const tgzName = readdirSync(join(scratch, 'dist')).filter((f) => f.endsWith('.tgz')).sort().at(-1)
 if (!tgzName) throw new Error('pack produced no tarball')
@@ -51,6 +68,23 @@ for (const required of ['lib/index.js', 'lib/client.js', 'cordis.patch.yml', 'LI
   if (!listing.includes(required)) throw new Error(`tarball missing required entry: ${required}`)
 }
 if (!listing.some((l) => l.startsWith('lib/types/'))) throw new Error('tarball missing lib/types declarations')
+// Every compiled module/declaration must map to a CURRENT src file: tsc only
+// adds files, so without this a removed source keeps shipping its last build
+// (which is exactly how a deleted module stayed in the tarball). The client
+// bundle has no 1:1 source and is checked separately.
+const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+  entry.isDirectory() ? walk(join(dir, entry.name)) : [join(dir, entry.name)])
+const sources = new Set(walk(join(root, 'src')).map((file) =>
+  file.slice(join(root, 'src').length + 1).replace(/\.tsx?$/, '')))
+const orphans = listing.flatMap((entry) => {
+  if (entry === 'lib/client.js' || !entry.startsWith('lib/')) return []
+  const relative = entry.slice('lib/'.length)
+  const key = relative.startsWith('types/')
+    ? relative.slice('types/'.length).replace(/\.d\.ts$/, '')
+    : relative.replace(/\.js$/, '')
+  return sources.has(key) ? [] : [entry]
+})
+if (orphans.length > 0) throw new Error(`tarball carries artifacts with no current source: ${orphans.join(', ')}`)
 console.log(`tarball contents OK (${listing.length} entries)`)
 
 // 3. consumer typecheck against the extracted package
@@ -121,14 +155,23 @@ console.log(`client bundle purity OK (requires: ${[...required].sort().join(', '
 // row registrations/rendering/interaction are asserted.
 run(process.execPath, [join(root, 'scripts', 'verify-client-artifact.mjs')], root)
 
-// 6. determinism: rebuild once more and compare host + client bundles
+// 6. determinism: rebuild once more and compare the WHOLE built tree (a missing
+// or extra emitted file is a defect too — hashing only the two entry bundles
+// would miss it).
+// `walk` (declared with the contents check above) returns absolute paths.
+const listLib = () => walk(join(root, 'lib')).map((file) => file.slice(root.length + 1)).sort()
 const hash = (f) => createHash('sha256').update(readFileSync(f)).digest('hex')
-const before = [hash(join(root, 'lib', 'index.js')), hash(join(root, 'lib', 'client.js'))]
+const snapshot = () => new Map(listLib().map((file) => [file, hash(join(root, file))]))
+const before = snapshot()
 run(process.execPath, [join(root, 'scripts', 'build.mjs')], root)
-const after = [hash(join(root, 'lib', 'index.js')), hash(join(root, 'lib', 'client.js'))]
-if (before[0] !== after[0] || before[1] !== after[1]) {
-  throw new Error('build is not deterministic (lib/index.js or lib/client.js changed on rebuild)')
+const after = snapshot()
+for (const [file, digest] of before) {
+  if (!after.has(file)) throw new Error(`build is not deterministic (${file} disappeared on rebuild)`)
+  if (after.get(file) !== digest) throw new Error(`build is not deterministic (${file} changed on rebuild)`)
 }
-console.log('determinism OK')
+for (const file of after.keys()) {
+  if (!before.has(file)) throw new Error(`build is not deterministic (${file} appeared on rebuild)`)
+}
+console.log('determinism OK (' + String(after.size) + ' files)')
 
 console.log('verify:package PASS')

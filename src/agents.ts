@@ -30,6 +30,13 @@
  * Every listener and every push is effect-wrapped through the owning plugin
  * context so teardown (including HMR) is safe.
  *
+ * This module NEVER writes into a session log. The injected-tools notice is
+ * derived client-side from the harness's own `request/header` events
+ * (`src/client/injection.ts`): a third-party session event is
+ * required-on-read — the envelope's `ignorable` marker has no write path in
+ * this generation — so appending one would make the persisted session
+ * unreadable to every reader, the harness that wrote it included.
+ *
  * @module
  */
 
@@ -323,17 +330,31 @@ const fmtError = (error: unknown): string =>
   // Effect-scoped subscriptions; teardown runs on HMR/unload. Also adopt
   // agents that predate this plugin (roots scan happens after listeners are
   // armed so a racing create cannot be double-adopted).
+  /**
+   * Contain one adoption: a synchronous listener failure VETOES the emitting
+   * operation upstream (the agent's own publication), and one bad agent must
+   * never fail the user's session creation or the boot scan. The tools of a
+   * failed adoption simply stay unregistered for that agent.
+   */
+  const adoptContained = (agent: Agent): void => {
+    try {
+      adopt(agent)
+    } catch (error) {
+      logger.error(`${label}: could not adopt agent ${agent.id} — its MCP tools stay unregistered: ${fmtError(error)}`)
+    }
+  }
+
   ctx.effect(() => {
     const offCreated = ctx.on('agent/created', ({ agent }: { agent: Agent }) => {
       if (disposed) return
-      adopt(agent)
+      adoptContained(agent)
     })
     const offDisposed = ctx.on('agent/disposed', ({ agent }: { agent: Agent }) => {
       // Scope-layer registrations made through agent.ctx are owned by that
       // ctx's lifecycle — drop bookkeeping only, never call disposers.
       entries.delete(agent)
     })
-    for (const agent of agents.roots()) adopt(agent)
+    for (const agent of agents.roots()) adoptContained(agent)
     return () => {
       offCreated()
       offDisposed()

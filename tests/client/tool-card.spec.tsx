@@ -159,6 +159,37 @@ describe('session event window collection', () => {
     expect(mcpToolNamesOf(entries)).toEqual(['mcp__fixture__echo'])
   })
 
+  it('collects MCP names dispatched from inside a programmatic call', () => {
+    // Under a `ptc` agent preset the model-facing call is `run_code` and the
+    // header lists only that tool: an MCP tool is visible ONLY in the dispatch
+    // events, so without them the transcript renders every MCP call generic.
+    const entries = [
+      { type: 'event', event: { type: 'tool/call', data: { callId: 'c1', name: 'run_code', arguments: '{}' } } },
+      {
+        type: 'event',
+        event: {
+          type: 'tool/ptc-dispatch-start',
+          data: { rootCallId: 'c1', parentCallId: 'c1', subCallId: 'c1:ptc:1', name: 'mcp__zotero__fetch', arguments: '{}' },
+        },
+      },
+      {
+        type: 'event',
+        event: {
+          type: 'tool/ptc-dispatch',
+          data: { rootCallId: 'c1', parentCallId: 'c1', subCallId: 'c1:ptc:1', name: 'mcp__zotero__fetch', content: [], isError: false },
+        },
+      },
+      {
+        type: 'event',
+        event: {
+          type: 'tool/ptc-dispatch-start',
+          data: { rootCallId: 'c1', parentCallId: 'c1', subCallId: 'c1:ptc:2', name: 'bash', arguments: '{}' },
+        },
+      },
+    ]
+    expect(mcpToolNamesOf(entries)).toEqual(['mcp__zotero__fetch'])
+  })
+
   it('deduplicates a name offered by a header and called later', () => {
     const entries = [
       { type: 'event', event: { type: 'request/header', data: { header: { tools: [{ name: 'mcp__fixture__echo' }] } } } },

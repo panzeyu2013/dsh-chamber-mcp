@@ -217,6 +217,69 @@ describe('server supervisor with a real stdio MCP server', () => {
     expect(commits.length).toBe(1)
   })
 
+  it('does not launder the budget when a reconnect crashes again inside the stability window', async () => {
+    // Upstream mcp-client pins this: "a crash loop with briefly successful
+    // connects still exhausts the cap". A successful connect is NOT an end of
+    // the outage — only uptime past the stability window (= maxDelayMs) is.
+    const { handle, lines, commits } = await boot('fix', { initialDelayMs: 20, maxDelayMs: 10_000, maxAttempts: 1 })
+    handles.push(handle)
+    await waitFor(() => handle.state.syncId === 1, 'initial sync')
+
+    await handle.state.defs.get('mcp__fix__crash')!.execute({}, execContext())
+    await waitFor(() => handle.state.syncId === 2, 'reconnect after the first crash')
+    // Crash AGAIN immediately: with the budget laundered this reconnects
+    // forever and the give-up commit never arrives.
+    await handle.state.defs.get('mcp__fix__crash')!.execute({}, execContext())
+
+    await waitFor(() => commits.some((commit) => commit.size === 0), 'give-up empty commit')
+    expect(handle.state.defs).toBe(EMPTY_DEFS)
+    expect(handle.state.connected).toBe(false)
+    expect(handle.snapshot().phase).toBe('failed')
+    expect(lines.some((line) => line.level === 'error' && line.message.includes('giving up after 1 consecutive failed reconnect attempts'))).toBe(true)
+    const settled = commits.length
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(commits.length).toBe(settled)
+  })
+
+  it('resets the attempt budget once a connection outlives the stability window', async () => {
+    const { handle, lines, commits } = await boot('fix', { initialDelayMs: 20, maxDelayMs: 120, maxAttempts: 1 })
+    handles.push(handle)
+    await waitFor(() => handle.state.syncId === 1, 'initial sync')
+    // Stay up past the stability window, then crash: the outage counter starts
+    // fresh, so maxAttempts=1 still allows this single reconnect.
+    await new Promise((resolve) => setTimeout(resolve, 220))
+    await handle.state.defs.get('mcp__fix__crash')!.execute({}, execContext())
+
+    await waitFor(() => handle.state.syncId === 2, 'reconnect after a stable uptime')
+    expect(handle.state.connected).toBe(true)
+    expect(commits.some((commit) => commit.size === 0)).toBe(false)
+    expect(lines.some((line) => line.level === 'error' && line.message.includes('giving up'))).toBe(false)
+  })
+
+  it('contains a throwing unregister push instead of rejecting unhandled', async () => {
+    // The give-up continuation pushes an empty generation through the caller's
+    // applier: a throw there used to become an unhandled rejection, which takes
+    // the whole Host down (Node's default). It must be reported instead.
+    const { log, lines } = makeLogger()
+    const handle = startServerSupervisor({
+      serverName: 'ghost',
+      buildTransport: async () => createTransport(stdioDef('ghost', { command: '/nonexistent/definitely-missing', args: [] }), noopResolve, NO_WARN),
+      logger: { info: (m) => log('info', m), warn: (m) => log('warn', m), error: (m) => log('error', m) },
+      onDefsChanged: () => {
+        throw new Error('applier push failed')
+      },
+      reconnect: { enabled: true, initialDelayMs: 20, maxDelayMs: 60, maxAttempts: 1 },
+    })
+    handles.push(handle)
+    await handle.ready
+    await waitFor(
+      () => lines.some((line) => line.level === 'error' && line.message.includes('unregister push after giving up failed')),
+      'contained unregister failure',
+    )
+    expect(handle.state.defs).toBe(EMPTY_DEFS)
+    expect(handle.state.connected).toBe(false)
+  })
+
   it('dispose quiesces and stops; no commits follow disposal', async () => {
     const { handle, lines } = await boot('fix', { initialDelayMs: 50, maxDelayMs: 200, maxAttempts: 5 })
     await waitFor(() => handle.state.syncId === 1, 'initial sync')

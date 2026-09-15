@@ -6,7 +6,7 @@
 // inside the client-request envelope, launch-token cookie auth.
 import { execFileSync, spawn } from 'node:child_process'
 import { mkdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..')
@@ -90,7 +90,10 @@ export class Instance {
   async boot(timeoutMs = 60_000, extraEnv = {}) {
     const env = {
       ...process.env,
-      PATH: '/root/.nvm/versions/node/v22.22.3/bin:' + (process.env.PATH ?? ''),
+      // The anchor CLI runs under THIS driver's interpreter by default (NODE),
+      // so the PATH entry is that interpreter's directory — a hard-coded nvm
+      // path pinned the smoke to one machine and to an unsupported major.
+      PATH: (process.env.DSH_SMOKE_NODE_BIN_DIR ?? dirname(process.execPath)) + ':' + (process.env.PATH ?? ''),
       DSH_HOME: this.home,
       HOME: join(SMOKE, 'homedir'),
       DSH_TELEMETRY_DISABLED: '1',
