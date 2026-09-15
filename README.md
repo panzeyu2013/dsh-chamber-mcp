@@ -307,7 +307,7 @@ upstream mechanism maps a workspace to a tool set. Evidence:
 ```sh
 npm install            # dev deps (all @deepseek-ai/* pinned to one dsh generation)
 npm run typecheck      # src + tests
-npm test               # vitest suite (185 tests, 14 files)
+npm test               # vitest suite (250 tests, 17 files)
 npm run check          # full gate: typecheck + tests + build + package verify
 npm run verify:package # pack → contents whitelist → consumer d.ts → bundle purity → MCP-row artifact check → determinism
 npm run verify:client-artifact # drive the BUILT client bundle in jsdom (MCP row registration/render/expand)

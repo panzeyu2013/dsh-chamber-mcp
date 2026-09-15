@@ -107,7 +107,9 @@ already proxies.
   react-only bundle purity and determinism.
 - Live smoke re-run 2026-09-15 on the current anchor (dsh 0.1.5-rc.2):
   `npm run test:smoke` (`M1` + `M0`) exit 0 with `dsh-chamber-mcp@0.0.3`
-  installed through the anchor CLI; both raw transcripts refreshed.
+  installed through the anchor CLI; both raw transcripts refreshed, and the
+  refreshed `M1` capture records **R3 PASS** — `mcp__fixture__*` on the enabled
+  workspace's model-facing turn, none on the disabled one.
 - Style conformance re-verified against the vendored pinned dsh theme: 368
   declared `--dsw-*`/`--dsh-*`/`--ds-*` names, 29 referenced by this
   stylesheet, 0 undeclared; S2–S7 and the class-map/CSS coverage gates green;

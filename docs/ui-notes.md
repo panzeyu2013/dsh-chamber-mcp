@@ -1,10 +1,11 @@
 # Client-UI implementation notes (dsh-chamber-mcp browser half)
 
-> **As of 2026-09-14 (working tree, package 0.0.2, suite 185/14).** Written during
+> **As of 2026-09-15 (working tree, package 0.0.3, suite 250/17).** Written during
 > implementation against the **0.1.2-rc.1** runtime; the pinned devDependency
 > generation is now **0.1.5-rc.2** (the client half was re-pointed at the 0.1.5
 > client contracts — see CHANGELOG 0.0.2). Deviations recorded below were
-> re-checked against the current `src/client/` where noted.
+> re-checked against the current `src/client/` where noted; §8 covers the 0.0.3
+> runtime status / configuration surface.
 
 Author: client-UI subagent. Companion to `docs/design.md` §5 and
 `docs/recon/ui-contracts.md`. Originally compiled against the repo's installed
@@ -23,10 +24,12 @@ whole pinned `@deepseek-ai/*` 0.1.5-rc.2 set.
 | `src/client/section.tsx` | `McpScopeSection` page component (+ composed-props interface, outcome→text mapping) |
 | `src/client/server-card.tsx` | one server card: badges, per-workspace on/off rows, remove cascade confirm |
 | `src/client/add-form.tsx` | staged add form (transport switch, stdio/http fields, write-only secret rows, draft validation) |
+| `src/client/import.ts` | 0.0.3 single-server JSON import (`mcpServers`, opencode and flat shapes → draft; secret values land write-only) |
+| `src/client/runtime.ts` | 0.0.3 runtime store over the three host routes: status/action/tool-list reads, pending-action state (§8) |
 | `src/client/styles.ts` | style seat: the plugin's stylesheet, its class-name map, and the `data-plugin-css` tag mount (§6) |
 | `src/client/workspaces.ts` | minimal workspace-row narrowing (typed items) |
 | `src/client/tool-card/{names,icon,row,view,register}.ts(x)` | transcript lane: MCP tool identity from the session's request header, the keyed tool view, and its registration lifecycle (§7) |
-| `tests/client/controller.spec.ts`, `tests/client/locales.spec.ts`, `tests/client/styles.spec.tsx`, `tests/client/section-render.spec.tsx`, `tests/client/tool-card.spec.tsx`, `tests/client/tool-register.spec.ts` | vitest suites (6 files; the repo-wide suite is 14 files) |
+| `tests/client/controller.spec.ts`, `tests/client/locales.spec.ts`, `tests/client/styles.spec.tsx`, `tests/client/section-render.spec.tsx`, `tests/client/tool-card.spec.tsx`, `tests/client/tool-register.spec.ts`, `tests/client/import.spec.ts`, `tests/client/runtime.spec.ts` | vitest suites (8 files; the repo-wide suite is 17 files) |
 
 Also edited (build-gate fixes, see §4): `tsconfig.json` (added `DOM` lib),
 `tsconfig.tests.json` (override the inherited `tests` exclude).
@@ -34,8 +37,9 @@ Also edited (build-gate fixes, see §4): `tsconfig.json` (added `DOM` lib),
 ## 2. Test results
 
 `node node_modules/vitest/vitest.mjs run` → **client suites: locales (4),
-controller (44), styles (10), jsdom section-render flows (10), tool-card (21),
-tool-register (11)** (the repo-wide suite is 185 tests / 14 files — see README):
+controller (56), styles (10), jsdom section-render flows (19), tool-card (21),
+tool-register (11), import (13), runtime (6)** (the repo-wide suite is 250
+tests / 17 files — see README):
 - `styles.spec.tsx`: the style-token gate of §6.4 (token allowlist, no literal
   colours, 0.5px hairlines, full-round pairing, class/CSS coverage, tag mount)
   plus render checks that the card and the form consume the class map.

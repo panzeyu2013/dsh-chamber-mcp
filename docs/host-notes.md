@@ -1,10 +1,11 @@
 # Host-half implementation notes (dsh-chamber-mcp)
 
-> **As of 2026-09-14 (working tree, package 0.0.2, suite 185/14).** These notes were
+> **As of 2026-09-15 (working tree, package 0.0.3, suite 250/17).** These notes were
 > written during implementation against the **0.1.2-rc.1** anchor; the pinned
 > devDependency generation is now **0.1.5-rc.2** (peers accept both). API claims
 > below were re-checked against the pinned generation where they are load-bearing
-> and are labelled where a generation matters.
+> and are labelled where a generation matters. §(d) records the 0.0.3 runtime
+> status / manual-control / timeout additions.
 
 Evidence for the coordinator: exact service/API signatures relied on that
 differ from the recon docs, the test-mounting recipe (reproducible), and the
@@ -21,12 +22,13 @@ design deviations made and why.
 | `src/agents.ts` | per-agent scope injection gate (never registers globally) |
 | `src/manager.ts` | bridge orchestrator: handle lifecycle, credential events, applier ownership |
 | `src/schema.ts` | `DocumentSchema` (schemastery) — NEW module beyond the original list |
+| `src/routes.ts` | 0.0.3 runtime routes on the Connection carrier: `status` / `action` / `tools` (fixed host codes only; §(d)) |
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface — FE-10) |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index}.spec.ts` | the 8 host suites, all green (the 6 client suites are listed in `docs/ui-notes.md` §1; repo total 185 tests / 14 files) |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index,routes}.spec.ts` | the 8 `tests/host/` suites plus `tests/tools.spec.ts`, all green (the 8 client suites are listed in `docs/ui-notes.md` §1; repo total 250 tests / 17 files) |
 
 Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (185 tests / 14 files).
+`node node_modules/vitest/vitest.mjs run` — both fully green (250 tests / 17 files).
 
 ## (a) API signatures that differ from recon docs
 

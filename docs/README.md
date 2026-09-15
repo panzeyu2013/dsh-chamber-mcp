@@ -9,8 +9,9 @@ engineering record behind it.
 > [`host-notes.md`](host-notes.md), [`ui-notes.md`](ui-notes.md)) are
 > **point-in-time** records: test counts, file paths, package names and line
 > numbers inside them are as-of their own date. The package was named
-> `dsh-mcp-scope` until the v0.0.2 rename. Current disposition of every audit
-> finding lives in **[`review/STATUS.md`](review/STATUS.md)** — read that
+> `dsh-mcp-scope` until the rename commit that immediately precedes the v0.0.1
+> tag (the tag already carries `dsh-chamber-mcp`). Current disposition of every
+> audit finding lives in **[`review/STATUS.md`](review/STATUS.md)** — read that
 > before treating any older page as a live punch list. Several evidence pages
 > name absolute paths of the authoring machine (e.g. `/root/...` checkouts, the
 > chamber anchor, `.smoke/` scratch dirs); those are historical pointers, not
