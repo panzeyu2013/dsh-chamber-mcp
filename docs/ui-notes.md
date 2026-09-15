@@ -7,12 +7,10 @@
 > re-checked against the current `src/client/` where noted; §8 covers the 0.0.3
 > runtime status / configuration surface.
 
-Author: client-UI subagent. Companion to `docs/design.md` §5 and
-`docs/recon/ui-contracts.md`. Originally compiled against the repo's installed
-0.1.2-rc.1/0.1.1-rc.2 dev tree plus the gateway anchor install
-(`/root/.dsh-chamber/gateway/dsh-anchor/node_modules/@deepseek-ai`) where the
-repo tree did not ship the runtime packages; at HEAD the repo tree installs the
-whole pinned `@deepseek-ai/*` 0.1.5-rc.2 set.
+Companion to `docs/design.md` §5. Originally compiled against the repo's
+installed 0.1.2-rc.1/0.1.1-rc.2 dev tree where the repo tree did not ship the
+runtime packages; at HEAD the repo tree installs the whole pinned
+`@deepseek-ai/*` 0.1.5-rc.2 set.
 
 ## 1. Files created (this half)
 
@@ -51,12 +49,12 @@ tests / 17 files — see README):
   pruning / untouched override rows, 7), `toggleOp` (no-op, off→set,
   on→unset+row prune, row kept, 4), `docsEqual` landed-write comparison (4),
   `renameOverrideKey` (2), shared-semantics alignment (2),
-  `classifySaveError` (4), the save pipeline FE-4 (15) and the credential
-  refresh FE-6 (2).
+  `classifySaveError` (4), the save pipeline (15) and the credential
+  refresh (2).
 - Component rendering tests: jsdom `section-render.spec.tsx` drives real user
   flows (form submit, per-card banners, role=alert/status, pluralized copy,
   tri-state badges) against the components with framework props faked
-  (the real renderer wiring is verified separately — see docs/review/frontend.md §5).
+  (the real renderer wiring is verified separately by `scripts/verify-client-artifact.mjs`).
 
 `npm run typecheck` → green for the whole repo (client + host halves).
 
@@ -88,7 +86,7 @@ tests / 17 files — see README):
   between publishes) — no `dsh-client-store` value dependency.
 - `inject = ['slots','locale','remote','remote.credentials','settingsScope',
   'workspaces','sessions']` exactly as assigned — `sessions` was added by the 0.0.2
-  transcript lane (`src/client/index.ts:124`; without it the lane stays off) (round-2 FE-3: `connection` was dropped —
+  transcript lane (`src/client/index.ts:124`; without it the lane stays off) (`connection` was dropped —
   grep-proven unused; `remote.credentials` is the real credentials gateway,
   see 3.3).
 
@@ -130,7 +128,7 @@ pre-Remote world. On the installed 0.1.2-rc.1 runtime:
   present in `node_modules` at HEAD as a transitive dependency — that half of the
   reason no longer holds.)
 
-### 3.4 `ctx.effect` typing — RESOLVED (no local patch remains)
+### 3.4 `ctx.effect` typing (no local patch remains)
 cordis augments its own `Context` with `effect` via a RELATIVE module
 augmentation (`declare module './context.ts'` in `fiber.d.ts`), which against a
 shipped d.ts-only package resolves to no file under NodeNext and silently never
@@ -178,7 +176,7 @@ indexes plain strings).
   override so the mandated `npm run typecheck` gate actually checks the
   suites.
 
-## 5. Semantics / risk notes for the coordinator
+## 5. Semantics and risk notes
 - Save order is secrets-first-then-document per the brief: dirty literal
   secrets are `credentials.set` sequentially BEFORE `scope.mutate`; a
   per-ref failure aborts with `secret-write-failed` + the failing refs
@@ -186,7 +184,7 @@ indexes plain strings).
   rollback exists in the credentials domain). On document success, refs
   orphaned by the removal diff are `credentials.unset` best-effort (refusals
   — e.g. inherited-env shadowing — do not fail the committed removal).
-- Round-2 (resolved): failures are classified by the typed `code`
+- Failures are classified by the typed `code`
   (`settings/conflict` / `SETTINGS_CONFLICT`) and the `isDSHRemoteError`
   marker first, with the message scan demoted to a non-platform fallback
   (`classifySaveError`, controller.ts). Business refusals on this runtime do
@@ -212,14 +210,14 @@ indexes plain strings).
   user layer (we treat `value === undefined` as empty doc, fine either way);
   (2) ~~exact settings-conflict remote error shape~~ — **RESOLVED**: the host
   refuses the write and the controller reports it as a conflict, never as
-  success (`applyOps` read-back), and the captured error is in `docs/milestones/M0.md`
-  §②; (3) whether
+  success (`applyOps` read-back), and the captured error is in the M0 smoke
+  transcript (`.smoke/logs/M0-raw.log`); (3) whether
   HMR/unload ordering ever races the remote `$on` disposers with
   `controller.start()` (all disposers are fiber-owned through one effect).
 
-## 6. Style seat (round-1 FE-5: visual integration)
+## 6. Style seat (visual integration)
 
-FE-5 found the section "non-native in both themes": raw `<button>`/`<input>`
+The first pass rendered the section as "non-native in both themes": raw `<button>`/`<input>`
 with inline styles and literal colours (`rgba(192,57,43,…)`, `#c0392b`,
 `rgba(127,127,127,…)`), nothing reading the theme. `src/client/styles.ts` now
 owns the surface's chrome.
@@ -328,8 +326,7 @@ every button keeps its name.
 
 `artifact.mjs` drives the **shipped** `lib/client.js` (the wrapped loader
 factory, not the sources) in a real browser through the lifecycle the M0 recon
-could not observe (`docs/review/deploy-issue/04-local-mount-evidence.md`,
-blind spot #1). Result of the recorded run (`.smoke/ui-preview/artifact.json`,
+could not observe. Result of the recorded run (`.smoke/ui-preview/artifact.json`,
 2026-09-11): the loader registers `dsh-chamber-mcp`; the factory requires
 **only** `react` and `react/jsx-runtime`; `apply` registers three labeled
 effects with `mcp-scope: styles` first, then the dictionary and controller
@@ -366,13 +363,13 @@ success tone is the `state-success-primary` green that `ModelsSection
 .savedNotice` and the `Tag` `success` tone paint as text. Nothing here
 deviates: a darker green does not exist in the token set, and colour is never
 the only signal (every toned badge also renders its state word, so WCAG 1.4.1
-holds). Recorded so the next reviewer sees the measurement rather than
+holds). Recorded so the next reader sees the measurement rather than
 re-deriving it.
 
-### 6.6 Review findings (hostile-content pass)
+### 6.6 Hostile-content hardening (overlong values, tag ownership)
 
-A full review of this restyle ran the surface against content the schema does
-not cap, which the first pass had only exercised with friendly fixtures:
+The restyle was exercised against content the schema does not cap, which the
+friendly fixtures do not cover:
 
 1. **Horizontal overflow (fixed).** `HEADER_NAME_PATTERN` and
    `CREDENTIAL_REF_PATTERN` bound the character set, not the length, so a
@@ -394,10 +391,8 @@ not cap, which the first pass had only exercised with friendly fixtures:
    live-mount count and is re-filled when its text is no longer current; the
    last disposer removes it (§6.1, both orderings covered in
    `tests/client/styles.spec.tsx`).
-3. **Doc drift (fixed).** The suite grew (133 → 151 tests, 11 → 12 files), so
-   the counts in `README.md` and `docs/host-notes.md` were refreshed.
-   `docs/review/**` keeps its numbers: those are dated review records, not live
-   claims.
+3. **Doc drift (fixed).** The suite grew, so the counts in `README.md` and
+   `docs/host-notes.md` were refreshed to the then-current tree.
 4. **Checked, no change needed.** Every JSX attribute, role and behavior
    survives the restyle (attribute-set diff before/after: only `style=` became
    `className=`, and the one moved `key` is the card's, now on its `<li>`); no
@@ -416,12 +411,11 @@ build of the pre-transcript-lane tree: `lib/client.js` 75,485 → 93,286 B
 (+17.8 KB), of which 14.4 KB is the stylesheet text and 3.4 KB the class
 plumbing and the invalid-state markup; the sheet stays unminified on purpose (it is read in devtools far
 more often than it is transferred, and a minifying step in `build.mjs` would
-put the CSS text outside review, since the built file is not in the diff).
+hide the CSS text from the diff (the built file is not tracked).
 
-### 6.7 Second-round scan (states, engine, harness)
+### 6.7 State matrix, engine scan and harness checks
 
-Round 2 audited different surfaces than round 1 (which read the diff, the AX
-tree and the rendered geometry):
+Beyond the static checks above, these surfaces were exercised directly:
 
 1. **States that had never been rendered (fixed + verified).** Read-only,
    empty, in-flight (hanging save/toggle), invalid draft, workspace
@@ -438,7 +432,7 @@ tree and the rendered geometry):
    `:not(:checked)` guard is what keeps the newer rule from out-shouting the
    selected state — verified by hovering both pills in a real browser).
 3. **Engine-level scan (new, `.smoke/ui-preview/scan-engine.mjs`).** Against
-   the preview page (as of the round-2 run): 88 scoped rules and 25 referenced
+   the preview page (as of the recorded run): 88 scoped rules and 25 referenced
    tokens — the sheet is now 136 rules / 27 tokens — every token resolving in
    BOTH themes; no unsupported property and no dropped declaration;
    `prefers-reduced-motion: reduce` turns the form's mount animation off and
@@ -448,7 +442,7 @@ tree and the rendered geometry):
    border-colour change instead of a ring. The 24 selectors "dead" in that run
    are the hover/focus/disabled/placeholder states plus the states the run did
    not drive (alert, saved note, empty, read-only), each of which is exercised
-   by the audit matrix above.
+   by the comparison table above.
 4. **The tests can fail.** The style spec was mutation-tested: dropping
    `corner-shape: round`, widening a hairline to 1px, writing a literal colour,
    referencing the undeclared `label-error`, removing the badge width cap, and
@@ -552,7 +546,7 @@ inline SVG.
   theme's caption token for the separator dot), inline 24-unit glyphs rendered
   at 14px, and the reduced-motion block disables the sweep. The built bundle
   still requires only `react` / `react/jsx-runtime`.
-- **Declaration choices (audited against both generations).**
+- **Declaration choices (verified against both generations).**
   - `dsh.client.inject` gains exactly ONE module: `dsh-client-ui-tool`, the
     package that declares the `tool.call.toolview` slot (its
     `conversation.chat.node` entry carries the `children` table) and is present
@@ -625,12 +619,11 @@ inline SVG.
 - **Retained trade-off.** `draftToServer` trims and drops empty argument rows:
   the form's blank argument row is a placeholder, so preserving it would add a
   phantom empty argument to every save. A pasted explicit empty argument is
-  therefore not persisted (round-3 finding C-P2-1, retained by decision).
+  therefore not persisted (retained by design).
 - **Layout reference.** The shipped desktop layout (section surface, card
   anatomy, add/edit form, state matrix, metrics) is documented with wireframes in
   `docs/mcp-desktop-layout.md` + `docs/mcp-desktop-layout.svg`.
 - **Evidence.** `tests/client/runtime.spec.ts`, `tests/client/import.spec.ts`,
   the extended `controller.spec.ts` / `section-render.spec.tsx`, and the
   style-token gate. `scripts/verify-client-artifact.mjs` gained the `ctx.on`
-  seat now that the client half subscribes to `connection/reset`; round-3
-  findings and dispositions live in `docs/review/round3/REPORT.md`.
+  seat now that the client half subscribes to `connection/reset`.

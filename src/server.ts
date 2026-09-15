@@ -2,7 +2,7 @@
  * Per-server supervisor (host half): owns the MCP client/transport
  * generations for ONE configured server and keeps the server's master
  * definition state in sync with the live generation — mirroring the official
- * `dsh-mcp-client` connection supervisor exactly (docs/recon/mcp-client-official.md §4):
+ * `dsh-mcp-client` connection supervisor exactly:
  *
  * - one generation = a fresh SDK `Client` + one transport (built through an
  *   async factory so env/headers resolve per attempt);

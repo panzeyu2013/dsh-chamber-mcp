@@ -242,8 +242,8 @@ Stock dsh has no MCP management surface to reuse: the Plugins → *Plugin
 configuration* tab renders a card only for a settings namespace a plugin
 registers (the official client registers none), the plugin list is read-only, and
 `dsh-workspace` is a project-grouping registry that registers no tools — so no
-upstream mechanism maps a workspace to a tool set. Evidence:
-`docs/recon/mcp-client-official.md`.
+upstream mechanism maps a workspace to a tool set; this plugin supplies one
+through its own settings namespace and per-agent tool scopes (`docs/design.md`).
 
 ## Compatibility
 
@@ -333,12 +333,11 @@ run of `release.yml` before the tag.
 | Doc | Contents |
 |---|---|
 | `docs/design.md` | Locked architecture and decisions |
-| `docs/acceptance.md` | Requirement/cut matrix (R1–R4, C1–C6) |
+| `docs/acceptance.md` | Requirement/cut matrix (R1–R4, E1–E8, C1–C6) |
+| `docs/status.md` | Current release/verification state and known limitations |
 | `docs/host-notes.md`, `docs/ui-notes.md` | Host/client API findings and intentional deviations |
 | `docs/RELEASE.md` | CI + release mechanics, smoke runner, rollback |
-| `docs/recon/` | Reconnaissance evidence (as of recon time) |
-| `docs/milestones/` | M0/M1 smoke evidence and raw transcripts |
-| `docs/review/` | Historical audits, plus **`docs/review/STATUS.md`** — the consolidated disposition of every finding at HEAD |
+| `docs/mcp-desktop-layout.md` | Settings section/card/form layout reference |
 
 Smoke drivers under `scripts/smoke/` boot scratch instances from the gateway's
 current anchor CLI (dsh **0.1.5-rc.2** as measured on 2026-09-14 — each transcript

@@ -97,29 +97,27 @@ git push origin v<version>  # triggers .github/workflows/release.yml
 
 ### Docs to update with the release
 
-Keep these four in step with the tag; each one states, or is composed from, the
+Keep these three in step with the tag; each one states, or is composed from, the
 released version:
 
 | File | What must be true at the tagged commit |
 |---|---|
 | `CHANGELOG.md` | a dated `## [<version>] - YYYY-MM-DD` section (release notes are composed from it — the workflow fails without one) |
 | `README.md` | the *Install* release-status line names the version actually on the Releases page, and the install example resolves |
-| `docs/review/STATUS.md` | the "Project identity at HEAD" block (published release, test counts, toolchain pins) |
-| `AGENTS.md` | the "Published release" line and the version-identity invariant |
+| `docs/status.md` | the "Release state" block (working line, published release, verification state) |
 
 Re-run the pre-tag checklist after editing any of them.
 
 **Ordering note.** At the tagged commit the Releases page still serves the
 *previous* release (the tag push is what creates the new one), so the pre-tag
-wording is honest only until the workflow finishes. Three statements therefore
+wording is honest only until the workflow finishes. Two statements therefore
 flip in a **post-release edit** — do it right after the workflow reports success,
 then commit with `docs: release v<version> is out`:
 
 | File | Before the workflow finishes | After it succeeds |
 |---|---|---|
 | `README.md` | "the newest published release is `v<previous>`; the `<version>` line is prepared … but not tagged yet" | "the newest published release is **`v<version>`**" (drop the not-tagged sentence; the install example already uses `<version>` placeholders) |
-| `docs/review/STATUS.md` | "`<version>` is prepared on `main` … but **not tagged**; do not describe it as released" | "**Published release: `v<version>`**" plus the tag/Release line, and the committed test-count sequence |
-| `AGENTS.md` | "**Published release: v<previous>**; the working tree is the `<version>` line" | "**Published release: v<version>**" and drop the "tag is the outstanding step" clause from the version-identity invariant |
+| `docs/status.md` | "`<version>` is prepared on `main` … but **not tagged**; do not describe it as released" | "**Published release: `v<version>`**" plus the tag/Release line and the verification state at that commit |
 
 The workflow then:
 
@@ -195,11 +193,10 @@ version, tarball path and installed artifact at the top of the transcript; they
 fail the run if the install exits non-zero, if the profile does not gain the
 bundle, or if the installed version differs from `package.json`. Prereqs on the
 runner: writable repo checkout, that anchor CLI, pnpm on PATH, registry network
-for pnpm; everything else lands under `.smoke/` (gitignored). Evidence artifacts:
-`docs/milestones/M1-live-capture.log` etc. **Note:** a run rewrites the tracked
-`docs/milestones/M0-raw.log` / `M1-raw.log`; review that diff deliberately
-(commit a fresh capture, or revert to keep the historical one) rather than
-letting it ride along in an unrelated commit.
+for pnpm; everything else lands under `.smoke/` (gitignored). Each driver writes
+its transcript to `.smoke/logs/{M0,M1}-raw.log` (M1 also keeps the captured LLM
+requests there); transcripts are evidence for that run, not repo content, and are
+never committed.
 
 ## Rollback
 

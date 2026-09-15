@@ -397,7 +397,7 @@ export function createManager(options: ManagerOptions): ManagerHandle {
       // same server can still both cycle in one tick (reconcile bypasses the
       // coalescing set by design). The chain serializes them and the later
       // start resolves credentials per attempt, so the double cycle always
-      // converges — accepted as documented in docs/review/SUMMARY.md.
+      // converges — accepted by design.
       const affected = options.getDoc().servers.filter(
         (server) => !isServerDisabled(options.getDoc(), server.serverName) && credentialRefsOf(server).includes(ref),
       )

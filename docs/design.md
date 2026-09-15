@@ -1,6 +1,6 @@
 # dsh-chamber-mcp — design (final)
 
-Locked after recon A–F (docs/recon/*). Version targets: compile & verify against
+Locked after the initial upstream reconnaissance. Version targets: compile & verify against
 **dsh 0.1.5-rc.2** (the generation a `dsh@0.1.5-rc.1` install resolves to; the
 pinned devDependency set and the CI guard) — which is also what the chamber
 anchor runs today (gateway **0.3.0**, measured 2026-09-14; the smoke's
@@ -36,7 +36,7 @@ Install (documented): `dsh plugin --profile web add <release-asset URL | local .
 (the bare npm name works only once npm publishing is re-enabled) → bundle appended
 to `dsh.profile.bundles`, row inserted by patch, restart instance. Chamber: zero
 code/seed involvement; the section is served through the ordinary `settings.section`
-slot (in-GUI click-through still unverified — see §6 and `docs/milestones/M1.md`).
+slot (in-GUI click-through still unverified — see `docs/status.md`).
 Uninstall: `dsh plugin --profile web remove dsh-chamber-mcp` + restart stops the
 servers and drops the section; leftovers (the `mcp-scope:` section and orphaned
 credential refs) are removed by hand.
@@ -104,8 +104,8 @@ comments, anchors and formatting survive on untouched nodes.
   `{ generation, defs: Map<publicName, ToolDefinition>, ready }`.
 - **Registration is per-agent-scope, never global** (the injection gate): only agents
   whose session is not a delegation child (`header.origin !== 'subagent'`) are adopted —
-  children are governed by their preset scopes and never receive MCP tools (round-2
-  decision, ARCH-3); workspace membership is re-derived on every push/reconcile, and a
+  children are governed by their preset scopes and never receive MCP tools;
+  workspace membership is re-derived on every push/reconcile, and a
   durable `domain/changed` write for the workspace domain (`src/manager.ts`
   `mcp-scope.workspace-domain()`) triggers an applier reconcile, so a deleted
   workspace — or its directory — revokes its sessions' tools promptly.
@@ -146,7 +146,7 @@ comments, anchors and formatting survive on untouched nodes.
   `connect` clears it (and restarts a budget-exhausted handle); `test` probes
   on a throwaway connection unless the live generation is already connected, in
   which case it reports read-only.
-- **`tools/list` pagination is bounded** (SEC-05): every followed continuation cursor is
+- **`tools/list` pagination is bounded**: every followed continuation cursor is
   recorded and a repeat rejects the sync as an invalid tool list, and one sync is capped
   at `MAX_SYNC_PAGES` (= `MAX_SYNC_TOOLS` = 2000) requests. Either failure leaves the
   previous generation registered, so a hostile server can neither spin the fetch loop nor
@@ -227,7 +227,7 @@ comments, anchors and formatting survive on untouched nodes.
   (registry get(name, scope) assertions); transport/env/credential resolution.
 - M0/M1 live smoke (scratch instance from the gateway anchor CLI — dsh 0.1.5-rc.2
   measured 2026-09-14 — installing a freshly packed working-tree tarball, DSH_HOME under `.smoke/`, cookie
-  driver per docs/recon/runtime-test-env.md §6): install tgz via `dsh plugin`, namespace
+  driver): install tgz via `dsh plugin`, namespace
   describe/mutate, spawn evidence in boot log, workspace/session creation, tool-presence
   via mock-LLM capture; the bundle and its `settings.section` registration are served in
   the boot graph (M0). An in-GUI click-through in a real desktop session is still
@@ -236,4 +236,4 @@ comments, anchors and formatting survive on untouched nodes.
 
 ## 7. Milestones & acceptance
 
-Acceptance matrix: docs/acceptance.md (R1–R4, C1–C6). M0 evidence under docs/milestones/.
+Acceptance matrix: docs/acceptance.md (R1–R4, E1–E8, C1–C6).

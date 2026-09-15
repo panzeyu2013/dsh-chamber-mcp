@@ -107,14 +107,13 @@ already proxies.
   react-only bundle purity and determinism.
 - Live smoke re-run 2026-09-15 on the current anchor (dsh 0.1.5-rc.2):
   `npm run test:smoke` (`M1` + `M0`) exit 0 with `dsh-chamber-mcp@0.0.3`
-  installed through the anchor CLI; both raw transcripts refreshed, and the
-  refreshed `M1` capture records **R3 PASS** — `mcp__fixture__*` on the enabled
-  workspace's model-facing turn, none on the disabled one.
+  installed through the anchor CLI; the M1 run captured the per-workspace
+  model-facing tool list — **R3 PASS** (`mcp__fixture__*` on the enabled
+  workspace's turn, none on the disabled one).
 - Style conformance re-verified against the vendored pinned dsh theme: 368
   declared `--dsw-*`/`--dsh-*`/`--ds-*` names, 29 referenced by this
   stylesheet, 0 undeclared; S2–S7 and the class-map/CSS coverage gates green;
-  the new 8 px status dot matches chamber's dot geometry (round-3 report:
-  `docs/review/round3/REPORT.md`).
+  the new 8 px status dot matches chamber's dot geometry.
 
 ## [0.0.2] - 2026-09-14
 
@@ -181,9 +180,8 @@ the verification hardening that followed two adversarial review rounds.
   on one generation the peer graph is self-consistent, so `npm install` and
   `npm ci` resolve unaided and CI dropped the flag. It had been needed first
   for the `dsh-client-runtime@0.1.1-rc.2` ↔ `dsh-agent` cross-line conflict and
-  then for the rc.1-pin conflict above. This is the resolution
-  `docs/review/compliance.md` §(e) asked for once the matrix settled on one
-  line.
+  then for the rc.1-pin conflict above. The single-generation pin resolves
+  both at the source.
 - **Client half re-pointed at the 0.1.5 client contracts.** `ClientContext`
   (`dsh-client-runtime`) → `Context` from `@deepseek-ai/cordis`, which is the
   client context type upstream client plugins use; the local `FiberAwareContext`
@@ -231,7 +229,7 @@ the verification hardening that followed two adversarial review rounds.
   design system — `ui-primitives` Button/Tag/Pill/Switch geometry, the
   settings-panel card and editing-surface fills, the official field
   vocabulary — so the section reads as part of the panel in both themes
-  (closes review finding FE-5; mapping table in `docs/ui-notes.md` §6).
+  (mapping table in `docs/ui-notes.md` §6).
 - **Workflow actions are pinned to commit SHAs.** Every `uses:` in `ci.yml` and
   `release.yml` now names a 40-hex commit (`actions/checkout@v5.1.0`,
   `actions/setup-node@v5.0.0`, `actions/upload-artifact@v6.0.0`,
@@ -244,11 +242,7 @@ the verification hardening that followed two adversarial review rounds.
   tool naming, context-meter footprint), document format and hand-editing,
   uninstall, the official-client comparison, compatibility, security/trust
   model, troubleshooting and development — and `docs/README.md` becomes a
-  linked index with an explicit point-in-time reading convention. Every audit
-  and evidence page now carries an as-of/status frame, and
-  `docs/review/STATUS.md` records the consolidated disposition plus the claims
-  an earlier audit got wrong (a `dependabot.yml` that never existed, stale test
-  counts, outdated recon API shapes). Release and install examples are
+  linked index. Release and install examples are
   version-generic, `docs/RELEASE.md` gains a runnable pre-tag checklist and the
   list of version-bearing docs to update with a release, and
   `.github/workflows/release.yml` drops `--legacy-peer-deps`, so the release gate
@@ -331,8 +325,7 @@ the verification hardening that followed two adversarial review rounds.
   scrubbed, and history was rewritten so no commit or object in this clone still
   contains them, and the rewritten history was force-pushed (`main` bdbb6b3 →
   fb5255d, tag `v0.0.1` 4e1962a → 8e32806) so the public remote serves the purged
-  history — verified from a fresh clone. See `docs/review/STATUS.md`
-  §"Launch-token purge".
+  history — verified from a fresh clone.
 
 ### Compatibility
 
@@ -368,8 +361,7 @@ injected into the tool scopes of enabled workspaces only.
 
 ### Added
 
-- **Repo conventions** (compliance audit `docs/review/compliance.md`,
-  aligned with dsh-chamber norms): workflow action-pin & release-structure
+- **Repo conventions** (aligned with dsh-chamber norms): workflow action-pin & release-structure
   verification (`npm run verify:workflows`), tag pushes run the same CI
   chain, serialized publication with a refuse-existing-release guard,
   dry-run dispatch mode, tgz `.sha256` sidecar, PR template, AGENTS.md,

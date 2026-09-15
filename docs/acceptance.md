@@ -1,6 +1,6 @@
 # Acceptance matrix (locked scope + the extended 0.0.3 line)
 
-Source: the locked MVP requirements (message #1), extended on 2026-09-14 by the
+Source: the locked MVP requirements, extended on 2026-09-14 by the
 runtime-visibility / configuration-completeness line (0.0.3). Each row:
 requirement → how we prove it (smoke / unit / E2E) → evidence location.
 
@@ -8,10 +8,10 @@ requirement → how we prove it (smoke / unit / E2E) → evidence location.
 
 | # | Requirement | Proof method | Evidence |
 |---|---|---|---|
-| R1 | Settings → MCP section with server rows + add/edit/remove forms; management is UI-native (the settings document stays hand-editable by design) | jsdom render/flow tests of the real components + `scripts/verify-client-artifact.mjs`; a live in-GUI click-through is still open | docs/milestones/M1.md (gap), docs/ui-notes.md §6 |
-| R2 | Default on: after add, effective in all of this dsh's workspaces | unit (evaluation fn) + E2E two workspaces | docs/milestones/M0.md |
-| R3 | Explicit per-workspace off; when off, that workspace session's model-visible tool set excludes the server's tools (injection gate, not mere exec denial) | E2E: session tool listing per workspace (remote-mux capture) | docs/milestones/M1-live-capture.log, docs/milestones/M1.md |
-| R4 | Distribution: ordinary third-party dsh plugin, user-installed per dsh; chamber not seeded, not bundled, zero code involvement | install test on scratch instance; chamber untouched | docs/milestones/M0.md |
+| R1 | Settings → MCP section with server rows + add/edit/remove forms; management is UI-native (the settings document stays hand-editable by design) | jsdom render/flow tests of the real components + `scripts/verify-client-artifact.mjs`; a live in-GUI click-through is still open (`docs/status.md`) | tests/client/section-render.spec.tsx, scripts/verify-client-artifact.mjs, docs/ui-notes.md §6 |
+| R2 | Default on: after add, effective in all of this dsh's workspaces | unit (evaluation fn) + E2E two workspaces | tests/host/agents.spec.ts, tests/host/manager.spec.ts |
+| R3 | Explicit per-workspace off; when off, that workspace session's model-visible tool set excludes the server's tools (injection gate, not mere exec denial) | E2E: session tool listing per workspace (remote-mux capture) | `npm run test:smoke` (M1 live capture), tests/host/agents.spec.ts |
+| R4 | Distribution: ordinary third-party dsh plugin, user-installed per dsh; chamber not seeded, not bundled, zero code involvement | install test on scratch instance; chamber untouched | `npm run test:smoke` (M0) |
 
 ## Extended (0.0.3 — supersedes the original cuts C3–C5)
 
@@ -47,9 +47,8 @@ requirement → how we prove it (smoke / unit / E2E) → evidence location.
 - `enabled(w, s)` = not globally disabled AND the override row has no OWN
   property `s` (`Object.hasOwn`) — new server/workspace default-on, and
   prototype-member server names keep working.
-- Round-2 (review) decisions recorded in docs/review/*: subagent/delegation
-  children are not adopted (preset-governed), workspace membership is re-derived
-  per push/reconcile, credentials values with CR/LF/NUL are rejected at the
-  transport.
+- Decisions: subagent/delegation children are not adopted
+  (preset-governed); workspace membership is re-derived per push/reconcile;
+  credential values with CR/LF/NUL are rejected at the transport.
 - Storage: dsh settings domain (plugin namespace) + credentials domain
   (write-only values); per-instance isolation via DSH_HOME.

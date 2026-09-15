@@ -20,7 +20,7 @@ const TGZ = packPluginTgz()
 const FIXTURE = join(ROOT, 'scripts', 'smoke', 'fixture', 'echo-server.mjs')
 const WS_A = join(SMOKE, 'm0-ws-a')
 const WS_B = join(SMOKE, 'm0-ws-b')
-const OUT = join(ROOT, 'docs', 'milestones', 'M0-raw.log')
+const OUT = join(SMOKE, 'logs', 'M0-raw.log')
 
 const inst = new Instance({ home: HOME, port: PORT, label: 'm0' })
 const evidence = []
@@ -183,6 +183,6 @@ await new Promise((r) => setTimeout(r, 3000))
 
 step('sessions/wait evidence; stop instance')
 await inst.stop()
-mkdirSync(join(ROOT, 'docs', 'milestones'), { recursive: true })
+mkdirSync(join(SMOKE, 'logs'), { recursive: true })
 writeFileSync(OUT, evidence.join('\n') + '\n')
 log(`evidence written to ${OUT}`)

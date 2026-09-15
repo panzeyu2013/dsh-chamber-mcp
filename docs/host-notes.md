@@ -7,9 +7,8 @@
 > and are labelled where a generation matters. §(d) records the 0.0.3 runtime
 > status / manual-control / timeout additions.
 
-Evidence for the coordinator: exact service/API signatures relied on that
-differ from the recon docs, the test-mounting recipe (reproducible), and the
-design deviations made and why.
+Scope: the exact service/API signatures this half relies on, the test-mounting
+recipe (reproducible), and the design deviations made and why.
 
 ## Files created (host half)
 
@@ -23,14 +22,14 @@ design deviations made and why.
 | `src/manager.ts` | bridge orchestrator: handle lifecycle, credential events, applier ownership |
 | `src/schema.ts` | `DocumentSchema` (schemastery) — NEW module beyond the original list |
 | `src/routes.ts` | 0.0.3 runtime routes on the Connection carrier: `status` / `action` / `tools` (fixed host codes only; §(d)) |
-| `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface — FE-10) |
+| `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe) |
 | `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index,routes}.spec.ts` | the 8 `tests/host/` suites plus `tests/tools.spec.ts`, all green (the 8 client suites are listed in `docs/ui-notes.md` §1; repo total 250 tests / 17 files) |
 
 Run: `npm run typecheck` (both tsconfigs) and
 `node node_modules/vitest/vitest.mjs run` — both fully green (250 tests / 17 files).
 
-## (a) API signatures that differ from recon docs
+## (a) API signatures and runtime assumptions
 
 1. **Cordis 4.0.2 fiber/inject semantics are load-bearing** (recon docs only hint):
    a plugin function body does NOT run until every `inject` entry resolves
@@ -83,8 +82,7 @@ Run: `npm run typecheck` (both tsconfigs) and
    rc.1 peers resolve to rc.2 artifacts is internally inconsistent. Every
    `@deepseek-ai/*` devDep is now pinned to the generation a `dsh@0.1.5-rc.1`
    install actually resolves to (`0.1.5-rc.2`), which closes the conflict at
-   the source; `docs/review/compliance.md` §(e) recommended exactly this once
-   the matrix settled on one line. `resolveSpec`/`Config` match recon.
+   the source. `resolveSpec`/`Config` match recon.
 6. **SDK 1.30 high-level McpServer**: `registerTool` input schemas must be
    zod schemas or raw zod shapes — plain JSON-Schema objects throw
    (`inputSchema must be a Zod schema or raw shape`). Runtime
@@ -170,7 +168,7 @@ flags and the full config is green at the time of writing.
 6. **Enablement is read LIVE per push/reconcile** (never cached in the
    applier): the first implementation snapshotted `overrides` at attach and
    only refreshed on `reconcile()`, which made defs pushes judge stale
-   settings (caught by the gating tests). Round-2 semantics: workspace
+   settings (caught by the gating tests). Design semantics: workspace
    membership is re-derived per event (one `workspaceRegistry.list()`
    snapshot per push/reconcile, one `realpathSync` per tracked agent);
    `reconcile()` is a plain diffed pass (no blanket force — the
@@ -227,11 +225,11 @@ flags and the full config is green at the time of writing.
   ONLY a fixed host-generated code + message per failure (spawn-failed,
   timeout, forbidden, protocol, gave-up, reconnect-disabled, generation-stuck,
   connection-failed); the raw/sanitized transport text stays in the host log.
-  The earlier `***`-redaction approach was removed after review: remote bodies
+  The earlier `***`-redaction approach was removed: remote bodies
   (which the SDK embeds in errors) can echo a credential in an encoding the
   substring pass cannot catch, and "no secret in any response" is only
   enforceable by never sending the text.
-- **Extra supervisor bookkeeping (review-driven).** A generation that fails to
+- **Extra supervisor bookkeeping.** A generation that fails to
   close within 5 s now reports `failed` (`generation-stuck`) instead of
   `connecting` forever; `dispose()` clears the armed retry timestamp; a
   successful reconnect resets the consecutive-failure counter; `connect()` on a

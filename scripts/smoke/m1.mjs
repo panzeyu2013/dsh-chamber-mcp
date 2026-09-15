@@ -20,7 +20,7 @@ const ON_DIR = join(SMOKE, 'm1-on')
 const OFF_DIR = join(SMOKE, 'm1-off')
 const REQ_LOG = join(SMOKE, 'logs', 'llm-requests.jsonl')
 const MOCK_LOG = join(SMOKE, 'logs', 'mock-llm.log')
-const OUT = join(ROOT, 'docs', 'milestones', 'M1-raw.log')
+const OUT = join(SMOKE, 'logs', 'M1-raw.log')
 
 // Scratch means scratch: wipe the home and the two workspace dirs first, or a
 // stale install from an earlier run silently becomes the thing under test (see
@@ -200,7 +200,7 @@ try {
     say(`R3: off-workspace turn carries NO mcp__fixture__* tools: ${!offHasMcp} (stock tools remain: ${offHasStock})`)
   }
 
-  mkdirSync(join(ROOT, 'docs', 'milestones'), { recursive: true })
+  mkdirSync(join(SMOKE, 'logs'), { recursive: true })
   writeFileSync(OUT, evidence.join('\n') + '\n')
 } finally {
   await inst.stop()

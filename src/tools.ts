@@ -3,9 +3,8 @@
  * tool and builds the {@link ToolDefinition} generation for one MCP server.
  *
  * The naming contract and the definition/executor semantics MIRROR the
- * official `@deepseek-ai/dsh-mcp-client` plugin exactly (see
- * docs/recon/mcp-client-official.md §3): every MCP tool has the stable
- * identity `(serverName, rawName)`; the model-facing public name is
+ * official `@deepseek-ai/dsh-mcp-client` plugin exactly: every MCP tool has
+ * the stable identity `(serverName, rawName)`; the model-facing public name is
  * `mcp__<serverName>__<rawName>` normalized to the DeepSeek function-name
  * contract (≤64 chars of `[A-Za-z0-9_-]`), with a 12-hex SHA-256 identity
  * suffix appended whenever normalization is lossy. The raw name is the only
