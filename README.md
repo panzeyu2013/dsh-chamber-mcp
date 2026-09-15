@@ -44,9 +44,8 @@ Prerequisites:
 Releases ship as a GitHub Release whose asset is the packed tarball
 (`npm publish` is temporarily disabled). Pick the newest asset from the
 [Releases page](https://github.com/panzeyu2013/dsh-chamber-mcp/releases) —
-the **newest published release is `v0.0.2`** (published 2026-09-14, tgz +
-`.sha256`); the **`v0.0.3` line is prepared on `main` but not tagged yet** —
-and install it per instance:
+the **newest published release is `v0.0.3`** (published 2026-09-15, tgz +
+`.sha256`) — and install it per instance:
 
 ```sh
 # into the web profile of one dsh instance (per-instance management)
