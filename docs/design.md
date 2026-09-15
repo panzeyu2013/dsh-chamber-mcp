@@ -453,7 +453,7 @@ flags and the full config is green at the time of writing.
 | `src/client/section.tsx` | `McpScopeSection` page component (+ composed-props interface, outcome→text mapping) |
 | `src/client/server-card.tsx` | one server card: badges, per-workspace on/off rows, remove cascade confirm |
 | `src/client/add-form.tsx` | staged add form (transport switch, stdio/http fields, write-only secret rows, draft validation) |
-| `src/client/import.ts` | 0.0.3 single-server JSON import (`mcpServers`, opencode and flat shapes → draft; secret values land write-only) |
+| `src/client/import.ts` | 0.0.3 single-server JSON import (`mcpServers` / VS Code `servers` / opencode `mcp`, flat and array shapes → draft; tolerant of a brace-less or torn section (with or without the `mcp` wrapper, dangling separators/closers included), comments, trailing commas, fences and prose; candidates are tried until one resolves a server, so an example snippet above the real config cannot shadow it; discovery is iterative and bounded, so a deeply nested paste cannot throw; `env` takes a map or a `{name,value}` list; secrets land write-only) |
 | `src/client/runtime.ts` | 0.0.3 runtime store over the three host routes: status/action/tool-list reads (`refresh`/`act`/`test`/`tools`); pending-action state lives in the card (§12) |
 | `src/client/styles.ts` | style seat: the plugin's stylesheet, its class-name map, and the `data-plugin-css` tag mount (§9) |
 | `src/client/workspaces.ts` | minimal workspace-row narrowing (typed items) |
@@ -1159,7 +1159,10 @@ inline SVG.
 - **Form** additions: enable switch, `timeoutMs`, an inline unsaved-changes
   guard (header and footer route through the same `requestClose`), clipboard
   paste for command / `.env` / header lines, and a single-server JSON import
-  (`src/client/import.ts`, pure + unit-tested). `section` adds a name filter
+  (`src/client/import.ts`, pure + unit-tested) that reads the paste as JSON or
+  JSONC: brace-less `"mcp": { ... }` sections or bare server maps (stray
+  separators and parent closers included), comments, trailing commas, fences,
+  prose, wrapper keys and arrays included. `section` adds a name filter
   and per-card all-on/all-off switches (one batched mutation).
 - **Style acceptance (0.0.3 additions).** The status dot uses chamber's dot
   geometry verbatim (`8px`, `border-radius: 50%`, `corner-shape: round`, state

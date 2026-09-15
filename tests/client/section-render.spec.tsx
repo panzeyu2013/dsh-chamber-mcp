@@ -13,6 +13,7 @@ import { McpScopeSection, type McpScopeSectionProps } from '../../src/client/sec
 // pull the slot/locale module augmentations (register-site decls) into this program
 import type {} from '../../src/client/index.ts'
 import { en, zh, countKey, type SettingsKey } from '../../src/client/locales.ts'
+import { EMPTY_DRAFT, evaluateDraft } from '../../src/client/add-form.tsx'
 import type { CredentialInfo } from '@deepseek-ai/dsh-credentials/types'
 import type { McpScopeDoc, WorkspaceOverrides } from '../../src/shared/model.ts'
 import type { SaveOutcome, ServerSaveInput } from '../../src/client/controller.ts'
@@ -427,6 +428,96 @@ describe('McpScopeSection render', () => {
     expect(inputById(mounted.host, 'mcp-scope-add-command').value).toBe('node')
     const envKey = mounted.host.querySelector<HTMLInputElement>('[aria-label="' + en['add.envKey'] + ' 1"]')
     expect(envKey?.value).toBe('TOKEN')
+  })
+
+  it('imports a brace-less opencode config section pasted from a real settings file', async () => {
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, en['add.add'])!.click()
+    await flush()
+    buttonByText(mounted.host, en['add.importJson'])!.click()
+    await flush()
+    const textarea = mounted.host.querySelector<HTMLTextAreaElement>('textarea')
+    if (textarea === null) throw new Error('missing import textarea')
+    // The reported paste: an opencode `mcp` section without its outer braces.
+    const section = [
+      '"mcp": {',
+      '  "zotero": { "type": "local", "command": ["/Users/me/.local/bin/zotero-mcp"], "enabled": true },',
+      '  "iMCP": { "type": "local", "command": ["/Applications/iMCP.app/Contents/MacOS/imcp-server"], "enabled": true },',
+      '  "email": { "type": "local", "command": ["uvx", "mcp-email-server", "stdio"], "enabled": true }',
+      '}',
+    ].join('\n')
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!
+    setter.call(textarea, section)
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    await flush()
+    buttonByText(mounted.host, en['import.parse'])!.click()
+    await flush()
+    expect(inputById(mounted.host, 'mcp-scope-add-name').value).toBe('zotero')
+    expect(inputById(mounted.host, 'mcp-scope-add-command').value).toBe('/Users/me/.local/bin/zotero-mcp')
+    expect(mounted.text()).toContain(t('import.multiple', { name: 'zotero', others: 'iMCP, email' }))
+  })
+
+  it('flags two header rows that collapse onto the same credential ref', () => {
+    const draft = {
+      ...EMPTY_DRAFT,
+      name: 'srv',
+      transport: 'streamable-http' as const,
+      url: 'https://x/mcp',
+      headers: [
+        { name: 'X-Api-Key', ref: 'X_API_KEY', value: '' },
+        { name: 'X_Api_Key', ref: 'X_API_KEY', value: '' },
+        { name: '', ref: '', value: '' },
+      ],
+    }
+    expect(evaluateDraft(draft, []).headers).toEqual([undefined, 'validation.refDuplicate', undefined])
+  })
+
+  it('tells unreadable JSON apart from JSON without a server entry', async () => {
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, en['add.add'])!.click()
+    await flush()
+    buttonByText(mounted.host, en['add.importJson'])!.click()
+    await flush()
+    const textarea = mounted.host.querySelector<HTMLTextAreaElement>('textarea')
+    if (textarea === null) throw new Error('missing import textarea')
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!
+    setter.call(textarea, '{nope')
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    await flush()
+    buttonByText(mounted.host, en['import.parse'])!.click()
+    await flush()
+    expect(mounted.text()).toContain(t('import.error'))
+    expect(mounted.text()).not.toContain(t('import.errorNoServer'))
+    setter.call(textarea, '{"hello":1}')
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    await flush()
+    buttonByText(mounted.host, en['import.parse'])!.click()
+    await flush()
+    expect(mounted.text()).toContain(t('import.errorNoServer'))
+  })
+
+  it('caps the "also found" note and reports how many names are left out', async () => {
+    const servers = Array.from({ length: 12 }, (_, index) => ({ command: 'node s' + index }))
+    const section = JSON.stringify({ mcpServers: Object.fromEntries(servers.map((s, i) => ['s' + i, s])) })
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, en['add.add'])!.click()
+    await flush()
+    buttonByText(mounted.host, en['add.importJson'])!.click()
+    await flush()
+    const textarea = mounted.host.querySelector<HTMLTextAreaElement>('textarea')
+    if (textarea === null) throw new Error('missing import textarea')
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!
+    setter.call(textarea, section)
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    await flush()
+    buttonByText(mounted.host, en['import.parse'])!.click()
+    await flush()
+    const note = t('import.multiple', { name: 's0', others: 's1, s2, s3, s4, s5, s6, s7, s8' + t('import.more', { count: '3' }) })
+    expect(mounted.text()).toContain(note)
+    expect(mounted.text()).not.toContain('s11')
   })
 
   it('renders the runtime status row, drives connect and discloses the tool list', async () => {

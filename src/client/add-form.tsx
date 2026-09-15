@@ -58,6 +58,9 @@ export interface AddDraft {
   timeoutMs: string
 }
 
+/** Names the "also found" note lists before it is truncated. */
+const IMPORT_NAME_LIMIT = 8
+
 export const EMPTY_DRAFT: AddDraft = {
   name: '',
   transport: 'stdio',
@@ -201,6 +204,7 @@ export function evaluateDraft(draft: AddDraft, existingNames: readonly string[])
       problems.url = 'invalid'
     }
     const seenNames = new Set<string>()
+    const seenRefs = new Set<string>()
     for (const row of draft.headers) {
       const name = row.name.trim()
       const ref = row.ref.trim()
@@ -218,9 +222,14 @@ export function evaluateDraft(draft: AddDraft, existingNames: readonly string[])
         problem = 'validation.headerNameDuplicate' as const
       } else if (!CREDENTIAL_REF_PATTERN.test(ref)) {
         problem = 'validation.refPattern' as const
+      } else if (seenRefs.has(ref)) {
+        // Two header names can collapse onto one ref (X-Api-Key / X_Api_Key):
+        // without this, saving silently shadows one credential with the other.
+        problem = 'validation.refDuplicate' as const
       }
       problems.headers.push(problem)
       if (name !== '') seenNames.add(name)
+      if (ref !== '') seenRefs.add(ref)
     }
   }
 
@@ -390,7 +399,7 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
   const [note, setNote] = useState<string | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [importText, setImportText] = useState('')
-  const [importInvalid, setImportInvalid] = useState(false)
+  const [importProblem, setImportProblem] = useState<'invalid' | 'unsupported' | null>(null)
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -515,15 +524,19 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
   function handleImport(): void {
     const outcome = parseMcpSnippet(importText)
     if (!outcome.ok) {
-      setImportInvalid(true)
+      // Tell "unreadable JSON" apart from "readable, but no server in it".
+      setImportProblem(outcome.reason === 'unsupported' ? 'unsupported' : 'invalid')
       return
     }
     setDraft((prev) => draftFromImport(prev, outcome.server))
     setImportOpen(false)
     setImportText('')
-    setImportInvalid(false)
+    setImportProblem(null)
     if (outcome.others.length > 0) {
-      setNote(t('import.multiple', { name: outcome.server.name ?? '', others: outcome.others.join(', ') }))
+      const shown = outcome.others.slice(0, IMPORT_NAME_LIMIT)
+      const rest = outcome.others.length - shown.length
+      const others = shown.join(', ') + (rest > 0 ? t('import.more', { count: String(rest) }) : '')
+      setNote(t('import.multiple', { name: outcome.server.name ?? '', others }))
     }
   }
 
@@ -531,7 +544,7 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
     const text = await readClipboard()
     if (text === null || !mounted.current) return
     setImportText(text)
-    setImportInvalid(false)
+    setImportProblem(null)
   }
 
   function handleSubmit(event: FormEvent): void {
@@ -596,7 +609,7 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
           disabled={disabled}
           onClick={() => {
             setImportOpen((open) => !open)
-            setImportInvalid(false)
+            setImportProblem(null)
           }}
         >
           {t('add.importJson')}
@@ -609,16 +622,20 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
           <p className={styles.fieldHint}>{t('import.hint')}</p>
           <textarea
             aria-label={t('import.textareaLabel')}
-            className={cx(styles.textarea, importInvalid && styles.inputInvalid)}
+            className={cx(styles.textarea, importProblem !== null && styles.inputInvalid)}
             value={importText}
             disabled={disabled}
             spellCheck={false}
             onChange={(event) => {
               setImportText(event.target.value)
-              setImportInvalid(false)
+              setImportProblem(null)
             }}
           />
-          {importInvalid && <span className={styles.fieldProblem}>{t('import.error')}</span>}
+          {importProblem !== null && (
+            <span className={styles.fieldProblem}>
+              {t(importProblem === 'unsupported' ? 'import.errorNoServer' : 'import.error')}
+            </span>
+          )}
           <div className={styles.row}>
             <button
               type="button"
@@ -866,8 +883,8 @@ export function AddServerForm(props: AddServerFormProps): JSX.Element {
               // The problem names the field it belongs to: a ref problem marks
               // the ref input, every other one the header-name input.
               const issue = headerProblems[index]
-              const nameInvalid = issue !== undefined && issue !== 'validation.refPattern'
-              const refInvalid = issue === 'validation.refPattern'
+              const refInvalid = issue === 'validation.refPattern' || issue === 'validation.refDuplicate'
+              const nameInvalid = issue !== undefined && !refInvalid
               return (
                 <div key={index} className={styles.row}>
                   <input

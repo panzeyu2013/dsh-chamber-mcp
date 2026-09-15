@@ -13,6 +13,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > only and ignores this one — an entry left here ships in the tree but never
 > appears in the release notes.
 
+### Fixed
+
+- **Import parser tolerance (client half).** `parseMcpSnippet`
+  (`src/client/import.ts`) now reads what real config files produce instead of
+  only whole, strict JSON documents: a bare `"mcp": { ... }` section or a bare
+  map of named servers with the enclosing braces left behind (trailing
+  separators and the parent map's closer included), `//` and block comments,
+  trailing commas, fenced blocks and surrounding prose, a server map behind a
+  wrapper key, the VS Code `servers` shape, a top-level array of servers, and
+  scalar `command`/`args` entries. Parsing is still `JSON.parse`-only — pasted
+  text is never evaluated — and the form keeps filling from the first server
+  while reporting the others.
+- **Import parser hardening pass.** Server discovery is now a bounded,
+  iterative walk, so a deeply nested paste can no longer overflow the stack:
+  `parseMcpSnippet` keeps its "returns a business failure, never throws"
+  contract, with a defensive net as the last resort. Explicit maps
+  (`mcpServers` / `servers` / `mcp`) are merged in discovery order and
+  de-duplicated by name instead of only the first map being read; a map whose
+  first entry is empty prefers a usable entry; quoted server names keep their
+  spaces and colons; imported names are trimmed. Field coercion: `env` accepts
+  an object map or a `{name,value}` list and serializes structural values (no
+  more `[object Object]`), a string `args` splits like a command line, numeric
+  `0`/`1`/`"0"` flags and numeric-string `timeout` values are read, and
+  null-ish `command` tokens are skipped instead of voiding the list. The import
+  dialog now tells "unreadable JSON" apart from "readable, but no server entry"
+  and caps the "also found" list at 8 names with a `(+N more)` suffix. The
+  pasted-text helpers got the same pass: a quoted Windows command keeps its
+  backslashes (`"C:\Program Files\node.exe"`), and an unquoted `.env`
+  ` # comment` tail is dropped while a quoted value keeps its `#`.
+- **Independent audit round (import parser).** A second, adversarial pass on
+  the frozen parser found and fixed: `fencedBody` was super-quadratic on a long
+  run of fence marks (4000 backticks: 9.1 s → 1 ms, so the Settings panel can no
+  longer freeze) and is now a linear line scan; candidates are tried until one
+  RESOLVES a server, so a paste carrying an example snippet (or prose with a
+  stray `{`) above the real config still imports the config, and a later named
+  map beats an earlier flat object; `balancedRegions` skips an unbalanced
+  opener instead of aborting the scan; a torn section (missing or leading
+  comma) is read by a last-resort quoted-key reader while YAML/TOML stay
+  rejected; `env` also takes `["KEY=value"]` lists, `headers` takes
+  `["Name: value"]` strings, a flat entry keeps its `name`, an array-valued
+  `mcpServers` behind a wrapper key keeps every named server, `timeoutMs`
+  falls back to `timeout` when it is not numeric, a nested `args` entry no
+  longer voids the list, wrapper depth 5+ is covered, and `parseMcpSnippet`
+  returns `empty` instead of throwing on non-string input. Extraction
+  strategies are skipped above 4 MB and the wrapper walks use a head index plus
+  a node budget, bounding the work a paste can trigger.
+
 ## [0.0.3] - 2026-09-15
 
 Runtime-visibility and configuration-completeness line. The original locked
