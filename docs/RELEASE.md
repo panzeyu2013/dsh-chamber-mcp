@@ -3,7 +3,7 @@
 ## CI (push / tags / PR)
 
 `.github/workflows/ci.yml` runs the SAME validation chain on every push to
-main, every `v*` tag push, and every PR against **Node 24** (chamber norm: a
+`main`/`master`, every `v*` tag push, and every PR against **Node 24** (chamber norm: a
 tag can never publish an untested commit; release.yml additionally re-runs
 the full gate itself because tag-triggered workflows run in parallel). The
 first step verifies workflow action pins and release structure
@@ -17,8 +17,9 @@ self-hosted live-smoke lane is reachable.
 3. `npm test` — vitest suite (unit + integration; hermetic, no network)
 4. `npm run build` — host ESM + client bundle + d.ts
 5. `npm run verify:package` — packs the artifact and asserts:
-   - tarball contains exactly the publish surface (`lib`, `cordis.patch.yml`,
-     `LICENSE`, `README.md`, `package.json`; no `src|tests|.smoke|docs` leaks);
+   - tarball asserts the required entries (`lib/index.js`, `lib/client.js`,
+     `lib/types/**`, `cordis.patch.yml`, `LICENSE`, `README.md`, `package.json`)
+     and rejects `src|tests|.smoke|scripts|docs|.github` paths;
    - a consumer typecheck passes against the **packed** artifact for both
      entry points (`dsh-chamber-mcp` and `dsh-chamber-mcp/client`);
    - the built host entry imports and exports `name`/`inject`/`Config`/`apply`;
@@ -183,15 +184,17 @@ Compatibility notes for consumers:
 
 ## Smoke — what the self-hosted job runs
 
-`npm run test:smoke` = `scripts/smoke/m1.mjs` (fresh install → namespace R/W →
-two-workspace R3 tool-capture PASS) then `scripts/smoke/m0.mjs` (install,
-inventory, revision conflict, credentials, gate). Both drivers **pack the plugin
-from the working tree on every run** and drive the install *and* the boot through
-the anchor CLI (`scripts/smoke/instance.mjs`'s `ANCHOR_CLI` — the gateway's
-current anchor, dsh 0.1.5-rc.2 as measured 2026-09-14), recording the anchor
-version, tarball path and installed artifact at the top of the transcript; they
-fail the run if the install exits non-zero, if the profile does not gain the
-bundle, or if the installed version differs from `package.json`. Prereqs on the
+`npm run test:smoke` = `scripts/smoke/m1.mjs` (fresh install → settings
+describe/mutate → two-workspace model-facing tool capture; the R3 verdict is
+transcript evidence, not an exit-code assertion) then `scripts/smoke/m0.mjs`
+(install, inventory, revision conflict, credentials, gate). Both drivers **pack
+the plugin from the working tree on every run** and drive the install *and* the
+boot through the anchor CLI (`scripts/smoke/instance.mjs`'s `ANCHOR_CLI` — the
+gateway's current anchor, read at run time), recording the anchor version,
+tarball path and installed artifact at the top of the transcript; both fail the
+run if the installed version differs from `package.json`, and m0 additionally
+fails if the install exits non-zero or the profile does not gain the bundle.
+Prereqs on the
 runner: writable repo checkout, that anchor CLI, pnpm on PATH, registry network
 for pnpm; everything else lands under `.smoke/` (gitignored). Each driver writes
 its transcript to `.smoke/logs/{M0,M1}-raw.log` (M1 also keeps the captured LLM

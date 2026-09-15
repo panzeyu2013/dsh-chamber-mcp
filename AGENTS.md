@@ -41,7 +41,7 @@ chamber's current anchor CLI, read at run time. Migration recipe:
   deviations, style seat and UI layout reference), `acceptance.md` (scope +
   cuts), `status.md` (release/verification state), `RELEASE.md` (runbook),
   `README.md` index, plus `mcp-desktop-layout.svg` (the layout wireframe
-  `design.md` embeds). Keep these to design, status, decisions and process —
+  `design.md` links). Keep these to design, status, decisions and process —
   no audit or review write-ups.
 
 ## Invariants (do not break)

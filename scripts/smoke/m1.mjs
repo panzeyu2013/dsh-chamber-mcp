@@ -30,7 +30,7 @@ for (const dir of [HOME, ON_DIR, OFF_DIR]) mkdirSync(dir, { recursive: true })
 rmSync(REQ_LOG, { force: true })
 
 // mock LLM child (kept alive for the duration of this process)
-const mock = spawn(NODE, [join(SMOKE, 'mock-llm.mjs'), '39001'], { stdio: ['ignore', 'pipe', 'pipe'] })
+const mock = spawn(NODE, [join(ROOT, 'scripts', 'smoke', 'mock-llm.mjs'), '39001'], { stdio: ['ignore', 'pipe', 'pipe'] })
 mock.stdout.on('data', (d) => process.stdout.write(`[mock] ${d}`))
 await new Promise((r) => setTimeout(r, 800))
 

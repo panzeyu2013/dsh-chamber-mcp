@@ -44,8 +44,10 @@ requirement → how we prove it (smoke / unit / E2E) → evidence location.
   presence = off; flat so one toggle is one atomic path op.
 - `overrides: WorkspaceOverrides` = `Record<string, Record<string, true>>` —
   recorded = explicitly off; dict-of-dicts so a toggle is one atomic path op.
-- `enabled(w, s)` = not globally disabled AND the override row has no OWN
-  property `s` (`Object.hasOwn`) — new server/workspace default-on, and
+- Enablement is two predicates combined at the call sites (`src/agents.ts`,
+  `src/manager.ts`, the client gate): `isEnabled(overrides, w, s)` (the override
+  row has no OWN property `s`, `Object.hasOwn`) AND NOT
+  `isServerDisabled(doc, s)`. New server/workspace default-on, and
   prototype-member server names keep working.
 - Decisions: subagent/delegation children are not adopted
   (preset-governed); workspace membership is re-derived per push/reconcile;

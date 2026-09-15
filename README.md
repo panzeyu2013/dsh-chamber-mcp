@@ -140,7 +140,7 @@ Consequences worth knowing:
   meter itself renders only after the model has reported usage for the session.
 - **A call renders as an MCP row, not the generic card.** The plugin owns how
   its calls render through the keyed `tool.call.toolview` slot: the leading mark
-  is a plug, the title is `serverName · toolName` with a `stdio` / `http`
+  is a plug, the title is `serverName · toolName` with a `stdio` / `Streamable HTTP`
   transport tag, and the row expands to the raw arguments and the rendered
   result. A **running** call carries the sweep treatment and a primary title
   and reports `aria-busy`; a **settled** call drops the animation and shows its
@@ -309,7 +309,7 @@ npm install            # dev deps (all @deepseek-ai/* pinned to one dsh generati
 npm run typecheck      # src + tests
 npm test               # vitest suite (250 tests, 17 files)
 npm run check          # full gate: typecheck + tests + build + package verify
-npm run verify:package # pack → contents whitelist → consumer d.ts → bundle purity → MCP-row artifact check → determinism
+npm run verify:package # pack → contents whitelist → consumer d.ts → built host entry import → bundle purity → MCP-row artifact check → determinism
 npm run verify:client-artifact # drive the BUILT client bundle in jsdom (MCP row registration/render/expand)
 npm run pack:tgz       # build + .smoke/dsh-chamber-mcp-<ver>.tgz
 npm run test:smoke     # live M0/M1 smoke (needs the chamber-anchored dsh CLI; see docs/RELEASE.md)

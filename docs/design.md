@@ -21,8 +21,8 @@ src/index.ts           HOST half: plugin entry (name/inject/Config/apply) — re
 src/client/…           BROWSER half: settings section UI + the MCP transcript lane
                        (src/client/tool-card/), compiled to lib/client.js
 src/shared/…           pure types + constants shared by both halves; the client
-                       imports the naming constants at RUNTIME (plain strings and a
-                       regex), while every other import from here is type-only
+                       imports this module at RUNTIME (plain values and helpers,
+                       no Node built-ins) and never a host-only module
 lib/index.js           host ESM (tsc emit)          lib/types/**  declarations
 lib/client.js          browser bundle (esbuild CJS + __ModuleLoader__.load wrapper)
 ```
@@ -39,7 +39,7 @@ credential refs) are removed by hand.
 ## 2. Identity & plugin entry (host)
 
 - `export const name = 'mcp-scope'` (record scope, logs), `inject = ['settings','credentials','tools','workspaceRegistry','agents']`, `Config = z.object({})` (schemastery), `async apply(ctx, config)`.
-- Namespace **`mcp-scope`** registered via `ctx.settings.installSection(ctx, 'mcp-scope', DocumentSchema, {}, { setSource, onChange, validate })`.
+- Namespace **`mcp-scope`** registered via `ctx.settings.installSection(ctx, 'mcp-scope', DocumentSchema, EMPTY_DOC, { setSource, onChange, validate })`.
 - Single-instance guard: a module-level `WeakSet<Context>` keyed on `ctx.root` (mirror official mcp-client serverName reservation) — duplicate plugin load fails loudly.
 - `apply` returns fast (no boot gating on server connects); per-server connect runs async with official reconnect defaults.
 
@@ -68,8 +68,9 @@ ServerDef =
 // serverName: /^[A-Za-z0-9_-]{1,32}$/ (official contract)
 // ref: /^[A-Za-z_][A-Za-z0-9_]*$/ (CredentialRef = env-var name), value write-only via credentials domain
 ```
-Schema `validate` hook: duplicate serverName across `servers`; duplicate/conflicting
-credential refs within one server → reject the write.
+Schema `validate` hook: duplicate serverName across `servers`; duplicate env keys or
+duplicate header names within one server → reject the write (the same credential
+ref may be referenced by differently-named headers).
 
 Cross-field rules (`src/shared/model.ts` `validateDoc`): unique `serverName`
 (`[A-Za-z0-9_-]{1,32}`, never `__proto__` / `constructor` / `prototype`), a required
@@ -104,7 +105,7 @@ comments, anchors and formatting survive on untouched nodes.
   durable `domain/changed` write for the workspace domain (`src/manager.ts`
   `mcp-scope.workspace-domain()`) triggers an applier reconcile, so a deleted
   workspace — or its directory — revokes its sessions' tools promptly.
-  - `agent/created` (root listener) → workspaceOf(session) = canonical-cwd match against
+  - `agent/created` (root listener) → `workspaceIdOf(session cwd, workspaceRegistry.list())` = canonical-cwd match against
     `workspaceRegistry.list()`; if a workspace W exists and `enabled(W, s)` → apply server's
     defs into `agent.ctx.tools` (each `register()` returns disposer; tracked per agent/server).
     Workspace-less sessions (or cwd outside registered workspaces): no MCP tools.
@@ -118,7 +119,7 @@ comments, anchors and formatting survive on untouched nodes.
   `mcp__<serverName>__<rawName>` ≤64 chars `[A-Za-z0-9_-]` + 12-hex sha256 suffix on lossy
   normalization; raw MCP inputSchema passthrough; `output {schema, render}` shape; executor
   = raw SDK request `tools/call` + `RawCallToolResultSchema` with `{signal: exec.signal,
-  timeout: 60000}`; `isError` → throw; generation swap on re-sync; registration conflict →
+  timeout: <per-server timeoutMs, default 60000>}`; `isError` → throw; generation swap on re-sync; registration conflict →
   rollback whole generation.
 - Credentials events (`credentials/reference-updated` for a ref in use) → reconnect that
   server so new values take effect (a globally disabled or manually stopped
@@ -166,7 +167,7 @@ comments, anchors and formatting survive on untouched nodes.
 | `src/routes.ts` | 0.0.3 runtime routes on the Connection carrier: `status` / `action` / `tools` (fixed host codes only; §(d)) |
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index,routes}.spec.ts` | the 8 `tests/host/` suites plus `tests/tools.spec.ts`, all green (the 8 client suites live under `tests/client/; repo total 250 tests / 17 files) |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index,routes}.spec.ts` | the 8 `tests/host/` suites plus `tests/tools.spec.ts`, all green (the 8 client suites live under `tests/client/`; repo total 250 tests / 17 files) |
 
 Run: `npm run typecheck` (both tsconfigs) and
 `node node_modules/vitest/vitest.mjs run` — both fully green (250 tests / 17 files).
@@ -300,8 +301,8 @@ flags and the full config is green at the time of writing.
    the canonical `{content, structuredContent?}` value keeps raw blocks.
 4. **Client identity** on the wire is `{name: 'dsh-chamber-mcp', version:
    <package.json version>}` — `src/server.ts` derives both from the package
-   manifest (so it reads `0.0.2` at HEAD, not the `0.0.1` this note originally
-   recorded); official sends `dsh-mcp-client`; server-facing semantics
+   manifest (it reads `0.0.3` at HEAD); official sends `dsh-mcp-client`;
+   server-facing semantics
    unchanged.
 5. **Reconnect policy is fixed at official defaults** (`500→30_000 ms`,
    `maxAttempts: 10`) — the document schema has no reconnect fields
@@ -396,7 +397,8 @@ flags and the full config is green at the time of writing.
 - Browser plugin exports `inject = ['slots','locale','remote','remote.credentials','settingsScope','workspaces','sessions']` + `apply(ctx)`; registers locale ns `mcp-scope.settings` ({en, zh}) then
   `ctx.slots.inject('settings.section', () => ctx.slots.register({ name:'settings.section',
   id:'mcp-scope', order: 25, label: t-thunk, locale: NS,
-  inject: () => controller.face() }, McpScopeSection))` — no child slots (the
+  inject: () => ({ ...face, hooks: { ...face.hooks, runtime }, refreshRuntime,
+  connectServer, disconnectServer, testServer, loadTools }) }, McpScopeSection))` — no child slots (the
   framework's InjectFace maps `face.hooks.doc` → the `useDoc` prop; actions
   pass through verbatim; verified against the shipped renderer).
 - **Transcript lane (0.0.2 line)**: the same half owns how MCP calls render, by
@@ -417,7 +419,7 @@ flags and the full config is green at the time of writing.
   supported generation); the provider of `ctx.sessions` is NOT named there
   because its module id is generation-dependent (see §11).
   Detail and evidence: §11.
-- Data: `ctx.settingsScope.bind<Doc>({ namespace:'mcp-scope' })` → snapshot
+- Data: `ctx.settingsScope.bind<Doc>({ namespace:'mcp-scope', decode: decodeDoc })` → snapshot
   {status, value, revision, writable}; workspaces via global `useWorkspaces`.
 - Views: server cards (name, transport, "off in N workspaces", edit, remove, per-workspace
   on/off rows with default-on note), staged Add/Edit form (serverName + transport toggle +
@@ -452,7 +454,7 @@ flags and the full config is green at the time of writing.
 | `src/client/server-card.tsx` | one server card: badges, per-workspace on/off rows, remove cascade confirm |
 | `src/client/add-form.tsx` | staged add form (transport switch, stdio/http fields, write-only secret rows, draft validation) |
 | `src/client/import.ts` | 0.0.3 single-server JSON import (`mcpServers`, opencode and flat shapes → draft; secret values land write-only) |
-| `src/client/runtime.ts` | 0.0.3 runtime store over the three host routes: status/action/tool-list reads, pending-action state (§12) |
+| `src/client/runtime.ts` | 0.0.3 runtime store over the three host routes: status/action/tool-list reads (`refresh`/`act`/`test`/`tools`); pending-action state lives in the card (§12) |
 | `src/client/styles.ts` | style seat: the plugin's stylesheet, its class-name map, and the `data-plugin-css` tag mount (§9) |
 | `src/client/workspaces.ts` | minimal workspace-row narrowing (typed items) |
 | `src/client/tool-card/{names,icon,row,view,register}.ts(x)` | transcript lane: MCP tool identity from the session's request header, the keyed tool view, and its registration lifecycle (§11) |
@@ -474,7 +476,9 @@ Also edited (build-gate fixes, see §13): `tsconfig.json` (added `DOM` lib),
   optional and claiming them obliges consuming `renderSlot`.
 - The section's own props are declared explicitly in
   `McpScopeSectionProps` (section.tsx): owner `close`, locale `t`, framework
-  hooks `useDoc` + `useWorkspaces`, and the four injected actions, re-stated
+  hooks `useDoc` + `useWorkspaces`, the seven document actions (`addServer`,
+  `replaceServer`, `removeServer`, `toggleWorkspace`, `toggleWorkspaces`,
+  `setServerEnabled`, `unsetCredential`) plus the runtime members, re-stated
   with locally-resolvable types. Reason: the official composed type
   (`PropsRuntime`/`InjectFace`/`SnapshotSelectorHook`) rides
   `@deepseek-ai/dsh-client-store` re-exports that are **not installed in this
@@ -489,7 +493,7 @@ Also edited (build-gate fixes, see §13): `tsconfig.json` (added `DOM` lib),
   between publishes) — no `dsh-client-store` value dependency.
 - `inject = ['slots','locale','remote','remote.credentials','settingsScope',
   'workspaces','sessions']` exactly as assigned — `sessions` was added by the 0.0.2
-  transcript lane (`src/client/index.ts:124`; without it the lane stays off) (`connection` was dropped —
+  transcript lane (`src/client/index.ts`; without it the lane stays off) (`connection` was dropped —
   grep-proven unused; `remote.credentials` is the real credentials gateway,
   see §7.3).
 
@@ -718,7 +722,7 @@ every button keeps its name.
 factory, not the sources) in a real browser through the lifecycle the initial reconnaissance
 could not observe. Result of the recorded run (`.smoke/ui-preview/artifact.json`,
 2026-09-11): the loader registers `dsh-chamber-mcp`; the factory requires
-**only** `react` and `react/jsx-runtime`; `apply` registers three labeled
+**only** `react` and `react/jsx-runtime`; `apply` registers four labeled
 effects with `mcp-scope: styles` first, then the dictionary and controller
 wiring, and one `settings.section` registration (`mcp-scope`, order 25, label
 from the namespace); the style effect puts the sheet in the document with the
@@ -872,7 +876,7 @@ MCP 服务器                                          [刷新状态]  [+ 添加
 ✓ 已添加 github                                                  (role=status)
 
 ╔═ 卡片（article, aria-busy） ════════════════════════════════════════════╗
-║ (◉) github   [Streamable HTTP]   1 header · Off in 2 workspaces  [移除][编辑] ║  ← 卡头
+║ (◉) github   [流式 HTTP]   1 个请求头 · 在 2 个 workspace 中已关闭  [移除][编辑] ║  ← 卡头
 ║ ● 已连接 · 12 个工具                        [断开] [测试] [工具 (12)]   ║  ← 状态行
 ║ ┌ 工具 ──────────────────────────────────────────────────────────────┐ ║
 ║ │ search_issues — Search issues       (code 11px, 悬停显示描述)      │ ║
@@ -897,10 +901,10 @@ MCP 服务器                                          [刷新状态]  [+ 添加
 
 | # | Element | States / notes |
 |---|---|---|
-| 1 | **Card header** `styles.cardHead` | enable switch (writable only) · server name (focus target after save) · transport tag (`stdio` / `Streamable HTTP`) · summary `N env keys / N headers · 已停用 · Off in N workspaces` · **移除**(danger) / **编辑**(outline), hidden while the remove confirm is open |
+| 1 | **Card header** `styles.cardHead` | enable switch (writable only) · server name (focus target after save) · transport tag (`stdio` / `Streamable HTTP`) · summary `N 个环境变量键 / N 个请求头 · 已停用 · 在 N 个 workspace 中已关闭` · **移除**(danger) / **编辑**(outline), hidden while the remove confirm is open |
 | 2 | **Status row** `styles.statusRow` | 8 px dot (state tone) · phase label (`已连接/连接中…/重连中…/失败/已停止/已停用/状态未知`) · `N 个工具` (connected) · `第 i/max 次尝试` (reconnecting) · spacer · **断开|连接** (pending 文案) · **测试** · **工具 (N)** — runtime actions only when a runtime view exists; disabled-server actions hidden |
 | 3 | Runtime failure line | localized fixed code (never remote text) |
-| 4 | No-channel hint | `运行时状态不可用` / `运行时状态刷新失败` |
+| 4 | No-channel hint | `当前部署未提供运行时状态通道。` / `运行时状态刷新失败。` |
 | 5 | Test note (role=status) | transient `测试通过 · N 个工具` |
 | 6 | Runtime action alert (role=alert) | transient, dismissible |
 | 7 | Tools disclosure | loading / empty / rows (`rawName — description`, true total when truncated) |
@@ -908,7 +912,7 @@ MCP 服务器                                          [刷新状态]  [+ 添加
 | 9 | Remove confirmation `styles.confirm` | danger-tinted block, Esc cancels, focus returns to 移除 |
 | 10 | Definition details | command line **or** URL in `code`, plus cwd hint |
 | 11 | Credential badges | configured (ok) / unset (warn) / unknown (neutral); **清除** only when configured |
-| 12 | Workspace block `styles.wsBlock` | `默认开启…` hint · lifecycle states (loading / error / no workspaces) · per-workspace switch rows (`开启` / `关闭`) · all-on/all-off (≥2 workspaces) · `新建 workspace 默认开启` |
+| 12 | Workspace block `styles.wsBlock` | `默认开启…` hint · lifecycle states (loading / error / no workspaces) · per-workspace switch rows (`开启（默认）` / `已关闭`) · all-on/all-off (≥2 workspaces) · `新建 workspace 默认开启` |
 
 ### Add / Edit form (rendered above the list)
 
@@ -963,14 +967,14 @@ MCP 服务器                                          [刷新状态]  [+ 添加
 
 | Host phase | Dot | Label (zh) | Actions shown (runtime available) |
 |---|---|---|---|
-| `connected` | 绿 `state-success-primary` | 已连接 + `N 个工具` | 断开 · 测试 · 工具 (N) |
+| `connected` | 绿 `state-success-primary` | 已连接 + `N 个工具`（仅当 toolCount > 0） | 断开 · 测试 · 工具 (N) |
 | `connecting` | 黄 `state-warn-primary` | 连接中… | 断开 · 测试 |
 | `reconnecting` | 黄 | 重连中… + `第 i/max 次尝试` | 断开 · 测试 |
 | `failed` | 红 `state-error-primary` | 失败 | 连接 · 测试 |
 | `stopped` | 灰 `border-l3` | 已停止 | 连接 · 测试 |
 | `disabled` | 灰 + 卡片 60% 不透明 | 已停用 | （无运行时动作；用卡头开关启用） |
 | `unknown` | 灰 | 状态未知 | 连接 · 测试 |
-| no runtime view | 灰 + hint | 状态未知 + `运行时状态不可用`/`刷新失败` | （无运行时动作） |
+| no runtime view | 灰 + hint | 状态未知 + `当前部署未提供运行时状态通道。`/`刷新失败` | （无运行时动作） |
 
 ### Metrics (source of truth: `src/client/styles.ts`)
 
@@ -1000,7 +1004,7 @@ MCP 服务器                                          [刷新状态]  [+ 添加
   `没有匹配“…”的服务器` instead of the empty-state copy.
 - **Polling**: the runtime snapshot is fetched once per document revision, on
   `connection/reset`, and every 5 s while the panel is visible; with zero servers
-  configured the poll is skipped entirely (the header refresh action still works).
+  the header Refresh is not rendered (the once-per-revision fetch still runs).
 - **Degradation**: no runtime channel (headless host / missing route) hides the runtime
   actions and shows the unavailable hint; all document features keep working.
 
@@ -1190,8 +1194,9 @@ inline SVG.
   bundled by esbuild (CJS; externals = official platform table + cordis) wrapped in the
   `__ModuleLoader__.load({ id, factory })` shape; d.ts emitted for both entries.
 - vitest unit/integration tests: naming; document eval; per-server supervisor (the
-  REAL `@modelcontextprotocol/sdk` client over stdio against the in-repo fixture — no
-  SDK mock exists in the suite);
+  REAL `@modelcontextprotocol/sdk` client over stdio against the in-repo fixture);
+  `tests/tools.spec.ts` drives the definition/executor paths through a hand-rolled
+  mock client;
   **agent-scope gating with a real ToolRuntime + real dsh-scope createScope contexts**
   (registry get(name, scope) assertions); transport/env/credential resolution.
 - M0/M1 live smoke (scratch instance from the gateway anchor CLI — dsh 0.1.5-rc.2

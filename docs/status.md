@@ -34,7 +34,8 @@ Current release, compatibility and verification state. Refreshed 2026-09-15.
 - Live smoke `npm run test:smoke` (`M1` + `M0`) exit 0 against the anchor CLI
   with `dsh-chamber-mcp@0.0.3` installed. The M1 capture records R3: the enabled
   workspace's model-facing turn carries `mcp__fixture__echo` /
-  `mcp__fixture__env_report`, the disabled workspace's turn carries none.
+  `mcp__fixture__env_report`, the disabled workspace's turn carries none
+  (transcript evidence — the driver reports the verdict but does not fail on it).
 - Transcripts are written under `.smoke/logs/` (gitignored) and are not
   committed.
 
