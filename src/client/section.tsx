@@ -46,7 +46,7 @@ type DocHook = SnapshotHook<McpStoreSnapshot>
  * is inferred from the register options at the registration site; this
  * interface re-states the same members with locally-resolvable types
  * (several official cross-package type re-exports collapse to `any` in this
- * dev tree — see docs/ui-notes.md).
+ * dev tree — see docs/design.md §7).
  */
 export interface McpScopeSectionProps {
   /** Settings shell owner share: close the settings panel. */

@@ -68,7 +68,7 @@ const NOOP_REFRESH = async () => {}
 const EMPTY_RUNTIME: RuntimeSnapshot = { phase: 'ready', servers: {} }
 
 // Test-only casts: the composed props re-state framework types that collapse
-// to opaque cross-package shapes in this dev tree (see docs/ui-notes.md).
+// to opaque cross-package shapes in this dev tree (see docs/design.md §7).
 function propsOf(live: LiveState, actions: Actions): McpScopeSectionProps {
   const wsState = {
     items: live.wsItems,

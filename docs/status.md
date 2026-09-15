@@ -6,8 +6,7 @@ Current release, compatibility and verification state. Refreshed 2026-09-15.
 
 - **Working line:** `0.0.3` on `main` — version set in `package.json` ==
   `package-lock` `packages[""]` == the dated CHANGELOG section; **not tagged**.
-- **Newest published release:** `v0.0.2` — tag `v0.0.2` → commit `0ce2ea6`,
-  GitHub Release published 2026-09-14 (assets `dsh-chamber-mcp-0.0.2.tgz` +
+- **Newest published release:** `v0.0.2` — tag `v0.0.2`, GitHub Release published 2026-09-14 (assets `dsh-chamber-mcp-0.0.2.tgz` +
   `.sha256`). `v0.0.1` is the previous release.
 - Releases ship the packed tgz as a GitHub Release asset; **npm publishing is
   temporarily disabled**. Flow and rollback: `docs/RELEASE.md`. Confirm what is

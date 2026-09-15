@@ -229,7 +229,7 @@ the verification hardening that followed two adversarial review rounds.
   design system — `ui-primitives` Button/Tag/Pill/Switch geometry, the
   settings-panel card and editing-surface fills, the official field
   vocabulary — so the section reads as part of the panel in both themes
-  (mapping table in `docs/ui-notes.md` §6).
+  (mapping table in `docs/design.md` §9).
 - **Workflow actions are pinned to commit SHAs.** Every `uses:` in `ci.yml` and
   `release.yml` now names a 40-hex commit (`actions/checkout@v5.1.0`,
   `actions/setup-node@v5.0.0`, `actions/upload-artifact@v6.0.0`,
@@ -323,9 +323,8 @@ the verification hardening that followed two adversarial review rounds.
   two values that had reached the repository are fully purged: the committed
   transcript is redacted, the 23 gitignored `.smoke/**/*.log` transcripts were
   scrubbed, and history was rewritten so no commit or object in this clone still
-  contains them, and the rewritten history was force-pushed (`main` bdbb6b3 →
-  fb5255d, tag `v0.0.1` 4e1962a → 8e32806) so the public remote serves the purged
-  history — verified from a fresh clone.
+  contains them, and the rewritten history was force-pushed so the public remote
+  serves the purged history — verified from a fresh clone.
 
 ### Compatibility
 

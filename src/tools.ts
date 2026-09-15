@@ -16,7 +16,7 @@
  * {@link ./agents.ts} through each live agent's `agent.ctx`. The definition
  * BUILD step is therefore separated from any registration step.
  *
- * Intentional deviation (documented in docs/host-notes.md): the rc.1 image
+ * Intentional deviation (documented in docs/design.md §5): the rc.1 image
  * bridge is skipped — image/audio/resource content degrades to text
  * placeholders, as in official rc.5.
  *

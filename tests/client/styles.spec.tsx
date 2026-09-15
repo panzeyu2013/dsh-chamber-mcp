@@ -153,7 +153,7 @@ describe('mcp-scope stylesheet', () => {
 
   it('keeps the layout guards that stop hostile content from widening the column', () => {
     // jsdom cannot measure layout, so the contract is pinned lexically here and
-    // measured for real in the browser harness (§6.4 of docs/ui-notes.md):
+    // measured for real in the browser harness (§9.4 of docs/design.md):
     // header names and credential refs are not length-capped by the document
     // schema, and a working directory is an arbitrary host path.
     const ruleOf = (selector: string): string => {

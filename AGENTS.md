@@ -37,12 +37,12 @@ chamber's current anchor CLI, read at run time. Migration recipe:
   `verify-workflow-action-pins.mjs` (chamber norm), `smoke/` (live M0/M1
   drivers against a chamber-anchored dsh instance; transcripts under
   `.smoke/`).
-- `docs/` — `design.md` (architecture), `acceptance.md` (scope + cuts),
-  `status.md` (release/verification state), `RELEASE.md` (runbook),
-  `mcp-desktop-layout.md` + `.svg` (UI reference), `host-notes.md` /
-  `ui-notes.md` (implementation notes and deviations), `README.md` index.
-  Keep these to design, status, decisions and process — no audit or review
-  write-ups.
+- `docs/` — `design.md` (architecture, upstream contracts, deliberate
+  deviations, style seat and UI layout reference), `acceptance.md` (scope +
+  cuts), `status.md` (release/verification state), `RELEASE.md` (runbook),
+  `README.md` index, plus `mcp-desktop-layout.svg` (the layout wireframe
+  `design.md` embeds). Keep these to design, status, decisions and process —
+  no audit or review write-ups.
 
 ## Invariants (do not break)
 

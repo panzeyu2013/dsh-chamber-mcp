@@ -160,7 +160,7 @@ Consequences worth knowing:
   collapse into one name. The raw MCP name is what is sent in `tools/call`.
 - **Image/audio/resource payloads degrade to text placeholders.** The
   attachments-based image bridge is a documented scope cut
-  (`docs/host-notes.md`), matching the reference implementation's behaviour.
+  (`docs/design.md` §5), matching the reference implementation's behaviour.
 - **Tool calls time out after 60 s** (official default) and are aborted with
   the run's signal. A server that overruns the fetch bounds — a repeated
   cursor, or more than `MAX_SYNC_PAGES` pages — fails the sync and keeps its
@@ -236,7 +236,7 @@ part of what "manage MCP servers for this dsh" means:
 | MCP capabilities bridged | tools only | tools only (same) |
 | Naming / env scrub / reconnect / generation swap | `mcp__<serverName>__<tool>`, scrubbed child env, backoff reconnect, `tools/list_changed` re-sync | the same contract, verified against it |
 | The call's row in the transcript | whatever the shipped tool row renders (generic card, title = tool name) | an **MCP row** owned through the keyed `tool.call.toolview` slot: plug mark, `server · tool` title, transport tag, shipped state marks (red/amber dots) and disclosure behaviour, expandable arguments + result |
-| Image results | bridged to attachments when the model accepts images | **degraded to text placeholders** — a deliberate scope cut (see `docs/host-notes.md`) |
+| Image results | bridged to attachments when the model accepts images | **degraded to text placeholders** — a deliberate scope cut (see `docs/design.md` §5) |
 
 Stock dsh has no MCP management surface to reuse: the Plugins → *Plugin
 configuration* tab renders a card only for a settings namespace a plugin
@@ -332,12 +332,10 @@ run of `release.yml` before the tag.
 
 | Doc | Contents |
 |---|---|
-| `docs/design.md` | Locked architecture and decisions |
+| `docs/design.md` | Architecture and decisions, upstream contracts and deliberate deviations, the style seat and the UI layout reference |
 | `docs/acceptance.md` | Requirement/cut matrix (R1–R4, E1–E8, C1–C6) |
 | `docs/status.md` | Current release/verification state and known limitations |
-| `docs/host-notes.md`, `docs/ui-notes.md` | Host/client API findings and intentional deviations |
 | `docs/RELEASE.md` | CI + release mechanics, smoke runner, rollback |
-| `docs/mcp-desktop-layout.md` | Settings section/card/form layout reference |
 
 Smoke drivers under `scripts/smoke/` boot scratch instances from the gateway's
 current anchor CLI (dsh **0.1.5-rc.2** as measured on 2026-09-14 — each transcript

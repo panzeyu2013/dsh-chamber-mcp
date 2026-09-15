@@ -8,7 +8,7 @@ requirement → how we prove it (smoke / unit / E2E) → evidence location.
 
 | # | Requirement | Proof method | Evidence |
 |---|---|---|---|
-| R1 | Settings → MCP section with server rows + add/edit/remove forms; management is UI-native (the settings document stays hand-editable by design) | jsdom render/flow tests of the real components + `scripts/verify-client-artifact.mjs`; a live in-GUI click-through is still open (`docs/status.md`) | tests/client/section-render.spec.tsx, scripts/verify-client-artifact.mjs, docs/ui-notes.md §6 |
+| R1 | Settings → MCP section with server rows + add/edit/remove forms; management is UI-native (the settings document stays hand-editable by design) | jsdom render/flow tests of the real components + `scripts/verify-client-artifact.mjs`; a live in-GUI click-through is still open (`docs/status.md`) | tests/client/section-render.spec.tsx, scripts/verify-client-artifact.mjs, docs/design.md §9 |
 | R2 | Default on: after add, effective in all of this dsh's workspaces | unit (evaluation fn) + E2E two workspaces | tests/host/agents.spec.ts, tests/host/manager.spec.ts |
 | R3 | Explicit per-workspace off; when off, that workspace session's model-visible tool set excludes the server's tools (injection gate, not mere exec denial) | E2E: session tool listing per workspace (remote-mux capture) | `npm run test:smoke` (M1 live capture), tests/host/agents.spec.ts |
 | R4 | Distribution: ordinary third-party dsh plugin, user-installed per dsh; chamber not seeded, not bundled, zero code involvement | install test on scratch instance; chamber untouched | `npm run test:smoke` (M0) |
