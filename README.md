@@ -128,7 +128,7 @@ workspace root session in an enabled workspace — never into a global registry.
 | Workspace root session, server on for that workspace | Yes — `mcp__<serverName>__<rawName>` |
 | Workspace root session, workspace switched off for that server | No — the definitions are revoked from that agent's scope |
 | Session whose cwd is outside every registered workspace | No |
-| Delegation / subagent child (`origin: 'subagent'`) | No — children are preset-governed (`docs/design.md` §4) |
+| Delegation / subagent child (`origin: 'subagent'`) | Yes — it inherits the parent's workspace, minus the names its delegator's `toolFilter` excludes (`docs/design.md` §4) |
 
 Consequences worth knowing:
 
@@ -266,8 +266,10 @@ through its own settings namespace and per-agent tool scopes (`docs/design.md`).
   own-property presence IS the enable; see
   [Where the configuration lives](#where-the-configuration-lives)).
 - Sessions outside any registered workspace (plain cwd sessions) never receive
-  MCP tools; delegation/subagent children are preset-governed and never receive
-  MCP tools from this plugin (workspace root sessions do).
+  MCP tools. Delegation/subagent children inherit their parent's workspace, so they
+  receive the workspace's enabled servers too, further restricted by the
+  `toolFilter` their delegator declared (a continuable child's durable descriptor) —
+  a child can never widen its own surface.
 - Out of scope by design: no file/CLI management surface, no toolPolicy
   allow/ask/deny, no custom naming (`docs/acceptance.md`, cut list C1–C2/C6).
   The 0.0.3 line deliberately supersedes the original pause/status/on-demand

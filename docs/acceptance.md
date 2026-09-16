@@ -53,8 +53,11 @@ requirement → how we prove it (smoke / unit / E2E) → evidence location.
   `isServerDisabled(doc, s)`. The default is OFF — a new server, a new workspace
   and a fresh session register no tools until the pair is explicitly enabled —
   and prototype-member server names keep working.
-- Decisions: subagent/delegation children are not adopted
-  (preset-governed); workspace membership is re-derived per push/reconcile;
+- Decisions: subagent/delegation children ARE adopted — a child inherits its parent's
+  cwd, so the same workspace enablement decides — and the narrowing its delegator
+  declared is mirrored per name from the child's OWN durable `subagent/descriptor`
+  (`src/delegation.ts`; a descriptor that cannot be folded fails open with a warning);
+  workspace membership is re-derived per push/reconcile;
   credential values with CR/LF/NUL are rejected at the transport.
 - Storage: dsh settings domain (plugin namespace) + credentials domain
   (write-only values); per-instance isolation via DSH_HOME.

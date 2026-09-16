@@ -14,11 +14,23 @@
  * revokes that agent's tools on the next event, and registering a workspace
  * after an agent was adopted applies them.
  *
- * Documented deviation (adoption policy): delegation children
- * (`session.header.origin === 'subagent'`) are never adopted — neither by
- * the `agent/created` listener nor by the boot `agents.roots()` scan. They
- * are governed by their preset scopes and never receive MCP tools from this
- * plugin; their `toolFilter`/persona narrowing cannot be bypassed here.
+ * Adoption policy: EVERY live agent whose session cwd canonicalizes to a
+ * registered workspace is adopted, including delegation children
+ * (`session.header.origin === 'subagent'`). A child inherits its parent's cwd,
+ * so the same enablement decides for it — and its scope does NOT chain through
+ * the parent's agent scope: the harness joins a child to its parent's PRESET
+ * mount (`dsh-agent-presets` `composeFrom`), which is why injecting into the
+ * child itself is what makes the workspace's MCP capability reach it.
+ *
+ * In exchange for that injection, a child's delegator narrowing is mirrored for
+ * the names this module registers: a registration made into the child's OWN
+ * scope is exempt from the harness's tool masks ("scoped registrations remain
+ * visible"), so the durable `subagent/descriptor` in the child's own log is
+ * folded into an admission predicate (`src/delegation.ts`) and names outside it
+ * are simply never registered. A split between "the workspace enabled this
+ * server" and "the delegator narrowed it away" is therefore decided once per
+ * agent, and the server's context (section + resources) is withheld with its
+ * tools when the whole server is filtered out.
  *
  * Registration goes through `agent.ctx.tools.register(def)` — the ToolRuntime
  * layer of the agent's own scope (register-through-agent.ctx semantics, same
@@ -45,6 +57,11 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { registerServerContext, type ServerContext } from './server-context.js'
+import {
+  admissionOf,
+  readDelegationNarrowing,
+  type DelegationNarrowing,
+} from './delegation.js'
 import { isEnabled, type WorkspaceOverrides } from './shared/model.js'
 import { workspaceIdOf, type WorkspaceLike } from './workspace.js'
 // Side-effect type imports: declaration-merge ctx.tools / ctx.agents / events.
@@ -60,6 +77,13 @@ export interface ApplierLogger {
 
 /** The registry of live agents our scan + liveness checks use. */
 export interface AgentRegistryLike {
+  /**
+   * Every live agent, when the generation exposes it (`ctx.agents.list()`).
+   * Adopting from this list at boot is what covers an agent that predates this
+   * plugin instance — a live delegation child during an HMR reload included;
+   * the `roots()` fallback sees top-level agents only.
+   */
+  list?(): Agent[]
   roots(): Agent[]
   get(id: string): Agent | undefined
 }
@@ -117,6 +141,12 @@ interface AgentEntry {
   workspaceId: string | undefined
   /** serverName → applied registrations (absent = nothing applied). */
   applied: Map<string, AppliedServer>
+  /**
+   * Admission for this agent's tool names; `undefined` admits every name. Set
+   * only for a delegation child whose delegator declared a narrowing, folded
+   * from the child's own durable descriptor (`src/delegation.ts`).
+   */
+  admitted?: (publicName: string) => boolean
 }
 
 /** Construction deps for the applier. */
@@ -196,17 +226,55 @@ const fmtError = (error: unknown): string =>
     }
   }
 
+  /**
+   * Read one delegated child's OWN narrowing.
+   *
+   * Feature-detected and total: a generation without the read API, or a session
+   * whose snapshot throws, yields `unreadable` (fail open) rather than failing
+   * the child's publication. Only the child's own event window is folded — a
+   * seeded fork carries its parent's prefix in the same log, and a nested
+   * parent's descriptor must never be mistaken for this child's.
+   */
+  function readChildNarrowing(agent: Agent): DelegationNarrowing {
+    const session = agent.session as unknown as {
+      snapshotEvents?: (from?: number) => readonly unknown[]
+      inheritedEventCount?: number
+    }
+    if (typeof session.snapshotEvents !== 'function') {
+      return { kind: 'unreadable', reason: 'session.snapshotEvents is unavailable in this generation' }
+    }
+    const from = typeof session.inheritedEventCount === 'number' ? session.inheritedEventCount : 0
+    let events: readonly unknown[]
+    try {
+      events = session.snapshotEvents(from)
+    } catch (error) {
+      return { kind: 'unreadable', reason: 'snapshotEvents threw: ' + fmtError(error) }
+    }
+    return readDelegationNarrowing(events)
+  }
+
   function adopt(agent: Agent): void {
     if (disposed || entries.has(agent)) return
-    // Delegation children are governed by their preset scopes and never
-    // receive MCP tools from this plugin. Skipping here covers BOTH
-    // adoption paths (the agent/created listener and the boot roots() scan,
-    // which both funnel through adopt), keeping them symmetric.
-    if (agent.session.header.origin === 'subagent') return
     const entry: AgentEntry = {
       agent,
       workspaceId: resolveWorkspace(agent),
       applied: new Map(),
+    }
+    // A child inherits its parent's cwd, so the workspace's own enablement
+    // decides for it too; what it does NOT inherit is the parent's agent scope,
+    // so mirror the narrowing its delegator declared for it.
+    if (agent.session.header.origin === 'subagent') {
+      const narrowing = readChildNarrowing(agent)
+      if (narrowing.kind === 'narrowed') {
+        entry.admitted = admissionOf(narrowing)
+        logger.info(
+          `${label}: delegation child ${agent.id} narrowed by its delegator (allow ${narrowing.allow?.length ?? 0}, deny ${narrowing.deny?.length ?? 0}) — only admitted tool names are registered`,
+        )
+      } else if (narrowing.kind === 'unreadable') {
+        logger.warn(
+          `${label}: delegation child ${agent.id} descriptor is unreadable (${narrowing.reason}) — its enabled servers are registered unnarrowed`,
+        )
+      }
     }
     entries.set(agent, entry)
     logger.info(`${label}: tracking agent ${agent.id}${entry.workspaceId === undefined ? ' (no workspace — MCP tools withheld)' : ` workspace=${entry.workspaceId}`}`)
@@ -284,9 +352,24 @@ const fmtError = (error: unknown): string =>
     if (applied !== undefined && applied.epoch === state.epoch && applied.syncId === state.syncId) return
     // Swap: dispose the previous generation only after the new one is decided.
     if (applied !== undefined) revokeApplied(entry, serverName, 'generation swap')
+    // A narrowed child registers only the names its delegator's filter admits.
+    // When it admits none of this server's names, nothing at all is published —
+    // tools AND context — so "this server is on for this agent" keeps exactly
+    // one meaning; the generation is still recorded so the decision is not
+    // recomputed (or re-logged) on every push.
+    const defs = entry.admitted === undefined
+      ? state.defs
+      : new Map([...state.defs].filter(([publicName]) => entry.admitted?.(publicName) === true))
+    if (defs.size === 0) {
+      entry.applied.set(serverName, { epoch: state.epoch, syncId: state.syncId, disposers: new Map() })
+      logger.info(
+        `${label}: server "${serverName}" withheld from agent ${entry.agent.id}: the delegation's tool filter admits none of its ${state.defs.size} tool(s)`,
+      )
+      return
+    }
     const disposers = new Map<string, () => void>()
     try {
-      for (const [publicName, definition] of state.defs) {
+      for (const [publicName, definition] of defs) {
         disposers.set(publicName, entry.agent.ctx.tools.register(definition))
       }
     } catch (error) {
@@ -394,7 +477,9 @@ const fmtError = (error: unknown): string =>
       // ctx's lifecycle — drop bookkeeping only, never call disposers.
       entries.delete(agent)
     })
-    for (const agent of agents.roots()) adoptContained(agent)
+    // Every live agent when the registry exposes it (a reload must not drop a
+    // delegation child that is already running), roots only otherwise.
+    for (const agent of agents.list?.() ?? agents.roots()) adoptContained(agent)
     return () => {
       offCreated()
       offDisposed()

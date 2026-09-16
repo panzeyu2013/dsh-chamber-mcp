@@ -100,10 +100,16 @@ comments, anchors and formatting survive on untouched nodes.
   reconnect policy (fixed defaults 500ms→30s, max 10 per outage, 5s close discipline,
   `tools/list_changed` → serialized re-sync). Master state per server:
   `{ generation, defs: Map<publicName, ToolDefinition>, ready }`.
-- **Registration is per-agent-scope, never global** (the injection gate): only agents
-  whose session is not a delegation child (`header.origin !== 'subagent'`) are adopted —
-  children are governed by their preset scopes and never receive MCP tools;
-  workspace membership is re-derived on every push/reconcile, and a
+- **Registration is per-agent-scope, never global** (the injection gate): every live
+  agent whose session cwd canonicalizes to a registered workspace is adopted — workspace
+  roots AND delegation children (`header.origin === 'subagent'`), which inherit the
+  parent's cwd and therefore its workspace. A child's scope does NOT chain through its
+  parent's agent scope (the harness joins it to the parent's PRESET mount,
+  `dsh-agent-presets` `composeFrom` → `bindScopeParent(agentKey, standing.key)`), so
+  injecting into the child itself is what makes the workspace's MCP capability reach
+  it; the delegation's own narrowing is mirrored per name (`src/delegation.ts`, see
+  the policy paragraph below). Workspace membership is re-derived on every
+  push/reconcile, and a
   durable `domain/changed` write for the workspace domain (`src/manager.ts`
   `mcp-scope.workspace-domain()`) triggers an applier reconcile, so a deleted
   workspace — or its directory — revokes its sessions' tools promptly.
@@ -115,6 +121,27 @@ comments, anchors and formatting survive on untouched nodes.
     revoke stale defs, register current defs for enabled servers only.
   - `agent/disposed` → entry dropped (ctx-scoped effects die with the agent ctx).
   - Bookkeeping map keyed by Agent; all listeners/disposers effect-wrapped (HMR-safe).
+  - Boot scan adopts `agents.list()` when the generation exposes it (every live agent —
+    a running child during an HMR reload included), falling back to `agents.roots()`.
+
+**Delegation policy (0.2.0).** Two upstream facts decide this shape, both re-read from
+the installed harness: (1) a delegation child is composed by `dsh-subagent`
+`applyChildComposition` → `agentPresets.composeFrom(childCtx, parent.ctx)`, which binds
+the child's scope to its parent's PRESET **mount** — a per-preset standing scope, not
+the parent's agent scope — so a registration made through a parent's `agent.ctx` is
+invisible to its children ("a child that joins no preset sees an empty tool registry");
+(2) `dsh-tools` `view(scope)` filters only INHERITED names through each layer's
+`admits()` and deliberately keeps own-scope registrations visible ("scoped
+registrations remain visible"), which is what a `ptc` preset relies on to expose MCP
+tools through `run_code`. Registering into the child's own scope therefore works but
+would bypass the narrowing its delegator declared — which is why the applier mirrors
+that narrowing itself: the child's durable, model-hidden `subagent/descriptor` event
+(only a `continuable` child carries `toolFilter: {allow?, deny?}`) is folded from the
+child's OWN event window (the fork-inherited prefix is skipped) into an admission
+predicate, and a server whose names are all filtered out publishes neither tools nor
+context. Malformed or newer descriptors fail open with a warning (the workspace's own
+enablement stays the gate). Mounting into the preset layer instead is not available to
+a host-layer plugin and would leak servers across workspaces that never enabled them.
 - **Tool semantics are the OFFICIAL adapter's** (pinned contract): the definition —
   canonical `{content, structuredContent?}` output schema, text projection,
   `taskRequired` refusal, `isError` → throw and durable image admission — is

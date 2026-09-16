@@ -166,8 +166,22 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
   the full `npm run check`) first, or the smoke silently exercises the PREVIOUS
   build — a stale `lib/tools.js` once kept the static adapter import and
   reproduced the fatal 0.1.5 failure after the fix had landed in `src/`.
-- Delegation children (`origin: 'subagent'`) are deliberately not adopted —
-  they are preset-governed and never receive MCP tools.
+- Delegation children (`origin: 'subagent'`) ARE adopted: a child inherits its
+  parent's cwd, so the workspace's own enablement decides, and the narrowing its
+  delegator declared — the durable `subagent/descriptor` a continuable child carries
+  (`toolFilter: {allow?, deny?}`) — is mirrored per name, so a server whose names are
+  all filtered out publishes neither tools nor its context. A descriptor that cannot
+  be folded (newer version, malformed payload, a generation without the read API)
+  fails open with a warning: the workspace enablement stays the gate.
+- Delegation inheritance is covered by unit tests (`tests/delegation.spec.ts`, the
+  `allow`/`deny` math) and integration tests over a REAL ToolRuntime + real dsh-scope
+  agent scopes (`tests/host/agents.spec.ts`: adoption through the listener and the boot
+  scan, per-name mirroring, whole-server withholding INCLUDING its context, fail-open on
+  unreadable/malformed descriptors, and a seeded fork whose inherited prefix carries a
+  parent's descriptor). The live smoke (`npm run test:smoke`) exercises the root-session
+  lifecycle; it does not delegate, because the driver's mock LLM answers with fixed text —
+  scripting a `subagent` tool call and asserting the child's `request/header` tool array
+  is the open end-to-end item.
 - Under a `ptc` agent preset the request header lists only `run_code`; the
   registered-tools notice still reports the set, because it also reads the names
   the rendered system prompt declares. A request whose system prompt page left

@@ -58,6 +58,26 @@ const TOOL_B = 'mcp__files__write_file'
 
 interface LoggedLine { level: 'info' | 'warn' | 'error'; message: string }
 
+/**
+ * One durable `subagent/descriptor` session event, shaped like the harness's own
+ * (`@deepseek-ai/dsh-subagent`): version 3, the envelope field is `data`, and
+ * only a continuable child carries a `toolFilter`.
+ */
+function descriptorEvent(toolFilter?: unknown): unknown {
+  return {
+    type: 'subagent/descriptor',
+    seq: 0,
+    time: 0,
+    data: {
+      version: 3,
+      mode: 'continuable',
+      provider: 'in-process',
+      label: 'child',
+      ...(toolFilter === undefined ? {} : { toolFilter }),
+    },
+  }
+}
+
 /** Live fake agents + workspace registry backed by real temp directories. */
 class Harness {
   readonly ctx = new Context()
@@ -98,23 +118,43 @@ class Harness {
    * Spawn a fake agent whose session cwd is `cwd`. `origin` mirrors
    * `session.header.origin` ('subagent' on delegation children; absent on
    * top-level agents).
+   *
+   * `options.events` is the agent's OWN event window, `options.inheritedEvents`
+   * the fork-inherited prefix the session serves before it: `snapshotEvents`
+   * mirrors the real session (its own window starts at `inheritedEventCount`),
+   * and `options.withoutSnapshotApi` removes the read API entirely, standing in
+   * for a generation that predates it.
    */
-  spawnAgent(id: string, cwd: string | undefined, origin?: 'subagent'): Agent {
-    // The agent object itself is the scope key (production: createScope(loopCtx, agent)).
-    const agent = {
-      id,
-      session: {
-    header: { cwd, origin: origin ?? undefined },
+  spawnAgent(
+    id: string,
+    cwd: string | undefined,
+    origin?: 'subagent',
+    options: {
+      events?: readonly unknown[]
+      inheritedEvents?: readonly unknown[]
+      withoutSnapshotApi?: boolean
+    } = {},
+  ): Agent {
+    const inheritedEvents = options.inheritedEvents ?? []
+    const ownEvents = options.events ?? []
+    const log = [...inheritedEvents, ...ownEvents]
     // Spy for the session-write contract: the applier must NEVER append. A
     // third-party event type is required-on-read (the envelope's `ignorable`
     // marker has no write path in this generation), so one append would make the
     // stored session unreadable to every reader, the writing harness included.
     // The notice is derived client-side from `request/header` events instead.
-    append(type: string, data: unknown): void {
-      appended.push({ type, data })
-    },
-  },
-    } as unknown as Agent
+    const session: Record<string, unknown> = {
+      header: { cwd, origin: origin ?? undefined },
+      append(type: string, data: unknown): void {
+        appended.push({ type, data })
+      },
+    }
+    if (options.withoutSnapshotApi !== true) {
+      session.inheritedEventCount = inheritedEvents.length
+      session.snapshotEvents = (from = 0): readonly unknown[] => log.slice(from)
+    }
+    // The agent object itself is the scope key (production: createScope(loopCtx, agent)).
+    const agent = { id, session } as unknown as Agent
     const scope = createScope(this.factoryCtx, agent as never)
     ;(agent as unknown as { ctx: Context }).ctx = scope.ctx
     this.live.set(id, agent)
@@ -143,6 +183,17 @@ class Harness {
   /** Push one server state through the harness applier (epoch defaults to 1). */
   push(serverName: string, syncId: number, defs: Map<string, ToolDefinition>, epoch = 1): void {
     this.applier.pushServerState(serverName, { epoch, syncId, defs })
+  }
+
+  /** The registry projection the applier consumes, with production semantics. */
+  registry(): { roots(): Agent[]; list(): Agent[]; get(id: string): Agent | undefined } {
+    return {
+      // Production: roots() reports top-level agents only (a child is owned by
+      // its initiator), list() reports every live agent.
+      roots: () => [...this.live.values()].filter((agent) => agent.session.header.origin !== 'subagent'),
+      list: () => [...this.live.values()],
+      get: (id: string) => this.live.get(id),
+    }
   }
 
   cleanup(): void {
@@ -186,10 +237,7 @@ async function mount(): Promise<Harness> {
         warn: (message) => void h.lines.push({ level: 'warn', message }),
         error: (message) => void h.lines.push({ level: 'error', message }),
       },
-      agents: {
-        roots: () => [...h.live.values()],
-        get: (id: string) => h.live.get(id),
-      },
+      agents: h.registry(),
       workspaceRegistry: { list: () => [...h.workspaces] },
       overrides: () => h.overrides,
       isDisabled: (serverName: string) => h.globalDisabled.has(serverName),
@@ -625,27 +673,26 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     }
   })
 
-  it("never adopts delegation children (header.origin === 'subagent') — listener and boot scan (ARCH-3/IMPL-6)", async () => {
+  it('adopts delegation children: the workspace MCP tools reach a subagent (listener + boot scan)', async () => {
     const h = await mount()
     try {
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
       const root = h.spawnAgent('agent-root', wsA.path)
-      const child = h.spawnAgent('agent-child', wsA.path, 'subagent')
-      // Listener path: both agents are published AFTER activation. The child
-      // must not be adopted even though its cwd is in an enabled workspace.
+      // A one-shot child's descriptor declares no narrowing: nothing to mirror.
+      const child = h.spawnAgent('agent-child', wsA.path, 'subagent', { events: [descriptorEvent()] })
       h.createAgent(root)
       h.createAgent(child)
       const defs = new Map([[TOOL_A, def(TOOL_A)]])
       h.push(SERVER, 1, defs)
       expect(h.ctx.tools.get(TOOL_A, root)).toBeDefined()
-      expect(h.ctx.tools.get(TOOL_A, child)).toBeUndefined()
-      expect(h.lines.some((l) => l.message.includes('tracking agent agent-child'))).toBe(false)
-      expect(h.lines.some((l) => l.message.includes('tracking agent agent-root'))).toBe(true)
+      expect(h.ctx.tools.get(TOOL_A, child)).toBeDefined()
+      expect(h.lines.some((l) => l.message.includes('tracking agent agent-child'))).toBe(true)
+      expect(h.lines.some((l) => l.level === 'warn' && l.message.includes('agent-child'))).toBe(false)
 
-      // Boot path: a fresh applier (plugin reload) scans agents.roots(); the
-      // already-live child must still be skipped, keeping the scan symmetric
-      // with the agent/created listener.
+      // Boot path: a fresh applier (plugin reload) adopts every live agent the
+      // registry reports — a running child during an HMR reload included, which
+      // the roots() projection alone would miss.
       const bootLines: LoggedLine[] = []
       const second = createAgentApplier({
         ctx: h.hostCtx,
@@ -654,20 +701,165 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
           warn: (message) => void bootLines.push({ level: 'warn', message }),
           error: (message) => void bootLines.push({ level: 'error', message }),
         },
-        agents: { roots: () => [...h.live.values()], get: (id: string) => h.live.get(id) },
+        agents: h.registry(),
         workspaceRegistry: { list: () => [...h.workspaces] },
         overrides: () => h.overrides,
       })
       try {
         expect(bootLines.some((l) => l.message.includes('tracking agent agent-root'))).toBe(true)
-        expect(bootLines.some((l) => l.message.includes('tracking agent agent-child'))).toBe(false)
-        // The child never receives tools from any applier, and its disposal
-        // is a bookkeeping no-op.
-        h.disposeAgent(child)
-        expect(h.ctx.tools.get(TOOL_A, child)).toBeUndefined()
+        expect(bootLines.some((l) => l.message.includes('tracking agent agent-child'))).toBe(true)
       } finally {
         second.dispose()
       }
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it("mirrors a continuable child's allow list: only admitted names register", async () => {
+    const h = await mount()
+    try {
+      const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
+      const child = h.spawnAgent('agent-child', wsA.path, 'subagent', {
+        events: [descriptorEvent({ allow: [TOOL_A] })],
+      })
+      h.createAgent(child)
+      h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A)], [TOOL_B, def(TOOL_B)]]))
+      expect(h.ctx.tools.get(TOOL_A, child)).toBeDefined()
+      expect(h.ctx.tools.get(TOOL_B, child)).toBeUndefined()
+      expect(h.lines.some((l) => l.message.includes('narrowed by its delegator (allow 1, deny 0)'))).toBe(true)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('mirrors a deny list per name', async () => {
+    const h = await mount()
+    try {
+      const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
+      const child = h.spawnAgent('agent-child', wsA.path, 'subagent', {
+        events: [descriptorEvent({ deny: [TOOL_B] })],
+      })
+      h.createAgent(child)
+      h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A)], [TOOL_B, def(TOOL_B)]]))
+      expect(h.ctx.tools.get(TOOL_A, child)).toBeDefined()
+      expect(h.ctx.tools.get(TOOL_B, child)).toBeUndefined()
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('withholds the whole server — tools AND context — when the filter admits none of it', async () => {
+    const h = await mount()
+    try {
+      const resources = new RecordingResources(h.ctx)
+      const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
+      const parent = h.spawnAgent('agent-parent', wsA.path)
+      const child = h.spawnAgent('agent-child', wsA.path, 'subagent', {
+        events: [descriptorEvent({ allow: ['fs_read'] })],
+      })
+      h.createAgent(parent)
+      h.createAgent(child)
+      h.applier.pushServerState(SERVER, {
+        epoch: 1,
+        syncId: 1,
+        defs: new Map([[TOOL_A, def(TOOL_A)], [TOOL_B, def(TOOL_B)]]),
+        context: {
+          instructions: () => '### use add first',
+          resources: { request: async () => ({}) } as never,
+        },
+      })
+      await settle()
+      expect(h.ctx.tools.get(TOOL_A, child)).toBeUndefined()
+      expect(h.ctx.tools.get(TOOL_B, child)).toBeUndefined()
+      // The parent is not a delegation child: its enabled behaviour is unchanged.
+      expect(h.ctx.tools.get(TOOL_A, parent)).toBeDefined()
+      expect(resources.registered).toHaveLength(1)
+      expect(h.lines.some((l) => l.message.includes('withheld from agent agent-child'))).toBe(true)
+
+      // The decision is recorded as a generation: an identical push is a no-op.
+      const withheld = h.lines.filter((l) => l.message.includes('withheld from agent agent-child')).length
+      h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A)], [TOOL_B, def(TOOL_B)]]))
+      expect(h.lines.filter((l) => l.message.includes('withheld from agent agent-child'))).toHaveLength(withheld)
+
+      // Turning the pair off revokes the recorded suppression like any other.
+      h.overrides = {}
+      h.applier.reconcile()
+      expect(h.lines.some((l) => l.message.includes('revoked server "files" from agent agent-child'))).toBe(true)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('fails open with a warning when the descriptor is unreadable (unknown version)', async () => {
+    const h = await mount()
+    try {
+      const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
+      const child = h.spawnAgent('agent-child', wsA.path, 'subagent', {
+        events: [{ type: 'subagent/descriptor', seq: 0, time: 0, data: { version: 4, mode: 'continuable' } }],
+      })
+      h.createAgent(child)
+      h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A)]]))
+      expect(h.ctx.tools.get(TOOL_A, child)).toBeDefined()
+      expect(h.lines.some((l) => l.level === 'warn' && l.message.includes('descriptor is unreadable'))).toBe(true)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('fails open when the descriptor payload or its filter is malformed', async () => {
+    const h = await mount()
+    try {
+      const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
+      const child = h.spawnAgent('agent-child', wsA.path, 'subagent', {
+        events: [descriptorEvent({ allow: 'fs_read' })],
+      })
+      h.createAgent(child)
+      h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A)]]))
+      expect(h.ctx.tools.get(TOOL_A, child)).toBeDefined()
+      expect(
+        h.lines.some((l) => l.level === 'warn' && l.message.includes('toolFilter.allow is not an array')),
+      ).toBe(true)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it("ignores a descriptor inherited from a forked parent's prefix", async () => {
+    const h = await mount()
+    try {
+      const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
+      // The parent was itself a narrowed child: its descriptor sits in the
+      // fork-inherited prefix of this child's log, which is NOT this child's.
+      const child = h.spawnAgent('agent-child', wsA.path, 'subagent', {
+        inheritedEvents: [descriptorEvent({ allow: ['fs_read'] })],
+        events: [descriptorEvent()],
+      })
+      h.createAgent(child)
+      h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A)]]))
+      expect(h.ctx.tools.get(TOOL_A, child)).toBeDefined()
+      expect(h.lines.some((l) => l.message.includes('narrowed by its delegator'))).toBe(false)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('fails open when the generation has no session snapshot API', async () => {
+    const h = await mount()
+    try {
+      const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
+      const child = h.spawnAgent('agent-child', wsA.path, 'subagent', { withoutSnapshotApi: true })
+      h.createAgent(child)
+      h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A)]]))
+      expect(h.ctx.tools.get(TOOL_A, child)).toBeDefined()
+      expect(h.lines.some((l) => l.level === 'warn' && l.message.includes('unavailable in this generation'))).toBe(true)
     } finally {
       h.cleanup()
     }

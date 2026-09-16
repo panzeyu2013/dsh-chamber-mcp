@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **MCP tools now reach delegation/subagent children.** A child inherits its parent's
+  cwd, so the workspace that enabled a server decides for it too — but a child's scope
+  never chains through its parent's agent scope: the harness composes a child by joining
+  it to the parent's PRESET *mount* (`dsh-subagent` `applyChildComposition` →
+  `agent-presets.composeFrom` → `bindScopeParent(agentKey, standing.key)`), so a
+  registration made through the parent's `agent.ctx` is invisible to it ("a child that
+  joins no preset sees an empty tool registry"). Every live agent whose workspace
+  resolves is now adopted — the boot scan also reads `agents.list()` so a child running
+  through an HMR reload keeps its tools — and a child receives the same tools, the same
+  `mcp:<server>` prompt section and the same resource operations as its parent.
+- **The delegation's own narrowing is mirrored.** `dsh-tools` filters only INHERITED
+  names through a scope's masks and keeps own-scope registrations visible on purpose (a
+  `ptc` preset relies on that to expose MCP tools through `run_code`), so a child's
+  injection would otherwise widen what its delegator asked for. The durable, model-hidden
+  `subagent/descriptor` event — written into the CHILD's own log; only a `continuable`
+  child carries a `toolFilter` — is folded from the child's own event window (a seeded
+  fork's inherited prefix is skipped) into an admission predicate over public tool names
+  (`src/delegation.ts`, the same `allow`/`deny` math `dsh-tools` `admits()` applies). A
+  server whose names are all filtered out publishes neither tools nor context; a
+  descriptor that cannot be folded (newer version, malformed payload, a generation
+  without the read API) fails open with a warning, because the workspace's own explicit
+  enablement stays the gate.
+
+### Changed
+
+- The per-agent injection gate adopts every live agent whose session cwd canonicalizes
+  to a registered workspace, delegation children included; the previous "children are
+  preset-governed, never adopted" deviation is gone (`docs/design.md` §4,
+  `docs/acceptance.md`, `docs/status.md`, `README.md`).
+
 ### Fixed
 
 - **The runtime panel was blind again in the chamber desktop — every server read
