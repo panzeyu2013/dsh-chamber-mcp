@@ -113,7 +113,7 @@ afterEach(() => {
 })
 
 describe('MCP injection row view', () => {
-  it('renders one disclosure line with the plug glyph, every server and the tool total', async () => {
+  it('collapsed, it renders ONLY the registered line — no source, no count', async () => {
     const node = await render({
       servers: [
         { name: 'zotero', toolCount: 43, tools: ['mcp__zotero__search'] },
@@ -122,48 +122,71 @@ describe('MCP injection row view', () => {
     })
     const row = node.querySelector('[data-mcp-injection]')
     expect(row).not.toBeNull()
-    expect(node.textContent).toContain(en['injection.title'])
-    expect(node.textContent).toContain('zotero (43)')
-    expect(node.textContent).toContain('email (18)')
-    expect(node.textContent).toContain('61 tools registered')
-    // the shipped icon, not a literal
+    // The shipped icon, not a literal.
     expect(row?.querySelector('svg')).not.toBeNull()
-    // collapsed like the shipped rows: a control with no body yet
     const head = headOf(node)
+    expect(head.textContent).toBe(en['injection.title'])
+    expect(node.textContent).not.toContain('zotero')
+    expect(node.textContent).not.toContain('email')
+    expect(node.textContent).not.toContain('61')
+    // Collapsed like the shipped rows: a control with no body yet.
     expect(head.getAttribute('aria-expanded')).toBe('false')
     expect(head.getAttribute('tabindex')).toBe('0')
     expect(node.querySelector('[data-injection-body]')).toBeNull()
-    expect(node.textContent).not.toContain('mcp__zotero__search')
   })
 
-  it('expands on click into the per-server tool names and collapses again', async () => {
+  it('opens on one summary line, then a disclosure per source, then that source list', async () => {
     const node = await render({
-      servers: [{ name: 'zotero', toolCount: 43, tools: ['mcp__zotero__search', 'mcp__zotero__fetch'] }],
+      servers: [
+        { name: 'zotero', toolCount: 43, tools: ['mcp__zotero__search', 'mcp__zotero__fetch'] },
+        { name: 'email', toolCount: 18, tools: ['mcp__email__send'] },
+      ],
     })
     const head = headOf(node)
     head.click()
     await flush()
     expect(head.getAttribute('aria-expanded')).toBe('true')
-    const body = node.querySelector('[data-injection-body]')
-    expect(body?.textContent).toContain('zotero (43)')
-    expect(body?.textContent).toContain('mcp__zotero__search')
-    expect(body?.textContent).toContain('mcp__zotero__fetch')
-    // A list that fits omits nothing: the count IS the number of names.
-    expect(body?.textContent).not.toContain('not listed')
     expect(node.querySelector('[data-mcp-injection]')?.hasAttribute('data-open')).toBe(true)
+    // FIRST line: every source with its count.
+    expect(node.querySelector('[data-injection-summary]')?.textContent).toBe('zotero (43) · email (18)')
+    // THEN one disclosure per source, all closed: no tool name yet.
+    const serverHeads = Array.from(node.querySelectorAll('[data-injection-server-head]'))
+    expect(serverHeads.map((entry) => entry.getAttribute('data-injection-server-head'))).toEqual(['zotero', 'email'])
+    expect(serverHeads.map((entry) => entry.getAttribute('aria-expanded'))).toEqual(['false', 'false'])
+    expect(serverHeads[0]?.textContent).toBe('zotero (43)')
+    expect(node.querySelector('[data-injection-tool]')).toBeNull()
+    // Expanding ONE source names only that source's tools.
+    ;(serverHeads[0] as HTMLElement).click()
+    await flush()
+    expect(serverHeads[0]?.getAttribute('aria-expanded')).toBe('true')
+    expect(Array.from(node.querySelectorAll('[data-injection-tool]')).map((el) => el.textContent)).toEqual([
+      'mcp__zotero__search',
+      'mcp__zotero__fetch',
+    ])
+    // A list that fits omits nothing: the count IS the number of names.
+    expect(node.querySelector('[data-injection-server-tools]')?.textContent).not.toContain('not listed')
+    // The root collapses the whole body again.
     head.click()
     await flush()
     expect(head.getAttribute('aria-expanded')).toBe('false')
     expect(node.querySelector('[data-injection-body]')).toBeNull()
   })
 
-  it('expands from the keyboard like the shipped rows', async () => {
+  it('expands from the keyboard like the shipped rows (root and source)', async () => {
     const node = await render({ servers: [{ name: 'a', toolCount: 1, tools: ['mcp__a__x'] }] })
     const head = headOf(node)
     head.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     await flush()
     expect(head.getAttribute('aria-expanded')).toBe('true')
+    const source = node.querySelector('[data-injection-server-head]') as HTMLElement
+    source.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await flush()
+    expect(source.getAttribute('aria-expanded')).toBe('true')
     expect(node.querySelector('[data-injection-tool]')?.textContent).toBe('mcp__a__x')
+    source.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    await flush()
+    expect(source.getAttribute('aria-expanded')).toBe('false')
+    expect(node.querySelector('[data-injection-tool]')).toBeNull()
     head.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
     await flush()
     expect(head.getAttribute('aria-expanded')).toBe('false')
@@ -178,14 +201,16 @@ describe('MCP injection row view', () => {
     expect(head.getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('lists a server with no carried names without an omission line', async () => {
+  it('lists a source with no carried names without an omission line', async () => {
     // The packed-bundle artifact check renders exactly this shape.
     const node = await render({ servers: [{ name: 'fixture', toolCount: 2 }] })
     headOf(node).click()
     await flush()
-    const body = node.querySelector('[data-injection-body]')
-    expect(body?.textContent).toContain('fixture (2)')
-    expect(body?.textContent).not.toContain('not listed')
+    const source = node.querySelector('[data-injection-server-head]') as HTMLElement
+    expect(source.textContent).toBe('fixture (2)')
+    source.click()
+    await flush()
+    expect(node.querySelector('[data-injection-server-tools]')?.textContent).not.toContain('not listed')
   })
 
   it('reports the names the cap left out instead of dropping them', async () => {
@@ -193,9 +218,11 @@ describe('MCP injection row view', () => {
     const node = await render({ servers: [{ name: 'big', toolCount: INJECTION_NAME_LIMIT + 41, tools: carried }] })
     headOf(node).click()
     await flush()
-    const body = node.querySelector('[data-injection-body]')
-    expect(body?.querySelectorAll('[data-injection-tool]')).toHaveLength(INJECTION_NAME_LIMIT)
-    expect(body?.textContent).toContain(t('injection.omitted', { count: 41 }))
+    ;(node.querySelector('[data-injection-server-head]') as HTMLElement).click()
+    await flush()
+    const tools = node.querySelector('[data-injection-server-tools]')
+    expect(tools?.querySelectorAll('[data-injection-tool]')).toHaveLength(INJECTION_NAME_LIMIT)
+    expect(tools?.textContent).toContain(t('injection.omitted', { count: 41 }))
   })
 
   it('renders nothing when the payload is unusable', async () => {

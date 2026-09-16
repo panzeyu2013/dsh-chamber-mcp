@@ -115,12 +115,13 @@ export const styles = {
   injectionGlyphHover: 'mcpScope_injectionGlyphHover',
   injectionGlyphOpen: 'mcpScope_injectionGlyphOpen',
   injectionTitle: 'mcpScope_injectionTitle',
-  injectionSep: 'mcpScope_injectionSep',
-  injectionDetail: 'mcpScope_injectionDetail',
-  injectionTotal: 'mcpScope_injectionTotal',
   injectionBody: 'mcpScope_injectionBody',
+  injectionSummary: 'mcpScope_injectionSummary',
   injectionServer: 'mcpScope_injectionServer',
+  injectionServerHead: 'mcpScope_injectionServerHead',
+  injectionServerGlyph: 'mcpScope_injectionServerGlyph',
   injectionServerName: 'mcpScope_injectionServerName',
+  injectionServerTools: 'mcpScope_injectionServerTools',
   injectionToolName: 'mcpScope_injectionToolName',
   injectionOmitted: 'mcpScope_injectionOmitted',
   tag: 'mcpScope_tag',
@@ -606,37 +607,6 @@ export const css = `
   line-height: calc(24px + var(--dsh-content-font-delta, 0px));
 }
 
-.mcpScope_injectionSep {
-  background: var(--dsw-alias-label-caption);
-  border-radius: 1px;
-  flex: none;
-  width: 2px;
-  height: 2px;
-  margin: 0 8px;
-}
-
-.mcpScope_injectionDetail {
-  min-width: 0;
-  flex: none;
-  overflow: hidden;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: var(--dsh-content-font-size-secondary, 13px);
-  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mcpScope_injectionTotal {
-  min-width: 0;
-  flex: auto;
-  overflow: hidden;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: var(--dsh-content-font-size-secondary, 13px);
-  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* The shipped expanded-body chrome: one 141px scrollport of 11/16 monospace on
    the markdown code-block fill, indented to the title column. */
 .mcpScope_injectionBody {
@@ -652,12 +622,51 @@ export const css = `
   overflow: auto;
 }
 
+/* The expanded body leads with ONE line: every source and its count. */
+.mcpScope_injectionSummary {
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
 .mcpScope_injectionServer + .mcpScope_injectionServer {
-  margin-top: 8px;
+  margin-top: 6px;
+}
+
+/* Each source is its own disclosure under that summary: a chevron that turns
+   down when the source is open, its name and count, then (open only) that
+   source's names, indented to the glyph. */
+.mcpScope_injectionServerHead {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.mcpScope_injectionServerHead:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.mcpScope_injectionServerGlyph {
+  display: inline-flex;
+  flex: none;
+  margin-right: 4px;
+  color: var(--dsw-alias-label-caption);
+  transform: rotate(-90deg);
+  transition: transform 100ms ease;
+}
+
+.mcpScope_injectionServer[data-open] .mcpScope_injectionServerGlyph {
+  transform: rotate(0deg);
 }
 
 .mcpScope_injectionServerName {
   color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.mcpScope_injectionServerTools {
+  padding-left: 18px;
 }
 
 .mcpScope_injectionToolName {

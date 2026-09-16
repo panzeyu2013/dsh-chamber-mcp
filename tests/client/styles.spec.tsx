@@ -249,8 +249,10 @@ describe('mcp-scope stylesheet', () => {
         '.mcpScope_focusRing:focus-visible',
         '.mcpScope_iconButton:focus-visible',
         // the registered-tools notice is a shipped-chrome disclosure row: only
-        // its keyboard focus ring spends the accent, like every other control
+        // its keyboard focus rings (the row's and each source's) spend the
+        // accent, like every other control
         '.mcpScope_injectionHead:focus-visible',
+        '.mcpScope_injectionServerHead:focus-visible',
         '.mcpScope_input:focus',
         '.mcpScope_linkButton:focus-visible',
         '.mcpScope_switchInput:checked + .mcpScope_switch',

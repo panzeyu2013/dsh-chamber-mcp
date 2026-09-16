@@ -1,5 +1,6 @@
 /**
- * Conversation lane row: "MCP tools registered".
+ * Conversation lane row: "MCP registered" (sources and counts live behind the
+ * expanded state only).
  *
  * A UI hint only: it tells the reader which MCP tools the plugin registered for
  * the session that a request belongs to — it is not part of the prompt, the
@@ -71,23 +72,33 @@ export interface InjectionNodeProps {
   t: InjectionTranslate
 }
 
+/** Enter/Space activate a disclosure row, exactly like the shipped rows. */
+function onDisclosureKey(event: KeyboardEvent<HTMLDivElement>, toggle: () => void): void {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  toggle()
+}
+
 /**
- * One disclosure line: [plug] MCP tools registered · zotero (43) · email (18) ·
- * 61 tools registered. Click (or Enter/Space) expands the per-server tool names
- * into the shipped code-block scrollport; the same click collapses it again.
+ * One disclosure line reading **MCP registered** — no source, no count: the
+ * summary belongs to the expanded state, not to the transcript. Click (or
+ * Enter/Space) opens the shipped code-block scrollport, which leads with ONE
+ * line naming every source and its count and then gives each source its own
+ * disclosure; a source's tool names appear only once that source is opened.
  */
 export function McpInjectionRow({ node, t }: InjectionNodeProps): ReactElement | null {
   const [open, setOpen] = useState(false)
+  const [openServers, setOpenServers] = useState<readonly string[]>([])
   const payload = readInjectionPayload(node?.data)
   if (payload === undefined) return null
-  const details = payload.servers
+  const summary = payload.servers
     .map((server) => t('injection.entry', { name: server.name, count: server.toolCount }))
     .join(' · ')
   const toggle = (): void => setOpen((current) => !current)
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    event.preventDefault()
-    toggle()
+  const toggleServer = (name: string): void => {
+    setOpenServers((current) =>
+      current.includes(name) ? current.filter((entry) => entry !== name) : [...current, name],
+    )
   }
   return (
     <div className={styles.injectionRoot} data-open={open || undefined} data-mcp-injection="">
@@ -97,7 +108,7 @@ export function McpInjectionRow({ node, t }: InjectionNodeProps): ReactElement |
         tabIndex={0}
         aria-expanded={open}
         onClick={toggle}
-        onKeyDown={onKeyDown}
+        onKeyDown={(event) => onDisclosureKey(event, toggle)}
       >
         <span className={styles.injectionLeading}>
           {open ? (
@@ -116,33 +127,56 @@ export function McpInjectionRow({ node, t }: InjectionNodeProps): ReactElement |
           )}
         </span>
         <span className={styles.injectionTitle}>{t('injection.title')}</span>
-        {details !== '' && <span className={styles.injectionSep} aria-hidden="true" />}
-        <span className={styles.injectionDetail}>{details}</span>
-        <span className={styles.injectionSep} aria-hidden="true" />
-        <span className={styles.injectionTotal}>{t('injection.total', { count: payload.total })}</span>
       </div>
       {open && (
         <div className={styles.injectionBody} data-injection-body="">
+          {/* First line: every source with its count, on one line. */}
+          <div className={styles.injectionSummary} data-injection-summary="">
+            {summary}
+          </div>
           {payload.servers.map((server) => {
+            const serverOpen = openServers.includes(server.name)
             const serverOmitted = injectionOmittedOf(server)
             return (
-              <div key={server.name} className={styles.injectionServer} data-injection-server={server.name}>
-                <div className={styles.injectionServerName}>
-                  {t('injection.entry', { name: server.name, count: server.toolCount })}
+              <div
+                key={server.name}
+                className={styles.injectionServer}
+                data-injection-server={server.name}
+                data-open={serverOpen || undefined}
+              >
+                <div
+                  className={styles.injectionServerHead}
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={serverOpen}
+                  data-injection-server-head={server.name}
+                  onClick={() => toggleServer(server.name)}
+                  onKeyDown={(event) => onDisclosureKey(event, () => toggleServer(server.name))}
+                >
+                  <span className={styles.injectionServerGlyph}>
+                    <McpChevronIcon size={12} />
+                  </span>
+                  <span className={styles.injectionServerName}>
+                    {t('injection.entry', { name: server.name, count: server.toolCount })}
+                  </span>
                 </div>
-                {server.tools.map((name, index) => (
-                  // A repeated name is legal in a hostile header: index-qualify
-                  // the key so React never sees a duplicate.
-                  <div
-                    key={name + '#' + String(index)}
-                    className={styles.injectionToolName}
-                    data-injection-tool={name}
-                  >
-                    {name}
+                {serverOpen && (
+                  <div className={styles.injectionServerTools} data-injection-server-tools="">
+                    {server.tools.map((name, index) => (
+                      // A repeated name is legal in a hostile header: index-qualify
+                      // the key so React never sees a duplicate.
+                      <div
+                        key={name + '#' + String(index)}
+                        className={styles.injectionToolName}
+                        data-injection-tool={name}
+                      >
+                        {name}
+                      </div>
+                    ))}
+                    {serverOmitted > 0 && (
+                      <div className={styles.injectionOmitted}>{t('injection.omitted', { count: serverOmitted })}</div>
+                    )}
                   </div>
-                ))}
-                {serverOmitted > 0 && (
-                  <div className={styles.injectionOmitted}>{t('injection.omitted', { count: serverOmitted })}</div>
                 )}
               </div>
             )

@@ -204,9 +204,8 @@ export const en = {
   'error.unexpected': 'Unexpected error.',
 
   // registered-tools notice (conversation lane)
-  'injection.title': 'MCP tools registered',
+  'injection.title': 'MCP registered',
   'injection.entry': '{name} ({count})',
-  'injection.total': '{count} tools registered',
   'injection.omitted': '…and {count} more not listed',
 } as const satisfies Record<string, string>
 
@@ -356,9 +355,8 @@ export const zh: Record<SettingsKey, string> = {
   'search.none': '没有匹配“{query}”的服务器',
   'row.allOn': '全部开启',
   'row.allOff': '全部关闭',
-  'injection.title': 'MCP 工具已注册',
+  'injection.title': 'MCP 已注册',
   'injection.entry': '{name}（{count}）',
-  'injection.total': '共注册 {count} 个工具',
   'injection.omitted': '……还有 {count} 个未列出',
 
   'row.manage': '管理 workspace（已开启 {count}）',

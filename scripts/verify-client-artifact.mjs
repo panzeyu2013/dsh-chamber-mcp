@@ -394,8 +394,12 @@ await act(async () => {
 })
 const noticeMarkup = host.innerHTML
 check('the notice row renders from the packed bundle', noticeMarkup.includes('data-mcp-injection'))
-check('the notice row shows the server and its tool count', noticeMarkup.includes('fixture (2)'))
-check('the notice row shows the tool total', noticeMarkup.includes('2 tools registered'))
+check(
+  'the collapsed notice row shows ONLY the registered line',
+  noticeMarkup.includes('MCP registered') &&
+    !noticeMarkup.includes('fixture (2)') &&
+    !noticeMarkup.includes('2 tools registered'),
+)
 check(
   'the notice row starts collapsed',
   noticeMarkup.includes('aria-expanded="false"') && !noticeMarkup.includes('data-injection-body'),
@@ -407,12 +411,25 @@ await act(async () => {
 })
 const noticeExpanded = host.innerHTML
 check(
-  'a click expands the notice into its tool list',
-  noticeHead.getAttribute('aria-expanded') === 'true' && noticeExpanded.includes('data-injection-body'),
+  'a click expands the notice into its summary line',
+  noticeHead.getAttribute('aria-expanded') === 'true' &&
+    noticeExpanded.includes('data-injection-body') &&
+    noticeExpanded.includes('data-injection-summary') &&
+    noticeExpanded.includes('fixture (2)'),
 )
 check(
-  'the expanded notice names the registered tools',
-  noticeExpanded.includes('mcp__fixture__greet') && noticeExpanded.includes('mcp__fixture__late'),
+  'the source tools stay hidden until their own source is expanded',
+  !noticeExpanded.includes('mcp__fixture__greet'),
+)
+const noticeSource = host.querySelector('[data-injection-server-head="fixture"]')
+if (noticeSource === null) fail('the expanded notice renders no per-source disclosure')
+await act(async () => {
+  noticeSource.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+})
+check(
+  'expanding one source names the registered tools',
+  noticeSource.getAttribute('aria-expanded') === 'true' &&
+    (/mcp__fixture__greet/.test(host.innerHTML) && /mcp__fixture__late/.test(host.innerHTML)),
 )
 
 await act(async () => {

@@ -721,13 +721,22 @@ One notice row — `src/client/injection-row.tsx`, styles in `styles.ts`
 chrome, no pill and no card of its own):
 
 ```
-[plug]   MCP tools registered   zotero (43) · email (18)   61 tools registered
-         expanded (click):
-           zotero (43)
-           mcp__zotero__fetch
-           mcp__zotero__scite_check_retractions
-           …
+[plug]   MCP registered
+
+         expanded (click), which leads with ONE line of every source + count:
+           zotero (43) · email (18)
+         then one disclosure per source, each closed, each opening its own names:
+           › zotero (43)
+           ⌄ email (18)
+             mcp__email__send
+             mcp__email__list_emails_metadata
+             …
 ```
+
+The collapsed row carries NO source and NO count: a transcript line that lists
+what a session registered is noise until asked, and the counts are one click
+away. The expanded body leads with the summary line and gives every source its
+own disclosure, so a long server list never buries a single server's names.
 
 The row sits immediately BEFORE the system-prompt card of the request it
 describes: it is a UI hint about what that request registered, not a row of the
@@ -737,9 +746,10 @@ A server that listed more than `INJECTION_NAME_LIMIT` (256) tools ends its
 block with the localized `injection.omitted` line naming the remainder; a
 server whose list fits omits nothing.
 
-The strings are the en dictionary (`src/client/locales.ts`: `injection.title`,
-`injection.entry` = `{name} ({count})` joined with `·`, `injection.total` =
-`{count} tools registered`, `injection.omitted` for names past the cap); the
+The strings are the en dictionary (`src/client/locales.ts`: `injection.title` =
+`MCP registered`, `injection.entry` = `{name} ({count})` joined with `·` for the
+summary line and used per source disclosure, `injection.omitted` for names past
+the cap); the
 plug and chevron are the plugin's own inline glyphs (`tool-card/icon.tsx`, the
 chevron is the shipped `IconChevronDownOutline14` geometry). Rules lane
 derives, each traceable to source:

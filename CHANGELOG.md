@@ -253,8 +253,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Registered-tools notice in the conversation (one row per changed set).** A
   session now shows which MCP tools were registered without the user having to
-  call one first — `MCP tools registered · zotero (43) · email (18)` plus the
-  tool total, with the shipped plug glyph. The row is DERIVED client-side (see
+  call one first — the collapsed row reads `MCP registered` with the shipped plug
+  glyph, expanding it leads with ONE line of every source and its count and then
+  gives each source its own disclosure (the names appear only once a source is
+  opened). The row is DERIVED client-side (see
   the Changed entry below for the two sources it unions: the request's tool array
   and the names the rendered system prompt declares), so it reports what the
   request exposed, survives a reload and writes nothing into the session.
