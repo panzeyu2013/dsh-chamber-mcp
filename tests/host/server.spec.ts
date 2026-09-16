@@ -530,8 +530,25 @@ describe('runtime snapshot + probe (M3)', () => {
     expect(read.contents?.[0]?.text).toBe('fixture resource body')
     const listed = await handle.context.resources.request({ method: 'resources/list' }, execContext()) as { resources?: { uri?: string }[] }
     expect(listed.resources?.some((resource) => resource.uri === 'file:///fixture-readme.txt')).toBe(true)
+    // URI TEMPLATES: the listed template has to come back with its uriTemplate,
+    // and an EXPANDED uri has to read through the same provider — the two halves
+    // that make a template useful.
+    const templates = await handle.context.resources.request(
+      { method: 'resources/templates/list' },
+      execContext(),
+    ) as { resourceTemplates?: { uriTemplate?: string; name?: string }[] }
+    expect(templates.resourceTemplates?.map((template) => template.uriTemplate)).toEqual([
+      'fixture:///greeting/{who}',
+    ])
+    const expanded = await handle.context.resources.request(
+      { method: 'resources/read', uri: 'fixture:///greeting/ada' },
+      execContext(),
+    ) as { contents?: { text?: string }[] }
+    expect(expanded.contents?.[0]?.text).toBe('fixture greeting for ada')
     await handle.dispose()
     await expect(handle.context.resources.request({ method: 'resources/list' }, execContext()))
+      .rejects.toThrow(/server is disconnected/)
+    await expect(handle.context.resources.request({ method: 'resources/templates/list' }, execContext()))
       .rejects.toThrow(/server is disconnected/)
   })
 

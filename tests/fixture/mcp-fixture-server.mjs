@@ -15,7 +15,7 @@
 //                dynamically registered tool is named "boom"
 //   env_probe    echoes PROBE_TOKEN from the child env
 
-import { McpServer } from '@modelcontextprotocol/server'
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server'
 import { serveStdio } from '@modelcontextprotocol/server/stdio'
 import { z } from 'zod'
 
@@ -120,6 +120,18 @@ function createFixtureServer() {
   }, async () => ({
     content: [{ type: 'text', text: process.env.PROBE_TOKEN ?? '(unset)' }],
   }))
+
+  // A resource TEMPLATE (URI template): the host-half provider's template list
+  // path has to surface it, and reading an EXPANDED uri has to reach the server
+  // — which is the entire point of a template.
+  server.registerResource(
+    'greeting',
+    new ResourceTemplate('fixture:///greeting/{who}', { list: undefined }),
+    { title: 'Fixture greeting', mimeType: 'text/plain' },
+    async (uri, variables) => ({
+      contents: [{ uri: uri.href, mimeType: 'text/plain', text: `fixture greeting for ${String(variables.who)}` }],
+    }),
+  )
 
   // A real resource so the host-half resource provider has something to route
   // to; the provider test asserts the BODY, not merely "no error".
