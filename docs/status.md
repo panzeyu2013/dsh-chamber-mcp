@@ -13,11 +13,13 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
   published; the downloaded asset is byte-identical to the locally verified
   tarball). `v0.0.3` (2026-09-15), `v0.0.2` and `v0.0.1` are the previous
   releases.
-- **Working line: `v0.1.1`, prepared on `main` but NOT tagged yet.** The version
-  identity is `0.1.1` in `package.json`, `package-lock.json` and the dated
-  `## [0.1.1] - 2026-09-16` CHANGELOG section; no `v0.1.1` tag exists yet, so it
-  is not a release and its artifact hash must not be quoted as one.
-- **`v0.1.1` release-candidate verification.** `npm ci` + `npm run check` PASS —
+- **`v0.1.1` is RELEASED** — tag `v0.1.1` on `b8dc71d` (published 2026-09-16,
+  CI + Release workflows green). Asset `dsh-chamber-mcp-0.1.1.tgz` (165,638 bytes,
+  47 entries) with its `.sha256`; the published hash
+  `52a8a2ad2536e20a5a2c8d798490b641b42fcd6ebe61de885a1ea54ad9803492` matches the
+  downloaded asset. The maintainer's linked remote instances were updated through
+  the chamber gateway's official `materialize` path (no runtime restart).
+- **`v0.1.1` verification (on the tagged commit).** `npm ci` + `npm run check` PASS —
   `tsc` ×2, **554 tests / 28 files**, 47 packed entries, `verify-client-artifact`
   PASS, determinism (43 files), `verify:package` PASS;
   `node scripts/release-notes.mjs 0.1.1` composes the dated section alone;
