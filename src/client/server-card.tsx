@@ -176,6 +176,12 @@ function badgeRowsOf(server: ServerDef): { key: string; label: string; ref: stri
   }))
 }
 
+/**
+ * Above this many workspaces the expanded block grows a name filter; below it
+ * the list is short enough that an input would be noise.
+ */
+const WS_FILTER_MIN = 5
+
 export function ServerCard(props: ServerCardProps): JSX.Element | null {
   const { t, server, doc, credentials, writable, workspaces, workspaceStatus } = props
   const [confirmingRemove, setConfirmingRemove] = useState(false)
@@ -199,6 +205,14 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
    * default view). Local UI state only — never a settings write.
    */
   const [wsExpanded, setWsExpanded] = useState(false)
+  /** Workspace-name filter. View state only — it never reaches a settings write. */
+  const [wsQuery, setWsQuery] = useState('')
+  /**
+   * Row order FROZEN when the list is opened (enabled workspaces first): sorting
+   * live would move a row out from under the pointer the moment it is toggled.
+   * Cleared on collapse so the next open re-sorts against the state then.
+   */
+  const [wsOrder, setWsOrder] = useState<readonly string[] | null>(null)
   const [toolsOpen, setToolsOpen] = useState(false)
   const [toolsLoading, setToolsLoading] = useState(false)
   const [toolsSyncedAt, setToolsSyncedAt] = useState<number | undefined>(undefined)
@@ -271,6 +285,28 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
     ? workspaces.filter((ws) => isEnabled(doc.overrides, ws.workspaceId, server.serverName))
     : []
   const enabledCount = enabledWorkspaces.length
+  const wsNeedle = wsQuery.trim().toLowerCase()
+  const wsOrderRank = new Map((wsOrder ?? []).map((id, index) => [id, index]))
+  // A workspace that appears while the list is open keeps the host order and
+  // lands after the frozen rows (stable sort, unknown ids rank last).
+  const orderedWorkspaces =
+    wsOrder === null
+      ? workspaces
+      : [...workspaces].sort(
+          (a, b) =>
+            (wsOrderRank.get(a.workspaceId) ?? Number.MAX_SAFE_INTEGER) -
+            (wsOrderRank.get(b.workspaceId) ?? Number.MAX_SAFE_INTEGER),
+        )
+  const visibleWorkspaces =
+    wsNeedle === ''
+      ? orderedWorkspaces
+      : orderedWorkspaces.filter((ws) => ws.title.toLowerCase().includes(wsNeedle))
+  const wsFiltered = wsNeedle !== ''
+  /**
+   * The filter only earns its pixels once the list is long: below this many
+   * workspaces the expanded block stays a plain list.
+   */
+  const wsFilterVisible = workspaces.length >= WS_FILTER_MIN
   const busy =
     removing ||
     pendingWs !== undefined ||
@@ -350,15 +386,32 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
     if (!outcome.ok) setFailure(outcome)
   }
 
+  /** Open/close the full list, freezing the row order (enabled first) on open. */
+  function toggleWorkspaceList(): void {
+    if (wsExpanded) {
+      setWsExpanded(false)
+      setWsOrder(null)
+      return
+    }
+    const enabledIds = new Set(enabledWorkspaces.map((ws) => ws.workspaceId))
+    setWsOrder([
+      ...enabledWorkspaces.map((ws) => ws.workspaceId),
+      ...workspaces.filter((ws) => !enabledIds.has(ws.workspaceId)).map((ws) => ws.workspaceId),
+    ])
+    setWsExpanded(true)
+  }
+
   async function handleToggleAll(enabled: boolean): Promise<void> {
     setFailure(null)
     setPendingAll(true)
     let outcome: SaveOutcome
     try {
+      // The pair acts on what the user can SEE: with a filter in play that is
+      // the narrowed list, not every workspace on the machine.
       outcome = await props.onToggleAll(
         server.serverName,
         enabled,
-        workspaces.map((ws) => ws.workspaceId),
+        visibleWorkspaces.map((ws) => ws.workspaceId),
       )
     } catch {
       outcome = { ok: false, reason: 'save-failed' }
@@ -501,13 +554,15 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
         </span>
         <label htmlFor={id} className={styles.wsLabel}>
           <span className={styles.wsName}>{ws.title}</span>
-          {/* The state word rides INSIDE the label: as an inert sibling it drew
-              the same pointer-free look as the name while swallowing clicks, so
-              aiming at "Off" felt like a dead hit area. aria-hidden because
-              role="switch" + checked already say it. */}
-          <span className={styles.wsState} aria-hidden="true">
-            {on ? t('row.on') : t('row.off')}
-          </span>
+          {/* Only the ON state is spelled out: a column of "Off" beside a switch
+              that already shows off is noise, and it used to swallow clicks as an
+              inert sibling of the label. Inside the label now, aria-hidden
+              because role="switch" + checked already say it. */}
+          {on && (
+            <span className={styles.wsState} aria-hidden="true">
+              {t('row.on')}
+            </span>
+          )}
         </label>
       </li>
     )
@@ -868,7 +923,7 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
               aria-controls={
                 wsExpanded || enabledWorkspaces.length > 0 ? `mcp-scope-ws-rows-${server.serverName}` : undefined
               }
-              onClick={() => setWsExpanded((open) => !open)}
+              onClick={toggleWorkspaceList}
             >
               {/* The on-count stays visible while the list is open: with 11
                   workspaces the expanded list is exactly when you lose track. */}
@@ -886,24 +941,39 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
                 <button
                   type="button"
                   className={cx(styles.button, styles.buttonOutline)}
-                  disabled={rowsDisabled}
+                  disabled={rowsDisabled || visibleWorkspaces.length === 0}
                   onClick={() => void handleToggleAll(true)}
                 >
-                  {t('row.allOn')}
+                  {wsFiltered ? t('row.allOnShown', { count: visibleWorkspaces.length }) : t('row.allOn')}
                 </button>
                 <button
                   type="button"
                   className={cx(styles.button, styles.buttonOutline)}
-                  disabled={rowsDisabled}
+                  disabled={rowsDisabled || visibleWorkspaces.length === 0}
                   onClick={() => void handleToggleAll(false)}
                 >
-                  {t('row.allOff')}
+                  {wsFiltered ? t('row.allOffShown', { count: visibleWorkspaces.length }) : t('row.allOff')}
                 </button>
               </div>
             )}
+            {wsFilterVisible && (
+              <div className={styles.row}>
+                <input
+                  type="search"
+                  aria-label={t('wsFilter.placeholder')}
+                  placeholder={t('wsFilter.placeholder')}
+                  value={wsQuery}
+                  onChange={(event) => setWsQuery(event.target.value)}
+                  className={cx(styles.input, styles.rowInput)}
+                />
+              </div>
+            )}
             <ul id={`mcp-scope-ws-rows-${server.serverName}`} className={styles.wsList}>
-              {workspaces.map(workspaceRow)}
+              {visibleWorkspaces.map(workspaceRow)}
             </ul>
+            {wsFiltered && visibleWorkspaces.length === 0 && (
+              <p className={styles.hint}>{t('wsFilter.none', { query: wsQuery.trim() })}</p>
+            )}
             <p className={styles.hint}>{t('server.defaultOff')}</p>
           </>
         )}

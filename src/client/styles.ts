@@ -911,13 +911,15 @@ export const css = `
   gap: 4px;
 }
 
+/* The rows lay out as a responsive grid — one column in a narrow panel, more as
+   it widens — so a long workspace list stops being a 20-row stack. */
 .mcpScope_wsList {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 2px 16px;
 }
 
 .mcpScope_wsRow {

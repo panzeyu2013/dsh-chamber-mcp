@@ -319,6 +319,12 @@ describe('mcp-scope stylesheet', () => {
     expect(ruleOf('.mcpScope_wsLabel')).toMatch(/display:\s*flex/)
     expect(ruleOf('.mcpScope_wsLabel')).toMatch(/cursor:\s*pointer/)
     expect(ruleOf('.mcpScope_wsName')).toMatch(/text-overflow:\s*ellipsis/)
+    // The rows are a responsive grid: one column in a narrow panel, more as the
+    // settings panel widens, so a long workspace list is not a 20-row stack.
+    expect(ruleOf('.mcpScope_wsList')).toMatch(/display:\s*grid/)
+    expect(ruleOf('.mcpScope_wsList')).toMatch(
+      /grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(200px,\s*1fr\)\)/,
+    )
     // The switch's native input fills its box, so the box's slop IS the hit
     // area: 44x28 around the unchanged 36x20 track.
     expect(ruleOf('.mcpScope_switchBox')).toMatch(/padding:\s*4px/)

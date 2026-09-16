@@ -138,8 +138,13 @@ export const en = {
   // section list controls
   'search.placeholder': 'Filter servers',
   'search.none': 'No server matches "{query}"',
+  'wsFilter.placeholder': 'Filter workspaces',
+  'wsFilter.none': 'No workspace matches "{query}"',
   'row.allOn': 'All on',
   'row.allOff': 'All off',
+  // With a filter in play the pair says what it will actually touch.
+  'row.allOnShown': 'All on ({count} shown)',
+  'row.allOffShown': 'All off ({count} shown)',
   'row.manage': 'Manage workspaces ({count} on)',
   'row.manageHide': 'Hide workspaces ({count} on)',
   'row.allOffDefault.one': 'This workspace is off by default ({count} in total)',
@@ -354,8 +359,12 @@ export const zh: Record<SettingsKey, string> = {
   // section list controls
   'search.placeholder': '筛选服务器',
   'search.none': '没有匹配“{query}”的服务器',
+  'wsFilter.placeholder': '筛选 workspace',
+  'wsFilter.none': '没有匹配“{query}”的 workspace',
   'row.allOn': '全部开启',
   'row.allOff': '全部关闭',
+  'row.allOnShown': '全部开启（{count} 个）',
+  'row.allOffShown': '全部关闭（{count} 个）',
   'injection.title': 'MCP 已注册',
   'injection.entry': '{name}（{count}）',
   'injection.omitted': '……还有 {count} 个未列出',

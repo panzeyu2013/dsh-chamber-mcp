@@ -1020,10 +1020,10 @@ describe('McpScopeSection render', () => {
     expect(writes).toEqual([{ workspaceId: 'ws-1', enabled: true }])
   })
 
-  it('toggles from the state word too: the whole text run is the label', async () => {
+  it('spells out only the ON state, and that word toggles the row', async () => {
     const writes: { workspaceId: string; enabled: boolean }[] = []
     const mounted = mountSection(
-      { servers: [stdioServer('alpha')], overrides: {} },
+      { servers: [stdioServer('alpha')], overrides: { 'ws-1': { alpha: true } } },
       {
         toggleWorkspace: async (workspaceId, _serverName, enabled) => {
           writes.push({ workspaceId, enabled })
@@ -1033,21 +1033,146 @@ describe('McpScopeSection render', () => {
       { wsItems: [{ workspaceId: 'ws-1', title: 'one' }] },
     )
     await flush()
-    buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
-    await flush()
+    // ws-1 is on, so the collapsed card lists it and spells the state out.
     const row = mounted.host.querySelector('.' + styles.wsRow)
     const label = row?.querySelector('.' + styles.wsLabel)
     const state = row?.querySelector('.' + styles.wsState)
     expect(label).not.toBeNull()
-    expect(state).not.toBeNull()
-    // The state word is INSIDE the label: as an inert sibling it looked the same
-    // but swallowed the click, which is the "dead hit area" a user hits when
-    // aiming at the row's right edge.
+    expect(state?.textContent).toBe(t('row.on'))
+    // The word lives INSIDE the label: as an inert sibling it looked the same but
+    // swallowed the click — the "dead hit area" at the row's right edge.
     expect(label?.contains(state as Node)).toBe(true)
     expect(row?.lastElementChild).toBe(label)
     state?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flush()
-    expect(writes).toEqual([{ workspaceId: 'ws-1', enabled: true }])
+    expect(writes).toEqual([{ workspaceId: 'ws-1', enabled: false }])
+  })
+
+  it('leaves OFF rows unsaid: no state word beside a switch that already reads off', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {},
+      {
+        wsItems: [
+          { workspaceId: 'ws-1', title: 'one' },
+          { workspaceId: 'ws-2', title: 'two' },
+        ],
+      },
+    )
+    await flush()
+    buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
+    await flush()
+    const rows = Array.from(mounted.host.querySelectorAll('.' + styles.wsRow))
+    expect(rows).toHaveLength(2)
+    for (const row of rows) expect(row.querySelector('.' + styles.wsState)).toBeNull()
+    // The row is the name and the switch, nothing else.
+    expect(rows.map((row) => row.textContent)).toEqual(['one', 'two'])
+  })
+
+  it('orders the expanded list enabled-first and FREEZES it while it is open', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: { 'ws-2': { alpha: true } } },
+      {},
+      {
+        wsItems: [
+          { workspaceId: 'ws-1', title: 'one' },
+          { workspaceId: 'ws-2', title: 'two' },
+          { workspaceId: 'ws-3', title: 'three' },
+        ],
+      },
+    )
+    await flush()
+    buttonByText(mounted.host, t('row.manage', { count: 1 }))?.click()
+    await flush()
+    const titles = (): (string | null)[] =>
+      Array.from(mounted.host.querySelectorAll('.' + styles.wsName)).map((el) => el.textContent)
+    // Enabled first; everything else keeps the host order.
+    expect(titles()).toEqual(['two', 'one', 'three'])
+    // Turning another workspace on mid-view must NOT move a row under the pointer.
+    mounted.live.doc.overrides['ws-1'] = { alpha: true }
+    mounted.rerender()
+    await flush()
+    expect(titles()).toEqual(['two', 'one', 'three'])
+    // Collapse and re-open: the order is computed again from the current state.
+    buttonByText(mounted.host, t('row.manageHide', { count: 2 }))?.click()
+    await flush()
+    buttonByText(mounted.host, t('row.manage', { count: 2 }))?.click()
+    await flush()
+    expect(titles()).toEqual(['one', 'two', 'three'])
+  })
+
+  it('gives a long list a name filter, and the bulk pair acts on what is SHOWN', async () => {
+    const writes: { ids: string[]; enabled: boolean }[] = []
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {
+        toggleWorkspaces: async (_serverName, enabled, workspaceIds) => {
+          writes.push({ ids: Array.from(workspaceIds), enabled })
+          return { ok: true } as const
+        },
+      },
+      {
+        wsItems: [
+          { workspaceId: 'ws-1', title: 'tmp' },
+          { workspaceId: 'ws-2', title: 'daily' },
+          { workspaceId: 'ws-3', title: 'quant' },
+          { workspaceId: 'ws-4', title: 'literature' },
+          { workspaceId: 'ws-5', title: 'perf' },
+        ],
+      },
+    )
+    await flush()
+    buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
+    await flush()
+    const block = mounted.host.querySelector('.' + styles.wsBlock)
+    const filter = block?.querySelector<HTMLInputElement>('input[type="search"]')
+    expect(filter).not.toBeNull()
+    expect(filter?.getAttribute('placeholder')).toBe(t('wsFilter.placeholder'))
+    const names = (): (string | null)[] =>
+      Array.from(mounted.host.querySelectorAll('.' + styles.wsName)).map((el) => el.textContent)
+
+    setValue(filter as HTMLInputElement, 'da')
+    await flush()
+    expect(names()).toEqual(['daily'])
+    // The pair names what it will touch, and touches only that.
+    const allOn = buttonByText(mounted.host, t('row.allOnShown', { count: 1 }))
+    expect(allOn).toBeDefined()
+    allOn?.click()
+    await flush()
+    expect(writes).toEqual([{ ids: ['ws-2'], enabled: true }])
+
+    // A query that matches nothing says so, and cannot fire a bulk write.
+    const emptyFilter = block?.querySelector<HTMLInputElement>('input[type="search"]')
+    setValue(emptyFilter as HTMLInputElement, 'zzz')
+    await flush()
+    expect(mounted.text()).toContain(t('wsFilter.none', { query: 'zzz' }))
+    expect(mounted.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(0)
+    const dead = buttonByText(mounted.host, t('row.allOnShown', { count: 0 }))
+    expect((dead as HTMLButtonElement | undefined)?.disabled).toBe(true)
+
+    // Clearing brings the whole list back, unfiltered labels and all.
+    const clearedFilter = block?.querySelector<HTMLInputElement>('input[type="search"]')
+    setValue(clearedFilter as HTMLInputElement, '')
+    await flush()
+    expect(names()).toEqual(['tmp', 'daily', 'quant', 'literature', 'perf'])
+    expect(buttonByText(mounted.host, t('row.allOn'))).toBeDefined()
+  })
+
+  it('leaves a short list without a filter input', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {},
+      {
+        wsItems: [
+          { workspaceId: 'ws-1', title: 'one' },
+          { workspaceId: 'ws-2', title: 'two' },
+        ],
+      },
+    )
+    await flush()
+    buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
+    await flush()
+    expect(mounted.host.querySelector('.' + styles.wsBlock + ' input[type="search"]')).toBeNull()
   })
 
   it('follows a LIVE workspace list: a new workspace starts off, a deleted one leaves nothing behind', async () => {

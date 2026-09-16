@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The workspace block scales: a responsive grid, a name filter, a frozen
+  order.** With a dozen workspaces the expanded block was a long stack whose bulk
+  pair sat past the fold. The rows are now an `auto-fill / minmax(200px, 1fr)`
+  grid (one column in a narrow panel, more as it widens); past five workspaces a
+  filter narrows the list by name, says so when nothing matches, and scopes the
+  bulk pair to what is shown (`All on (N shown)`) instead of silently touching
+  every workspace on the machine; the row order is computed ONCE when the list
+  opens (enabled first, the rest in host order) so a toggle never moves a row out
+  from under the pointer, and only the ON state is spelled out (a column of "Off"
+  beside a switch that already reads off was noise).
 - **The workspace card's bulk pair leads the list, and the default-off line now
   names its session scope.** `All on`/`All off` sat after the rows, so a long
   workspace list pushed them past the fold; they now sit directly under the
