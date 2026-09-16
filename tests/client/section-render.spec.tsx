@@ -941,7 +941,7 @@ describe('McpScopeSection render', () => {
     expect(buttonByText(mounted.host, en['row.allOn'])).toBeDefined()
     expect(buttonByText(mounted.host, en['row.allOff'])).toBeDefined()
     expect(writes).toEqual([]) // expansion is local UI state, not a settings write
-    buttonByText(mounted.host, en['row.manageHide'])!.click()
+    buttonByText(mounted.host, t('row.manageHide', { count: 1 }))!.click()
     await flush()
     expect(mounted.text()).not.toContain('two')
     expect(writes).toEqual([])
@@ -1018,6 +1018,101 @@ describe('McpScopeSection render', () => {
     input?.click()
     await flush()
     expect(writes).toEqual([{ workspaceId: 'ws-1', enabled: true }])
+  })
+
+  it('toggles from the state word too: the whole text run is the label', async () => {
+    const writes: { workspaceId: string; enabled: boolean }[] = []
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {
+        toggleWorkspace: async (workspaceId, _serverName, enabled) => {
+          writes.push({ workspaceId, enabled })
+          return { ok: true } as const
+        },
+      },
+      { wsItems: [{ workspaceId: 'ws-1', title: 'one' }] },
+    )
+    await flush()
+    buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
+    await flush()
+    const row = mounted.host.querySelector('.' + styles.wsRow)
+    const label = row?.querySelector('.' + styles.wsLabel)
+    const state = row?.querySelector('.' + styles.wsState)
+    expect(label).not.toBeNull()
+    expect(state).not.toBeNull()
+    // The state word is INSIDE the label: as an inert sibling it looked the same
+    // but swallowed the click, which is the "dead hit area" a user hits when
+    // aiming at the row's right edge.
+    expect(label?.contains(state as Node)).toBe(true)
+    expect(row?.lastElementChild).toBe(label)
+    state?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flush()
+    expect(writes).toEqual([{ workspaceId: 'ws-1', enabled: true }])
+  })
+
+  it('follows a LIVE workspace list: a new workspace starts off, a deleted one leaves nothing behind', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: { 'ws-1': { alpha: true } } },
+      {},
+      { wsItems: [{ workspaceId: 'ws-1', title: 'one' }] },
+    )
+    await flush()
+    // ws-1 is enabled, so the collapsed card counts it.
+    expect(buttonByText(mounted.host, t('row.manage', { count: 1 }))).toBeDefined()
+
+    // A workspace created while the card is on screen arrives switched OFF: the
+    // count does not move and no write happens.
+    mounted.live.wsItems.push({ workspaceId: 'ws-2', title: 'two' })
+    mounted.rerender()
+    await flush()
+    expect(buttonByText(mounted.host, t('row.manage', { count: 1 }))).toBeDefined()
+
+    buttonByText(mounted.host, t('row.manage', { count: 1 }))?.click()
+    await flush()
+    const inputs = Array.from(mounted.host.querySelectorAll<HTMLInputElement>('.' + styles.wsRow + ' input'))
+    expect(inputs).toHaveLength(2)
+    expect(inputs[0]?.checked).toBe(true)
+    expect(inputs[1]?.checked).toBe(false)
+    expect(mounted.text()).toContain('two')
+
+    // DELETING a workspace drops its row and its pair from the count. A deleted
+    // workspace can leave a record in the settings document (the host keeps what
+    // the last write put there) and nothing may surface from it: the rows and the
+    // count both come from the live list.
+    mounted.live.wsItems.splice(0, 1)
+    mounted.rerender()
+    await flush()
+    expect(mounted.text()).not.toContain('one')
+    expect(mounted.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(1)
+    expect(buttonByText(mounted.host, t('row.manageHide', { count: 0 }))).toBeDefined()
+    buttonByText(mounted.host, t('row.manageHide', { count: 0 }))?.click()
+    await flush()
+    // Nothing is enabled any more, so the collapsed card falls back to the
+    // default-off summary and the count reads zero — no phantom "one".
+    expect(mounted.text()).toContain(t(countKey('row.allOffDefault', 1), { count: 1 }))
+    expect(buttonByText(mounted.host, t('row.manage', { count: 0 }))).toBeDefined()
+  })
+
+  it('leads the expanded list with the bulk pair', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {},
+      {
+        wsItems: [
+          { workspaceId: 'ws-1', title: 'one' },
+          { workspaceId: 'ws-2', title: 'two' },
+        ],
+      },
+    )
+    await flush()
+    buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
+    await flush()
+    const allOn = buttonByText(mounted.host, t('row.allOn'))
+    const list = mounted.host.querySelector('.' + styles.wsList)
+    expect(allOn).toBeDefined()
+    expect(list).not.toBeNull()
+    // A long workspace list would push a trailing pair past the fold.
+    expect(allOn?.compareDocumentPosition(list as Node)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   it('serializes workspace toggles: every row is inert while one save is in flight', async () => {

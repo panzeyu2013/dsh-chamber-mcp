@@ -500,9 +500,15 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
           </span>
         </span>
         <label htmlFor={id} className={styles.wsLabel}>
-          {ws.title}
+          <span className={styles.wsName}>{ws.title}</span>
+          {/* The state word rides INSIDE the label: as an inert sibling it drew
+              the same pointer-free look as the name while swallowing clicks, so
+              aiming at "Off" felt like a dead hit area. aria-hidden because
+              role="switch" + checked already say it. */}
+          <span className={styles.wsState} aria-hidden="true">
+            {on ? t('row.on') : t('row.off')}
+          </span>
         </label>
-        <span className={styles.wsState}>{on ? t('row.on') : t('row.off')}</span>
       </li>
     )
   }
@@ -864,36 +870,40 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
               }
               onClick={() => setWsExpanded((open) => !open)}
             >
-              {wsExpanded ? t('row.manageHide') : t('row.manage', { count: enabledCount })}
+              {/* The on-count stays visible while the list is open: with 11
+                  workspaces the expanded list is exactly when you lose track. */}
+              {wsExpanded ? t('row.manageHide', { count: enabledCount }) : t('row.manage', { count: enabledCount })}
             </button>
           </div>
         )}
         {rowsReady && wsExpanded && (
           <>
+            {/* Bulk switches only make sense with an actual choice, and they
+                LEAD the list: a long workspace list would otherwise push the
+                pair past the fold. */}
+            {workspaces.length > 1 && (
+              <div className={styles.row}>
+                <button
+                  type="button"
+                  className={cx(styles.button, styles.buttonOutline)}
+                  disabled={rowsDisabled}
+                  onClick={() => void handleToggleAll(true)}
+                >
+                  {t('row.allOn')}
+                </button>
+                <button
+                  type="button"
+                  className={cx(styles.button, styles.buttonOutline)}
+                  disabled={rowsDisabled}
+                  onClick={() => void handleToggleAll(false)}
+                >
+                  {t('row.allOff')}
+                </button>
+              </div>
+            )}
             <ul id={`mcp-scope-ws-rows-${server.serverName}`} className={styles.wsList}>
               {workspaces.map(workspaceRow)}
             </ul>
-            {/* Bulk switches only make sense with an actual choice. */}
-            {workspaces.length > 1 && (
-            <div className={styles.row}>
-              <button
-                type="button"
-                className={cx(styles.button, styles.buttonOutline)}
-                disabled={rowsDisabled}
-                onClick={() => void handleToggleAll(true)}
-              >
-                {t('row.allOn')}
-              </button>
-              <button
-                type="button"
-                className={cx(styles.button, styles.buttonOutline)}
-                disabled={rowsDisabled}
-                onClick={() => void handleToggleAll(false)}
-              >
-                {t('row.allOff')}
-              </button>
-            </div>
-            )}
             <p className={styles.hint}>{t('server.defaultOff')}</p>
           </>
         )}

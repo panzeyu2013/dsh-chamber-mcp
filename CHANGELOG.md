@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The workspace card's bulk pair leads the list, and the default-off line now
+  names its session scope.** `All on`/`All off` sat after the rows, so a long
+  workspace list pushed them past the fold; they now sit directly under the
+  manage control, and the manage control now keeps the on-count while the list
+  is open (`Hide workspaces (N on)`) — with a long list that is exactly when the
+  count would otherwise disappear. `server.defaultOff` also says what the
+  per-workspace switch covers: that workspace's existing and new sessions alike
+  (the host applies the pair per agent, and a live flip pushes to the agents
+  already running).
 - **The client layer moved to the v2 model: `@modelcontextprotocol/client@2.0.0`
   — the same dependency on every supported host generation.** The 1.x SDK is gone
   from the tree, and the code that existed only to compensate for it was DELETED
@@ -76,6 +85,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A workspace row's switch was a 36×20 target and its state word swallowed
+  clicks.** The native checkbox fills its box, so the box WAS the hit area, and
+  "Off"/"On" sat beside the label as an inert sibling that looked clickable but
+  was not — aiming at the row's right edge landed on the dead half. The box now
+  carries a 4px slop (with a cancelling negative margin, so nothing moves) for a
+  44×28 target, and the state word lives INSIDE the label (\`aria-hidden\`, since
+  \`role="switch"\` + \`checked\` already carry it), so the whole text run toggles.
 - **Giving up now retracts the published instructions, not just the tools.** The
   reconnect budget's give-up pushed an empty tool list while the live
   `mcp:<serverName>` section kept returning the last connected generation's

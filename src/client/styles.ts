@@ -152,6 +152,7 @@ export const styles = {
   wsList: 'mcpScope_wsList',
   wsRow: 'mcpScope_wsRow',
   wsLabel: 'mcpScope_wsLabel',
+  wsName: 'mcpScope_wsName',
   wsState: 'mcpScope_wsState',
   switchBox: 'mcpScope_switchBox',
   switchInput: 'mcpScope_switchInput',
@@ -926,16 +927,26 @@ export const css = `
   min-width: 0;
 }
 
+/* The label is the WHOLE text run (name + the state word) so every pixel of it
+   toggles, and the cursor says so. */
 .mcpScope_wsLabel {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
   line-height: 20px;
   color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.mcpScope_wsName {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
 }
 
 .mcpScope_wsState {
@@ -947,10 +958,16 @@ export const css = `
 
 /* ---- switch (ui-primitives Switch geometry over a native checkbox) ---- */
 
+/* The native checkbox fills this box, so the box IS the hit area: the slop
+   below grows it to 44x28 around the unchanged 36x20 track, and the negative
+   margin cancels the padding in layout (nothing moves, only the target does).
+   The card-head switch and the staged form share it. */
 .mcpScope_switchBox {
   position: relative;
   flex: none;
   display: inline-flex;
+  padding: 4px;
+  margin: -4px;
 }
 
 .mcpScope_switchInput {

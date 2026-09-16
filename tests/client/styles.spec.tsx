@@ -314,7 +314,17 @@ describe('mcp-scope stylesheet', () => {
     expect(ruleOf('.mcpScope_code')).toMatch(/text-overflow:\s*ellipsis/)
     expect(ruleOf('.mcpScope_hint')).toMatch(/overflow-wrap:\s*anywhere/)
     expect(ruleOf('.mcpScope_noticeText')).toMatch(/overflow-wrap:\s*anywhere/)
-    expect(ruleOf('.mcpScope_wsLabel')).toMatch(/text-overflow:\s*ellipsis/)
+    // The label is the whole text RUN (name + state word) so every pixel of it
+    // toggles; the name itself carries the truncation.
+    expect(ruleOf('.mcpScope_wsLabel')).toMatch(/display:\s*flex/)
+    expect(ruleOf('.mcpScope_wsLabel')).toMatch(/cursor:\s*pointer/)
+    expect(ruleOf('.mcpScope_wsName')).toMatch(/text-overflow:\s*ellipsis/)
+    // The switch's native input fills its box, so the box's slop IS the hit
+    // area: 44x28 around the unchanged 36x20 track.
+    expect(ruleOf('.mcpScope_switchBox')).toMatch(/padding:\s*4px/)
+    expect(ruleOf('.mcpScope_switchBox')).toMatch(/margin:\s*-4px/)
+    expect(ruleOf('.mcpScope_switch')).toMatch(/width:\s*36px/)
+    expect(ruleOf('.mcpScope_switch')).toMatch(/height:\s*20px/)
     expect(ruleOf('.mcpScope_rowInput')).toMatch(/min-width:\s*0/)
     expect(ruleOf('.mcpScope_cardHead')).toMatch(/flex-wrap:\s*wrap/)
   })
@@ -410,6 +420,7 @@ describe('components consume the style seat', () => {
       styles.switch,
       styles.switchThumb,
       styles.wsLabel,
+      styles.wsName,
       styles.wsState,
     ]) {
       expect(markup, `missing ${name}`).toContain(name)
