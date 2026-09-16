@@ -53,7 +53,14 @@ const say = (m) => { evidence.push(m); log(m) }
 function installerEnv() {
   const proxy = Object.fromEntries(
     Object.entries(process.env).filter(
-      ([key]) => /^(https?|no)_proxy$/i.test(key) || key === 'NODE_EXTRA_CA_CERTS',
+      ([key]) =>
+        /^(https?|no)_proxy$/i.test(key) ||
+        key === 'NODE_EXTRA_CA_CERTS' ||
+        // A scratch home inside a checkout whose package.json declares
+        // `packageManager` makes corepack's strict mode refuse pnpm; RELEASE.md
+        // documents `COREPACK_ENABLE_STRICT=0` as the workaround, so the driver
+        // has to forward it instead of filtering it out.
+        key === 'COREPACK_ENABLE_STRICT',
     ),
   )
   return {
