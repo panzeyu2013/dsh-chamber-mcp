@@ -944,18 +944,13 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
         {workspaceStatus === 'loading' && <p className={styles.hint}>{t('workspaces.loading')}</p>}
         {workspaceStatus === 'error' && <p className={styles.hint}>{t('workspaces.error')}</p>}
         {rowsReady && workspaces.length === 0 && <p className={styles.hint}>{t('workspaces.empty')}</p>}
-        {/* Collapsed default: the ENABLED rows only — or ONE summary line when
-            the server is off everywhere (the common, initial state). */}
-        {rowsReady && workspaces.length > 0 && !wsExpanded && (
-          enabledWorkspaces.length > 0 ? (
-            <ul id={`mcp-scope-ws-rows-${server.serverName}`} className={styles.wsList}>
-              {enabledWorkspaces.map(workspaceRow)}
-            </ul>
-          ) : (
-            <p className={styles.hint}>
-              {t(countKey('row.allOffDefault', workspaces.length), { count: workspaces.length })}
-            </p>
-          )
+        {/* Collapsed default: the ENABLED rows only. With the server off
+            everywhere there is NOTHING here — the OFF switches inside the list
+            are the state, and no summary line restates it. */}
+        {rowsReady && workspaces.length > 0 && !wsExpanded && enabledWorkspaces.length > 0 && (
+          <ul id={`mcp-scope-ws-rows-${server.serverName}`} className={styles.wsList}>
+            {enabledWorkspaces.map(workspaceRow)}
+          </ul>
         )}
         {/* Local UI state only (never a settings write): the toggle reveals
             every row and the bulk switches. */}

@@ -11,7 +11,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RuntimeCallError, type RuntimeSnapshot } from '../../src/client/runtime.ts'
 import { styles } from '../../src/client/styles.ts'
-import { countKey, en, zh, type SettingsKey } from '../../src/client/locales.ts'
+import { en, zh, type SettingsKey } from '../../src/client/locales.ts'
 import {
   accessibleName,
   buttonsOf,
@@ -22,7 +22,6 @@ import {
   flush,
   keyByZh,
   mountSection,
-  occurrencesOf,
   overridesOf,
   perCardRefreshButton,
   renderedWorkspaceTitles,
@@ -130,11 +129,6 @@ function staleRetryButton(mounted: Harness): HTMLButtonElement {
   )
 }
 
-/** Placeholder names of one dictionary template, sorted (contract, not copy). */
-function placeholdersOf(text: string): string[] {
-  return Array.from(text.matchAll(/\{(\w+)\}/g), (match) => String(match[1])).sort()
-}
-
 describe('C4 correctness: collapse invariants', () => {
   it('[correctness] collapse: the default renders only the ENABLED rows', async () => {
     const mounted = mountSection({
@@ -148,13 +142,10 @@ describe('C4 correctness: collapse invariants', () => {
     expect(rendered.length).toBeLessThan(WS_TITLES.length)
   })
 
-  it('[correctness] collapse: zero enabled workspaces renders exactly one summary line carrying the workspace count', async () => {
-    // The sentence is a plural pair (row.allOffDefault.one/.other): assert the
-    // CONTRACT (one summary line, real workspace count, both dictionary forms
-    // resolvable) without freezing the copy itself.
-    const key = countKey('row.allOffDefault', WS_TITLES.length)
-    expect(placeholdersOf(zh[key]), 'summary placeholder contract').toEqual(['count'])
-    const expected = templateOf(key)
+  it('[correctness] collapse: zero enabled workspaces renders NO summary line', async () => {
+    // A card whose server is off everywhere shows nothing where the enabled rows
+    // would be: the OFF switches inside the list are the state, and the old
+    // row.allOffDefault sentence is retired (no stand-in line, no count).
     const mounted = mountSection({
       doc: { servers: [stdioServer(SERVER)], overrides: {} },
       wsItems: WS_ITEMS,
@@ -162,7 +153,7 @@ describe('C4 correctness: collapse invariants', () => {
     })
     await flush()
     expect(renderedWorkspaceTitles(mounted.host, WS_TITLES)).toEqual([])
-    expect(occurrencesOf(mounted.text(), expected)).toEqual([WS_TITLES.length])
+    expect(mounted.host.querySelectorAll('.' + styles.hint)).toHaveLength(0)
   })
 
   it('[correctness] collapse: the manage-workspaces toggle reveals every workspace row and collapses again', async () => {

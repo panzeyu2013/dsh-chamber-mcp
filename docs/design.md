@@ -651,12 +651,13 @@ written — through the platform's own seams rather than a new channel:
   its Connect action to the accent-filled retry), so one flapping server no
   longer costs a full-table re-read.
 - **Enabled workspaces instead of a row per workspace.** Workspace rows
-  collapse to the ENABLED set; with none enabled the card shows one summary line
-  ("all N workspaces are off by default"), and a manage toggle reveals every row
-  with bulk on/off (the bulk pair appears once more than one workspace exists, §6).
-  This is purely local UI state — no settings write — and the card renders NO
-  default-off note line: the enable switch (off by default) is that copy surface,
-  and an empty collapsed list is explained by the `row.allOffDefault` summary.
+  collapse to the ENABLED set; with none enabled the card shows NOTHING there, and
+  a manage toggle reveals every row with bulk on/off (the bulk pair appears once
+  more than one workspace exists, §6). This is purely local UI state — no settings
+  write — and the card renders no default-off copy at all: the enable switch (off
+  by default) is that surface, and neither a note line nor a summary sentence
+  restates what the OFF switches already show (`server.defaultOff` and
+  `row.allOffDefault` are both retired).
 - The staged form gained the enable switch, `timeoutMs`, an unsaved-changes
   guard on every dismissal path, clipboard paste helpers and a single-server
   JSON import (`src/client/import.ts`, pure and unit-tested); the section adds
@@ -1084,7 +1085,7 @@ slots, never replacing the shell.
 └────────────────────────────────────────────────────────────┘
 管理 workspace：[管理 workspace（已开启 1）]                  ← 折叠态
   · alpha (switch) 开启            ← 只列显式开启的 workspace
-  · 全部 3 个 workspace 默认关闭   ← 无显式开启时的单行摘要
+（无显式开启时这里什么都不显示：开关本身就是状态）
 npx -y @modelcontextprotocol/server-github                   ← 定义
 工作目录：/srv/github
 Authorization  AUTH_TOKEN  已配置  [清除]                    ← 凭据徽标
@@ -1092,8 +1093,9 @@ Authorization  AUTH_TOKEN  已配置  [清除]                    ← 凭据徽�
 
 **管理 workspace（N）** is local UI state and never writes the settings document:
 expanding it replaces the enabled block with every workspace row plus
-**全部开启 / 全部关闭** (only when more than one workspace exists) and the
-"默认关闭：仅在下面显式开启的 workspace 中注入工具" note. A single-workspace dsh
+**全部开启 / 全部关闭** (only when more than one workspace exists); past five
+workspaces it also grows the name filter. No default-off note follows the rows
+(the switch carries it). A single-workspace dsh
 reaches its only row the same way — a collapsed view would otherwise hide the only
 switch, and MCP is off until it is flipped. Cards are
 listed in document order; an open add/edit form renders above the list; removing
@@ -1133,7 +1135,7 @@ so the figure is read for shape, not detail.
 | The tool panel in the figure carries a "first 2 of 120" label (`共 120 个工具，显示前 2 个。`), which reads as always-on. | The label is illustrative: the code renders exactly the host's list and adds the same hint (`tools.truncated`) only when the HOST truncates — `manager.ts` caps the list at 200 (`capToolList`), and `server-card.tsx` renders the hint. Keep the code. |
 | The figure draws the import dialog in a side panel beside the staged form (annotated `role=dialog`). | Keep the code — the import opens inline inside the staged form, between the import button and the fields; the panel is a side rail in the figure only for legibility. |
 | The figure draws a global **刷新状态** button in both of its section-header views; the code removed it — each card refreshes its own server, the section re-reads the runtime snapshot per document revision and polls every 5 s while visible, and a failed full refresh surfaces the stale banner whose **重试** re-runs it. | Keep the code. |
-| The figure labels the workspace rows **默认开启，除非在此关闭** / **新建 workspace 默认开启** and its summary reads **Off in 2 workspaces** (the 0.0.3 baseline, where every workspace had MCP on until it was switched off). The 0.0.4 line inverts that contract: MCP is OFF until a workspace explicitly enables the pair, the collapsed card lists the ENABLED workspaces, the manage button reads **Manage workspaces (N on)** — and keeps the count while the list is open (**Hide workspaces (N on)**), because the expanded list is exactly when the count would otherwise disappear — and the summary line reads **全部 N 个 workspace 默认关闭**. | Keep the code — the figure keeps its 0.0.3-baseline caption, and this row is the recorded decision. The figure's geometry (a card head, a workspace block and a manage toggle) is unchanged. |
+| The figure labels the workspace rows **默认开启，除非在此关闭** / **新建 workspace 默认开启** and its summary reads **Off in 2 workspaces** (the 0.0.3 baseline, where every workspace had MCP on until it was switched off). The 0.0.4 line inverts that contract: MCP is OFF until a workspace explicitly enables the pair, the collapsed card lists the ENABLED workspaces, the manage button reads **Manage workspaces (N on)** — and keeps the count while the list is open (**Hide workspaces (N on)**), because the expanded list is exactly when the count would otherwise disappear — and a collapsed card with nothing enabled renders no rows and no summary sentence (the `row.allOffDefault` line was removed after review: the OFF switches carry that state). | Keep the code — the figure keeps its 0.0.3-baseline caption, and this row is the recorded decision. The figure's geometry (a card head, a workspace block and a manage toggle) is unchanged. |
 
 The two session lanes (the MCP tool-call transcript and the registered-tools
 notice) are not part of that wireframe; their contract lives in §5(f) and §6.

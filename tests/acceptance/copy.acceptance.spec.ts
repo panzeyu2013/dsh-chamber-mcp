@@ -32,12 +32,12 @@ describe('C4 correctness: locale copy', () => {
 
   it('[correctness] copy: no server-level default-off sentence survives', () => {
     // The card's note line is retired: the enable switch (off by default) is the
-    // copy surface, and the collapsed card summarizes through row.allOffDefault,
-    // which lives on the row.* side, not server.*.
+    // copy surface, and a collapsed card with nothing enabled renders no rows at
+    // all — there is no summary sentence left to pin.
     expect(lookup(en, 'server.defaultOff')).toBeUndefined()
     expect(lookup(zh, 'server.defaultOff')).toBeUndefined()
     // Exactly ONE server-level default sentence per locale (the plural
-    // row.allOffDefault pair is the collapsed summary line, not a second one).
+    // (the retired row.allOffDefault pair used to be the collapsed summary).
     const serverKeys = keys.filter((key) => key.startsWith('server.'))
     expect(serverKeys.filter((key) => /default/i.test(en[key] ?? '') && /off/i.test(en[key] ?? ''))).toEqual([])
     expect(serverKeys.filter((key) => /默认/.test(zh[key] ?? '') && /关闭/.test(zh[key] ?? ''))).toEqual([])

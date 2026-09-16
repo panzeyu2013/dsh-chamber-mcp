@@ -142,8 +142,6 @@ export const en = {
   'row.allOffShown': 'All off ({count} shown)',
   'row.manage': 'Manage workspaces ({count} on)',
   'row.manageHide': 'Hide workspaces ({count} on)',
-  'row.allOffDefault.one': 'This workspace is off by default ({count} in total)',
-  'row.allOffDefault.other': 'All {count} workspaces are off by default',
   'server.enableToggle': 'Allow server',
   'server.disabledTag': 'Disabled',
 
@@ -218,7 +216,7 @@ export type SettingsKey = keyof typeof en
  * right one (other locales carry identical mirrors for key parity).
  */
 export function countKey(
-  kind: 'server.envKeys' | 'server.headers' | 'server.enabledWorkspaces' | 'row.allOffDefault',
+  kind: 'server.envKeys' | 'server.headers' | 'server.enabledWorkspaces',
   count: number,
 ): SettingsKey {
   return `${kind}.${count === 1 ? 'one' : 'other'}` as SettingsKey
@@ -362,8 +360,6 @@ export const zh: Record<SettingsKey, string> = {
 
   'row.manage': '管理 workspace（已开启 {count}）',
   'row.manageHide': '收起 workspace（已开启 {count}）',
-  'row.allOffDefault.one': '该 workspace 默认关闭（共 {count} 个）',
-  'row.allOffDefault.other': '全部 {count} 个 workspace 默认关闭',
   'server.enableToggle': '允许使用该服务器',
   'server.disabledTag': '已停用',
 

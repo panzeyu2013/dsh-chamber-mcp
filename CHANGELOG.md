@@ -91,11 +91,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **The card's default-off note line.** `server.defaultOff` ("Off by default —
-  only the workspaces enabled below get the tools…") sat under every expanded
-  workspace list and said what the OFF switches already show; it is gone from
-  both locales, and with it the last server-level default sentence (the collapsed
-  card still explains an empty list through `row.allOffDefault`).
+- **The card's default-off copy, in both places it appeared.** The expanded
+  workspace list ended with a note line (`server.defaultOff`: "Off by default —
+  only the workspaces enabled below get the tools…"), and a collapsed card with
+  nothing enabled substituted a summary sentence (`row.allOffDefault`:
+  "All N workspaces are off by default"). Both said what the OFF switches already
+  show, so both are gone from the dictionaries and from the card: the collapsed
+  state renders no rows and nothing in their place. The enable switch remains the
+  default-off surface.
 - The `@modelcontextprotocol/sdk` (1.x) client dependency (replaced by
   `@modelcontextprotocol/client@2.0.0`), and the `0.1.2` generation from the
   claimed support window: this line re-verifies `0.1.5-rc.2` and

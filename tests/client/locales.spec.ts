@@ -46,7 +46,7 @@ describe('locales: en/zh parity', () => {
     const enDict = en as Record<string, string>
     const zhDict = zh as Record<string, string>
     // The card-level note is retired: the switches (OFF by default) carry it,
-    // and the collapsed state summarizes through row.allOffDefault.
+    // and the collapsed card simply renders no rows.
     expect(enDict['server.defaultOff']).toBeUndefined()
     expect(zhDict['server.defaultOff']).toBeUndefined()
     // The old default-ON sentence and its duplicate are gone from both halves.
@@ -70,14 +70,17 @@ describe('locales: en/zh parity', () => {
     // The enable switch is the default-off copy surface now.
     expect(en['server.enableToggle']).toBe('Allow server')
     expect(zh['server.enableToggle']).toBe('允许使用该服务器')
-    // The all-off summary is a plural pair with the same placeholder order.
-    expect(countKey('row.allOffDefault', 1)).toBe('row.allOffDefault.one')
-    expect(countKey('row.allOffDefault', 2)).toBe('row.allOffDefault.other')
-    expect(placeholdersOf(en['row.allOffDefault.one'])).toEqual(placeholdersOf(zh['row.allOffDefault.one']))
-    expect(placeholdersOf(en['row.allOffDefault.other'])).toEqual(placeholdersOf(zh['row.allOffDefault.other']))
-    // The singular copy must be its own sentence (a single-workspace user sees
-  // exactly this line) while keeping the placeholder contract.
-  expect(placeholdersOf(zh['row.allOffDefault.one'])).toEqual(['count'])
-  expect(zh['row.allOffDefault.one']).not.toBe(zh['row.allOffDefault.other'])
+    // No default-off summary pair survives either: the collapsed card renders
+    // nothing when the server is off everywhere (row.allOffDefault retired).
+    const enDict = en as Record<string, string>
+    const zhDict = zh as Record<string, string>
+    expect(enDict['row.allOffDefault.other']).toBeUndefined()
+    expect(zhDict['row.allOffDefault.other']).toBeUndefined()
+    expect(enDict['row.allOffDefault.one']).toBeUndefined()
+    // The count-plural machinery itself still works on a live family: the
+    // singular form is its own sentence with the same placeholder contract.
+    expect(countKey('server.enabledWorkspaces', 2)).toBe('server.enabledWorkspaces.other')
+    expect(placeholdersOf(en['server.enabledWorkspaces.one'])).toEqual(['count'])
+    expect(en['server.enabledWorkspaces.one']).not.toBe(en['server.enabledWorkspaces.other'])
   })
 })

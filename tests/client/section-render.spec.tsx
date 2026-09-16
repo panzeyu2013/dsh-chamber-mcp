@@ -253,8 +253,10 @@ describe('McpScopeSection render', () => {
     const enabledRow = mounted.host.querySelector('.' + styles.wsRow)
     expect(enabledRow?.textContent).toBe('beta')
     expect(text).toContain(t('row.manage', { count: 1 }))
-    // a card with zero enabled workspaces summarizes instead of listing them
-    expect(text).toContain(t(countKey('row.allOffDefault', 2), { count: 2 }))
+    // a card with zero enabled workspaces lists NOTHING: the OFF switches are
+    // the state, and the old summary line (row.allOffDefault) is retired — the
+    // only row in the whole section is the first card's enabled 'beta'.
+    expect(mounted.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(1)
     // no describe has run: badges are neutral 'unknown', not 'Not configured'
     expect(text).toContain(en['secret.unknown'])
     expect(text).not.toContain(en['secret.unset'])
@@ -950,7 +952,7 @@ describe('McpScopeSection render', () => {
     expect(writes).toEqual([])
     mounted.unmount()
 
-    // Zero enabled workspaces: exactly ONE default-off summary line, no rows.
+    // Zero enabled workspaces: no rows and no summary line either.
     const none = mountSection(
       { servers: [stdioServer('a')], overrides: {} },
       {},
@@ -962,9 +964,9 @@ describe('McpScopeSection render', () => {
       },
     )
     await flush()
-    const summary = t(countKey('row.allOffDefault', 2), { count: 2 })
-    expect(none.text().split(summary).length - 1).toBe(1)
     expect(none.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(0)
+    // ...and nothing stands in for them: no hint line in that card at all.
+    expect(none.host.querySelectorAll('.' + styles.hint)).toHaveLength(0)
     expect(none.text()).not.toContain('one')
     expect(none.text()).not.toContain('two')
   })
@@ -1251,9 +1253,10 @@ describe('McpScopeSection render', () => {
     expect(buttonByText(mounted.host, t('row.manageHide', { count: 0 }))).toBeDefined()
     buttonByText(mounted.host, t('row.manageHide', { count: 0 }))?.click()
     await flush()
-    // Nothing is enabled any more, so the collapsed card falls back to the
-    // default-off summary and the count reads zero — no phantom "one".
-    expect(mounted.text()).toContain(t(countKey('row.allOffDefault', 1), { count: 1 }))
+    // Nothing is enabled any more, so the collapsed card shows no rows and no
+    // stand-in line, and the count reads zero — no phantom "one".
+    expect(mounted.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(0)
+    expect(mounted.host.querySelectorAll('.' + styles.hint)).toHaveLength(0)
     expect(buttonByText(mounted.host, t('row.manage', { count: 0 }))).toBeDefined()
   })
 
