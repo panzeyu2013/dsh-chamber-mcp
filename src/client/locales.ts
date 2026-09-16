@@ -56,7 +56,6 @@ export const en = {
   'server.cwd': 'Working directory: {path}',
 
   // per-workspace rows
-  'row.on': 'On',
 
   // credential badges / secret controls (tri-state: configured / unset / unknown)
   'secret.configured': 'Configured',
@@ -275,7 +274,6 @@ export const zh: Record<SettingsKey, string> = {
   'server.cwd': '工作目录：{path}',
 
   // per-workspace rows
-  'row.on': '开启',
 
   // credential badges / secret controls (tri-state: configured / unset / unknown)
   'secret.configured': '已配置',

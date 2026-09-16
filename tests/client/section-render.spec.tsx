@@ -248,7 +248,10 @@ describe('McpScopeSection render', () => {
     // that row renders; ws-a (default off) stays collapsed away.
     expect(text).toContain('beta')
     expect(text).not.toContain('alpha')
-    expect(text).toContain(en['row.on'])
+    // No per-row state word: the row is the name plus the switch, nothing else
+    // (row.on/row.off are retired).
+    const enabledRow = mounted.host.querySelector('.' + styles.wsRow)
+    expect(enabledRow?.textContent).toBe('beta')
     expect(text).toContain(t('row.manage', { count: 1 }))
     // a card with zero enabled workspaces summarizes instead of listing them
     expect(text).toContain(t(countKey('row.allOffDefault', 2), { count: 2 }))
@@ -936,9 +939,9 @@ describe('McpScopeSection render', () => {
     // Expanded: ALL rows + the bulk switches + the default-off hint.
     expect(mounted.text()).toContain('two')
     expect(mounted.text()).toContain(en['server.defaultOff'])
-    // Only the ON state is spelled out: the enabled row says On, the
-    // default-off rows say nothing beside a switch that already reads off.
-    expect(mounted.text()).toContain(en['row.on'])
+    // No state word anywhere: the rows are names plus switches.
+    expect(Array.from(mounted.host.querySelectorAll('.' + styles.wsRow)).map((row) => row.textContent))
+      .toEqual(['one', 'two'])
     expect(buttonByText(mounted.host, en['row.allOn'])).toBeDefined()
     expect(buttonByText(mounted.host, en['row.allOff'])).toBeDefined()
     expect(writes).toEqual([]) // expansion is local UI state, not a settings write
@@ -1021,7 +1024,7 @@ describe('McpScopeSection render', () => {
     expect(writes).toEqual([{ workspaceId: 'ws-1', enabled: true }])
   })
 
-  it('spells out only the ON state, and that word toggles the row', async () => {
+  it('carries NO state word: the switch alone says on/off, and the label toggles', async () => {
     const writes: { workspaceId: string; enabled: boolean }[] = []
     const mounted = mountSection(
       { servers: [stdioServer('alpha')], overrides: { 'ws-1': { alpha: true } } },
@@ -1031,28 +1034,6 @@ describe('McpScopeSection render', () => {
           return { ok: true } as const
         },
       },
-      { wsItems: [{ workspaceId: 'ws-1', title: 'one' }] },
-    )
-    await flush()
-    // ws-1 is on, so the collapsed card lists it and spells the state out.
-    const row = mounted.host.querySelector('.' + styles.wsRow)
-    const label = row?.querySelector('.' + styles.wsLabel)
-    const state = row?.querySelector('.' + styles.wsState)
-    expect(label).not.toBeNull()
-    expect(state?.textContent).toBe(t('row.on'))
-    // The word lives INSIDE the label: as an inert sibling it looked the same but
-    // swallowed the click — the "dead hit area" at the row's right edge.
-    expect(label?.contains(state as Node)).toBe(true)
-    expect(row?.lastElementChild).toBe(label)
-    state?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    await flush()
-    expect(writes).toEqual([{ workspaceId: 'ws-1', enabled: false }])
-  })
-
-  it('leaves OFF rows unsaid: no state word beside a switch that already reads off', async () => {
-    const mounted = mountSection(
-      { servers: [stdioServer('alpha')], overrides: {} },
-      {},
       {
         wsItems: [
           { workspaceId: 'ws-1', title: 'one' },
@@ -1061,12 +1042,24 @@ describe('McpScopeSection render', () => {
       },
     )
     await flush()
+    // ws-1 is ON: the collapsed card lists it, and the row is the name plus the
+    // switch — no "On" word, no "Off" word (the switch carries the state).
+    const onRow = mounted.host.querySelector('.' + styles.wsRow)
+    expect(onRow?.textContent).toBe('one')
+    // The whole text run stays the label, so clicking it toggles.
+    const label = onRow?.querySelector('.' + styles.wsLabel)
+    expect(label?.lastElementChild?.textContent).toBe('one')
+    label?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flush()
+    expect(writes).toEqual([{ workspaceId: 'ws-1', enabled: false }])
+
+    // OFF rows read the same way: name only.
+    mounted.live.doc.overrides = {}
+    mounted.rerender()
+    await flush()
     buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
     await flush()
     const rows = Array.from(mounted.host.querySelectorAll('.' + styles.wsRow))
-    expect(rows).toHaveLength(2)
-    for (const row of rows) expect(row.querySelector('.' + styles.wsState)).toBeNull()
-    // The row is the name and the switch, nothing else.
     expect(rows.map((row) => row.textContent)).toEqual(['one', 'two'])
   })
 

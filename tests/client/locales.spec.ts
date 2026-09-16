@@ -35,11 +35,9 @@ describe('locales: en/zh parity', () => {
   it('declares the strings the UI semantics require', () => {
     expect(en['nav']).toBe('MCP servers')
     expect(zh['nav']).toBe('MCP 服务器')
-    expect(en['row.on']).toBe('On')
-    expect(zh['row.on']).toBe('开启')
-    expect(en['row.on']).not.toContain('default')
-    // The OFF state word retired with the On-only rows: the label would be dead
-    // copy and the switch already carries the off state.
+    // Both state words retired with the per-row state text: the switch carries
+    // the state on its own, so On/开启 would be dead copy too.
+    expect(Object.keys(en)).not.toContain('row.on')
     expect(Object.keys(en)).not.toContain('row.off')
     expect(zh['add.commandUserHint']).toContain('该命令将以此 dsh 实例的用户身份直接执行。')
   })

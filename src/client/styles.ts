@@ -153,7 +153,6 @@ export const styles = {
   wsRow: 'mcpScope_wsRow',
   wsLabel: 'mcpScope_wsLabel',
   wsName: 'mcpScope_wsName',
-  wsState: 'mcpScope_wsState',
   switchBox: 'mcpScope_switchBox',
   switchInput: 'mcpScope_switchInput',
   switch: 'mcpScope_switch',
@@ -174,6 +173,7 @@ export const styles = {
   rowsGroup: 'mcpScope_rowsGroup',
   row: 'mcpScope_row',
   rowInput: 'mcpScope_rowInput',
+  wsFilterInput: 'mcpScope_wsFilterInput',
   problems: 'mcpScope_problems',
   formActions: 'mcpScope_formActions',
   // MCP tool row (transcript lane, registered through `tool.call.toolview`)
@@ -951,13 +951,6 @@ export const css = `
   white-space: nowrap;
 }
 
-.mcpScope_wsState {
-  flex: none;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-tertiary);
-}
-
 /* ---- switch (ui-primitives Switch geometry over a native checkbox) ---- */
 
 /* The native checkbox fills this box, so the box IS the hit area: the slop
@@ -1079,6 +1072,19 @@ export const css = `
 
 .mcpScope_input:focus {
   outline: none;
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+/* The card-local filter keeps the field geometry but NOT the official field
+   fill: bg-layer-1 reads as a white slab against the card's bg-layer-3, so the
+   inline filter takes the card-local fill and the hairline our outline buttons
+   use, and keeps the brand focus border. */
+.mcpScope_wsFilterInput {
+  background: transparent;
+  border-color: var(--dsw-alias-border-l3);
+}
+
+.mcpScope_wsFilterInput:focus {
   border-color: var(--dsw-alias-state-business-primary);
 }
 

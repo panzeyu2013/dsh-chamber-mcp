@@ -231,7 +231,7 @@ describe('mcp-scope stylesheet', () => {
     expect(bodyOf('.mcpScope_buttonPrimary')).toContain('var(--dsw-alias-button-info-fill)')
     expect(bodyOf('.mcpScope_buttonPrimary:hover:not(:disabled)')).toContain('var(--dsw-alias-button-info-hover)')
     // normal state (rows, banner, card surface) stays monochrome
-    expect(bodyOf('.mcpScope_wsState')).toContain('var(--dsw-alias-label-tertiary)')
+    expect(bodyOf('.mcpScope_wsLabel')).toContain('var(--dsw-alias-label-primary)')
     expect(bodyOf('.mcpScope_staleBanner')).not.toContain(accent)
     expect(bodyOf('.mcpScope_card')).not.toContain('state-business-primary')
     expect(bodyOf('.mcpScope_card')).not.toContain('button-info')
@@ -256,6 +256,8 @@ describe('mcp-scope stylesheet', () => {
         '.mcpScope_input:focus',
         '.mcpScope_linkButton:focus-visible',
         '.mcpScope_switchInput:checked + .mcpScope_switch',
+        // the card-local workspace filter keeps the brand focus border
+        '.mcpScope_wsFilterInput:focus',
         '.mcpScope_switchInput:focus-visible + .mcpScope_switch',
         '.mcpScope_textarea:focus',
         '.mcpScope_toolHead:focus-visible',
@@ -319,6 +321,10 @@ describe('mcp-scope stylesheet', () => {
     expect(ruleOf('.mcpScope_wsLabel')).toMatch(/display:\s*flex/)
     expect(ruleOf('.mcpScope_wsLabel')).toMatch(/cursor:\s*pointer/)
     expect(ruleOf('.mcpScope_wsName')).toMatch(/text-overflow:\s*ellipsis/)
+    // The card-local filter keeps the field geometry but not the official field
+    // fill: bg-layer-1 reads as a white slab against the card's bg-layer-3.
+    expect(ruleOf('.mcpScope_wsFilterInput')).toMatch(/background:\s*transparent/)
+    expect(ruleOf('.mcpScope_wsFilterInput')).toMatch(/border-color:\s*var\(--dsw-alias-border-l3\)/)
     // The rows are a responsive grid: one column in a narrow panel, more as the
     // settings panel widens, so a long workspace list is not a 20-row stack.
     expect(ruleOf('.mcpScope_wsList')).toMatch(/display:\s*grid/)
@@ -427,7 +433,6 @@ describe('components consume the style seat', () => {
       styles.switchThumb,
       styles.wsLabel,
       styles.wsName,
-      styles.wsState,
     ]) {
       expect(markup, `missing ${name}`).toContain(name)
     }

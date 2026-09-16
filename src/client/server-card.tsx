@@ -565,18 +565,12 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
         <label htmlFor={id} className={styles.wsLabel}>
           {/* The grid narrows cells, so a long name truncates: the title is the
               full one. */}
+          {/* The switch carries the state on its own: no "On"/"Off" word beside
+              it (a column of identical labels is noise, and the word used to
+              swallow clicks as an inert sibling). The label is the whole row. */}
           <span className={styles.wsName} title={ws.title}>
             {ws.title}
           </span>
-          {/* Only the ON state is spelled out: a column of "Off" beside a switch
-              that already shows off is noise, and it used to swallow clicks as an
-              inert sibling of the label. Inside the label now, aria-hidden
-              because role="switch" + checked already say it. */}
-          {on && (
-            <span className={styles.wsState} aria-hidden="true">
-              {t('row.on')}
-            </span>
-          )}
         </label>
       </li>
     )
@@ -978,7 +972,7 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
                   placeholder={t('wsFilter.placeholder')}
                   value={wsQuery}
                   onChange={(event) => setWsQuery(event.target.value)}
-                  className={cx(styles.input, styles.rowInput)}
+                  className={cx(styles.input, styles.rowInput, styles.wsFilterInput)}
                 />
               </div>
             )}

@@ -23,8 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bulk pair to what is shown (`All on (N shown)`) instead of silently touching
   every workspace on the machine; the row order is computed ONCE when the list
   opens (enabled first, the rest in host order) so a toggle never moves a row out
-  from under the pointer, and only the ON state is spelled out (a column of "Off"
-  beside a switch that already reads off was noise).
+  from under the pointer. A row renders NO state word at all: the switch carries
+  on/off by itself (a column of identical "On"/"Off" labels was noise), and the
+  inline filter drops the official field fill — `bg-layer-1` read as a white slab
+  against the card's `bg-layer-3`, so it takes a transparent fill with the same
+  `border-l3` hairline the outline buttons use.
 - **The workspace card's bulk pair leads the list, and the default-off line now
   names its session scope.** `All on`/`All off` sat after the rows, so a long
   workspace list pushed them past the fold; they now sit directly under the
@@ -100,9 +103,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the filter input disappeared (deleting workspaces down past the five-workspace
   threshold), leaving rows — and the bulk pair's scope — unreachable behind a
   control that was no longer on screen; the query is dropped with the input.
-  `row.off` (only the ON state is spelled out now) and `state.clearing` were
-  dead labels, and the notice payload's `total` was dead state: all three are
-  removed rather than left for the contract to pin.
+  `row.on`, `row.off` (the switch is the only state carrier now) and
+  `state.clearing` were dead labels, and the notice payload's `total` was dead
+  state: all four are removed rather than left for the contract to pin.
 - **`retires the retained error once a generation is established` is no longer
   load-sensitive.** The test bound the handshake at 100ms while also requiring a
   real `node` spawn + initialize + sync on its second attempt; on a busy machine
@@ -114,7 +117,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was not — aiming at the row's right edge landed on the dead half. The box now
   carries a 4px slop (with a cancelling negative margin, so nothing moves) for a
   44×28 target, and the state word lives INSIDE the label (\`aria-hidden\`, since
-  \`role="switch"\` + \`checked\` already carry it), so the whole text run toggles.
+  \`role="switch"\` + \`checked\` already carry it) so the whole text run toggles — and the word was then retired
+  outright (see above): the switch is the state carrier.
 - **Giving up now retracts the published instructions, not just the tools.** The
   reconnect budget's give-up pushed an empty tool list while the live
   `mcp:<serverName>` section kept returning the last connected generation's

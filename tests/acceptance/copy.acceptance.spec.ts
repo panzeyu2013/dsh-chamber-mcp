@@ -2,8 +2,9 @@
  * INDEPENDENT acceptance suite, C4 axis 1 (CORRECTNESS): locale copy.
  *
  * The frozen contract keeps exactly ONE default-off sentence
- * (server.defaultOff), narrows row.on to a plain On/开启, and requires every
- * key to exist in en AND zh with identical placeholders.
+ * (server.defaultOff) and requires every key to exist in en AND zh with
+ * identical placeholders. The per-row state words (row.on / row.off) were
+ * retired when the switch became the only state carrier.
  */
 import { describe, expect, it } from 'vitest'
 import { en, zh, type SettingsKey } from '../../src/client/locales.ts'
@@ -60,9 +61,11 @@ describe('C4 correctness: locale copy', () => {
     expect(survivors).toEqual([])
   })
 
-  it('[correctness] copy: row.on is the plain On/开启 label (no default marker)', () => {
-    expect((en['row.on'] ?? '').trim()).toBe('On')
-    expect((zh['row.on'] ?? '').trim()).toBe('开启')
+  it('[correctness] copy: row.on is retired with the per-row state word', () => {
+    // The workspace row is the switch plus the name: neither "On" nor "Off" is
+    // spelled out any more, so both keys are gone rather than dead contract copy.
+    expect(lookup(en, 'row.on')).toBeUndefined()
+    expect(lookup(zh, 'row.on')).toBeUndefined()
   })
 
   it('[correctness] copy: row.off is retired with the On-only state word', () => {
