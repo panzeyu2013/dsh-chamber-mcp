@@ -79,7 +79,10 @@ Preconditions (first release only):
   uncommenting the step in `.github/workflows/release.yml` (requires
   `NPM_TOKEN`, `id-token: write` for provenance, and the npm name owned).
 
-Changelog-first flow (Keep a Changelog — see CHANGELOG.md):
+### Changelog-first flow
+
+Keep a Changelog — notes accumulate under `## [Unreleased]` and the release
+composes its body from the dated section (see `CHANGELOG.md`):
 
 ```sh
 # 1. move the notes you accumulated under "## [Unreleased]" into a dated
@@ -194,8 +197,8 @@ Compatibility notes for consumers:
 - Auditing a new upstream line (the 0.1.5 migration, CHANGELOG 0.0.2): diff
   `src/` of the peer packages between the two release tags (`dsh-v<old>`..
   `dsh-v<new>` in the harness checkout), bump the devDependency pins, typecheck
-  + test against the new set, then boot the real new CLI per §smoke capturing
-  the per-workspace tool list AND the browser half's registration trace, and
+  + test against the new set, then boot the real new CLI per §Smoke — capturing
+  the per-workspace tool list AND the browser half's registration trace — and
   only then widen the peer range. Four traps this pass found:
   1. **Pin the RESOLVED generation, not the umbrella's own version.** A
      `dsh@X` install resolves its internal caret ranges past `X` (0.1.5-rc.1 →

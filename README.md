@@ -87,8 +87,9 @@ What the install does:
    - **Streamable HTTP** — URL and header rows (name + write-only credential
      ref).
 2. A new server is **off in every workspace** of this dsh; the card lists the
-   **enabled** workspaces only — the ones explicitly switched on — or one
-   "all N workspaces are off by default" line when there are none. **Manage
+   **enabled** workspaces only — the ones explicitly switched on — and shows
+   nothing in their place when there are none (the switches are the state: no
+   note line restates it). **Manage
    workspaces (N on)** reveals every workspace row — switching one on/off drops
    `mcp__<serverName>__*` from that workspace's sessions — plus **All on /
    All off** once more than one workspace exists. The switch beside the server
@@ -261,8 +262,10 @@ through its own settings namespace and per-agent tool scopes (`docs/design.md`).
 | Live-verified | dsh **0.1.5-rc.2** and **0.1.6-alpha.1** | `npm run test:smoke` installs and boots the packed tarball through whichever anchor CLI `DSH_ANCHOR_CLI` points at, and each transcript records the version it used. The chamber anchor (dsh 0.1.5-rc.2) exercises the built-in fallback; the 0.1.6-alpha.1 anchor exercises the official adapter |
 | Peer range | `^0.1.5-rc.2 \|\| ^0.1.6-alpha.1` | the two generations verified live: 0.1.6+ gets the official `createMcpToolDefinition` adapter, the `mcpResources` provider and prompt instructions; 0.1.5 keeps the plugin's own text projection and publishes no prompt section (that host always interpolates section text) |
 
-- Requirement model: every configured server defaults on for all of this dsh's
-  workspaces; only explicit per-workspace records turn one off.
+- Requirement model: every configured server is **off for every workspace** of
+  this dsh until an explicit per-workspace record turns the pair on (the record's
+  own-property presence IS the enable; see
+  [Where the configuration lives](#where-the-configuration-lives)).
 - Sessions outside any registered workspace (plain cwd sessions) never receive
   MCP tools; delegation/subagent children are preset-governed and never receive
   MCP tools from this plugin (workspace root sessions do).
@@ -317,7 +320,7 @@ through its own settings namespace and per-agent tool scopes (`docs/design.md`).
 ```sh
 npm install            # dev deps (all @deepseek-ai/* pinned to one dsh generation)
 npm run typecheck      # src + tests
-npm test               # vitest suite (514 tests, 26 files)
+npm test               # vitest suite (514 tests, 27 files)
 npm run check          # full gate: typecheck + tests + build + package verify
 npm run verify:package # pack → contents whitelist → consumer d.ts → built host entry import → bundle purity → MCP-row artifact check → determinism
 npm run verify:client-artifact # drive the BUILT client bundle in jsdom (MCP row + registered-tools notice registration/render/expand, incl. the PTC prompt-only source)

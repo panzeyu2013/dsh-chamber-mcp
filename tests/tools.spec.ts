@@ -1,6 +1,6 @@
 /**
  * Unit tests for the tool bridge (src/tools.ts): the naming contract this
- * plugin owns, the listing/call wiring, and — since 0.0.4 — the EQUIVALENCE of
+ * plugin owns, the listing/call wiring, and — since 0.1.0 — the EQUIVALENCE of
  * the two definition builders (the official `createMcpToolDefinition` adapter
  * and the local pre-2.0 fallback) plus the selection between them.
  *

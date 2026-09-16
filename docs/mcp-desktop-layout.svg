@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1160" height="1880" viewBox="0 0 1160 1880">
 <rect x="0" y="0" width="1160" height="1880" rx="0" fill="#f2f2f5"/>
-<text x="40" y="42" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="18" font-weight="600" fill="#1b1b1f">Settings → MCP 服务器 · 桌面布局参考图（0.0.3 基线；0.0.4 增量未画，见 design.md §10）</text>
+<text x="40" y="42" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="18" font-weight="600" fill="#1b1b1f">Settings → MCP 服务器 · 桌面布局参考图（0.0.3 基线；0.1.0 增量未画，见 design.md §10）</text>
 <text x="40" y="62" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="10.5" fill="#6b6b76">结构示意（非像素截图）。配色为上游 dsh 主题 token 的近似值；开实机看 Settings → MCP 服务器。</text>
 <rect x="40" y="76" width="1080" height="250" rx="10" fill="#ffffff" stroke="#e6e6ea" stroke-width="0.75"/><text x="56" y="100" font-family="system-ui,PingFang SC,Microsoft YaHei,sans-serif" font-size="13" font-weight="600" fill="#1b1b1f">① 位置：官方 Settings shell 内的一列</text>
 <rect x="60" y="104" width="1040" height="200" rx="8" fill="#f7f7f9" stroke="#e6e6ea" stroke-width="0.5"/>

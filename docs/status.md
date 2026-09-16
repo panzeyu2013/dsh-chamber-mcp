@@ -16,7 +16,7 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
   Headline change: **MCP off by default** — a
   configured server reaches no agent until a workspace explicitly enables it, the
   per-workspace switch now records an enable and the global switch stays a hard
-  kill (see `docs/design.md` §3 and the Unreleased CHANGELOG entry); the
+  kill (see `docs/design.md` §3 and the `0.1.0` CHANGELOG entry); the
   workspace switching panel; per-server runtime refresh; `ptc` tool-row
   discovery; import-parser hardening; the registered-tools conversation notice
   (the UI review round that followed — no per-row state word, no default-off copy
@@ -131,9 +131,12 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
 
 ## Known limitations
 
-- No in-GUI `Settings → MCP servers` click-through has been performed in a real
-  desktop session; the jsdom flows and the shipped-bundle preview harness cover
-  the render paths.
+- No SCRIPTED in-GUI `Settings → MCP servers` click-through exists. An
+  unscripted real-session pass did happen during the 0.1.0 UI review (the panel
+  was driven in the desktop app: workspace switches, the card-local filter, the
+  notice row), and it is what filed the review findings that shipped in 0.1.0 —
+  but the recorded evidence for the render paths remains the jsdom flows and the
+  shipped-bundle preview harness.
 - The 5 s close barrier is covered for UNATTACHED failures (the
   hung-handshake and missing-executable specs); the attached-failure close-event
   timing (~2 s on stdio) is measured out of band, not asserted by a test. The
@@ -141,9 +144,12 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
   needs a transport that answers the handshake and then never reports a close).
   The legacy `toolResult` branch and the hand-rolled pagination guards are gone
   with the 1.x client, so they need no test at all.
-- `M1`'s live R3 capture (the model-facing `tools[]` array) is
-  `not-captured` in a headless run — a cold instance never starts a turn, so the
-  mock LLM receives no chat request. R3 stays transcript-evidence-only.
+- `M1`'s live R3 capture (the model-facing `tools[]` array) needs an anchor that
+  actually starts a turn: on the chamber anchor (0.1.5-rc.2) the 0.1.0 run records
+  **`R3-live-capture: PASS`**, while the 0.1.6-alpha.1 anchor records
+  `not-captured` — that instance never starts a turn, so the mock LLM receives no
+  chat request. The capture is transcript evidence either way: the driver reports
+  the verdict without failing on it.
 - **On 0.1.5 two host surfaces are simply absent, and the plugin degrades
   explicitly**: the shared `list_mcp_resources` family does not exist there, and
   no `mcp:<server>` prompt section is published (that host always interpolates

@@ -144,10 +144,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   turns the pair on. The global switch stays a hard kill
   (`disabled[serverName]`, unoverridable by any workspace enable), the per-card
   bulk actions stay one mutation for all workspaces, and the browser half
-  follows: the collapsed card lists the ENABLED workspaces and says "not on in
-  any workspace" when there are none, the manage toggle is **Manage
-  workspaces (N on)**, and the note under the rows is **off by default — enable
-  it in the workspaces you want**.
+  follows: the collapsed card lists the ENABLED workspaces (and nothing at all
+  when there are none), the manage toggle is **Manage
+  workspaces (N on)**, and the OFF switches inside the list are the only
+  statement of the default — the note line and the collapsed summary sentence
+  this entry originally described were removed later in the same release (see
+  **Removed**).
 - **BREAKING: a pre-0.1.0 document's records change meaning — deliberately,
   with no migration.** Under the released contract `overrides[w][s] = true`
   meant "off in w"; it now means "on in w", and absence (previously on) is the
