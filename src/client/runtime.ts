@@ -132,6 +132,13 @@ const EMPTY: RuntimeSnapshot = Object.freeze({ phase: 'loading', servers: Object
 /** Store construction options (fetch is injectable for tests). */
 export interface RuntimeStoreOptions {
   fetchLike?: typeof fetch
+  /**
+   * Authoritative per-instance proxy prefix supplied by the EMBEDDING shell — the
+   * chamber desktop provides `chamberBasePath` to the client plugins it mounts,
+   * which is the only signal its topology exposes (see `discoverShellBasePath`).
+   * Read before every other signal; `undefined` leaves the other signals alone.
+   */
+  shellBasePath?: () => string | undefined
 }
 
 /**
@@ -144,6 +151,12 @@ const BASE_PATH_GLOBAL = '__DSH_BASE_PATH__'
 
 /** Path shape of a document served through an instance proxy. */
 const INSTANCE_PREFIX = /^\/api\/i\/[^/]+/
+
+/** Same-origin projection the chamber shell answers with the instance on screen. */
+const SHELL_CONNECTIONS_PATH = '/api/connections'
+
+/** Instance ids are opaque tokens; anything else must never reach a URL. */
+const INSTANCE_ID = /^[A-Za-z0-9_.-]{1,128}$/
 
 /** Cap of resource/DOM entries inspected per discovery (tail, newest last). */
 const MAX_SCAN_ENTRIES = 64
@@ -190,6 +203,72 @@ export function readBasePath(): string | undefined {
  * timeline and in the script/link tags, without importing any client package or
  * depending on a deployment-specific global.
  */
+/**
+ * Instance id named by the shell's own connections projection.
+ *
+ * Accepted shapes: `{connection:{id}}` (the active one) or `{connections:[…]}`.
+ * A `ready` row wins; otherwise the first row with a usable id. Anything else —
+ * including an id that is not a plain token — yields nothing.
+ */
+function shellConnectionId(payload: unknown): string | undefined {
+  if (payload === null || typeof payload !== 'object') return undefined
+  const record = payload as { connection?: unknown; connections?: unknown }
+  const rows: unknown[] = []
+  if (record.connection !== undefined) rows.push(record.connection)
+  if (Array.isArray(record.connections)) rows.push(...record.connections)
+  const pick = (row: unknown): string | undefined => {
+    if (row === null || typeof row !== 'object') return undefined
+    const id = (row as { id?: unknown; connectionId?: unknown }).id ?? (row as { connectionId?: unknown }).connectionId
+    return typeof id === 'string' && INSTANCE_ID.test(id) ? id : undefined
+  }
+  for (const row of rows) {
+    const id = pick(row)
+    const status = row !== null && typeof row === 'object' ? (row as { status?: unknown }).status : undefined
+    if (id !== undefined && status === 'ready') return id
+  }
+  for (const row of rows) {
+    const id = pick(row)
+    if (id !== undefined) return id
+  }
+  return undefined
+}
+
+/**
+ * LAST-RESORT discovery for the chamber desktop topology.
+ *
+ * There the dsh UI is mounted into the shell's OWN document, every asset URL it
+ * loads is root-relative and no base global is injected — so neither
+ * `location.pathname`, nor the resource timeline, nor `__DSH_BASE_PATH__` can
+ * name the instance, and a root-relative plugin request is answered by the
+ * shell's static layer with `404 {"error":"not_found"}` (which is why the whole
+ * runtime panel reads "unknown" there). The prefix still exists on the wire: the
+ * shell serves each instance under `/api/i/<instanceId>/…` and answers its own
+ * same-origin connections projection with the instance that is on screen. One
+ * guarded request recovers it.
+ *
+ * A plain `dsh web` document has no such route (404) and is left untouched, and
+ * a cross-origin document is never queried at all.
+ */
+export async function discoverShellBasePath(fetchLike: typeof fetch = (...args) => globalThis.fetch(...args)): Promise<string | undefined> {
+  if (typeof globalThis === 'undefined') return undefined
+  const origin = (globalThis as { location?: { origin?: unknown } }).location?.origin
+  if (typeof origin !== 'string' || origin === '' || origin === 'null') return undefined
+  let payload: unknown
+  try {
+    const response = await fetchLike(origin + SHELL_CONNECTIONS_PATH, {
+      method: 'GET',
+      credentials: 'same-origin',
+      headers: { accept: 'application/json' },
+    })
+    if (!response.ok) return undefined
+    payload = await response.json()
+  } catch {
+    return undefined
+  }
+  const id = shellConnectionId(payload)
+  return id === undefined ? undefined : normalizeBasePath('/api/i/' + id)
+}
+
 function basePathFromResources(): string | undefined {
   const urls: string[] = []
   const seen = new Set<string>()
@@ -289,11 +368,19 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
    * last, and a base that already answered without our wire envelope is skipped
    * so a dead candidate costs one request instead of one per poll.
    */
+  /** Prefix recovered by discoverShellBasePath (chamber topology), if any. */
+  let recoveredBase: string | undefined
+  /** The shell is asked at most once per store; its answer cannot change here. */
+  let discoveryTried = false
   const candidateBases = (): string[] => {
     const bases: string[] = []
     const add = (value: string): void => {
       if (!bases.includes(value) && !deadBases.has(value)) bases.push(value)
     }
+    // The shell's own answer wins over anything sniffed out of the document: it
+    // names the instance this page is showing, which the document cannot.
+    const supplied = normalizeBasePath(recoveredBase ?? options.shellBasePath?.())
+    if (supplied !== undefined) add(supplied)
     add(readBasePath() ?? '')
     if (hasBase) add(basePath ?? '')
     add('')
@@ -343,17 +430,34 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
    */
   async function call<T>(path: string, init?: RequestInit): Promise<T> {
     let last: RuntimeCallError | undefined
+    let answered: T | undefined
+    let delivered = false
     for (const base of candidateBases()) {
       try {
-        const value = await callOnce<T>(base + path, init)
+        answered = await callOnce<T>(base + path, init)
         basePath = base === '' ? undefined : base
         hasBase = true
-        return value
+        delivered = true
+        break
       } catch (error) {
         const failure = error instanceof RuntimeCallError ? error : new RuntimeCallError('error', String(error))
         last = failure
         if (!failure.routeMissing) throw failure
         deadBases.add(base)
+      }
+    }
+    if (delivered) return answered as T
+    // Every candidate was answered by something that is not this plugin. In the
+    // chamber topology the instance prefix is invisible in the document, so ask
+    // the shell ONCE and retry with the recovered candidate; only route-missing
+    // failures reach here, so no request was ever delivered twice.
+    if (recoveredBase === undefined && !discoveryTried) {
+      discoveryTried = true
+      const found = await discoverShellBasePath(options.fetchLike ?? ((...args) => globalThis.fetch(...args)))
+      if (found !== undefined) {
+        recoveredBase = found
+        deadBases.delete(found)
+        return call<T>(path, init)
       }
     }
     throw last ?? new RuntimeCallError('error', 'runtime route failed')

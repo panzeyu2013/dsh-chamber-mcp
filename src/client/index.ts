@@ -189,7 +189,21 @@ export function apply(ctx: Context): void {
   // Live runtime status/actions over the Connection carrier's JSON routes.
   // Degradable by construction: without the route the store reports
   // "unavailable" and the document UI keeps working.
-  const runtime = createRuntimeStore()
+  //
+  // The chamber desktop mounts this UI into the SHELL's own document: its asset
+  // URLs are root-relative, no base global is injected, and a root-relative
+  // plugin request is answered by the shell's static layer with
+  // `404 {"error":"not_found"}` — which is why every card read "unknown" there.
+  // The shell provides the instance prefix to the plugins it mounts as
+  // `chamberBasePath`, so that service is the authoritative signal; a plain
+  // `dsh web` context has no such service (the property is absent) and keeps the
+  // sniffed/root behaviour.
+  const runtime = createRuntimeStore({
+    shellBasePath: () => {
+      const value = (ctx as unknown as { chamberBasePath?: unknown }).chamberBasePath
+      return typeof value === 'string' ? value : undefined
+    },
+  })
 
   ctx.effect(
     () => {

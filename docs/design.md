@@ -504,6 +504,27 @@ performance timeline (this plugin's own bundle is fetched from
 `/api/i/<id>/plugins/…`). `window.__DSH_BASE_PATH__` is still honoured first
 when a deployment publishes it.
 
+**Re-measured on 2026-09-16, and the document-derived signals are not enough in
+the chamber** (the release-0.1.0 build shipped with this panel blind again: every
+card `状态未知`, the header's Refresh doing nothing). In that shell the assets are
+root-relative too — `/plugins/…` with `<base href="/">`, not
+`/api/i/<id>/plugins/…` — so neither the pathname nor the resource timeline
+names the instance, and the root-relative request is answered by the static layer
+with `404 {"error":"not_found"}` again. Two further signals close it:
+
+1. **The shell's own service.** The chamber's entry plugin `provide`s
+   `chamberBasePath` (`/api/i/<instanceId>`) to the client plugins it mounts, so
+   the store reads it through a `shellBasePath` accessor (absent in a plain
+   `dsh web` context — the property is simply undefined) and puts it ahead of
+   every sniffed value.
+2. **One guarded recovery.** When NO candidate answered with this plugin's wire
+   envelope, the store asks the shell's same-origin connections projection
+   (`GET /api/connections`) which instance is on screen, validates the id as a
+   plain token, and retries once with `/api/i/<id>`. It runs at most once per
+   store, only after a route-missing 404 (so no request is ever delivered twice),
+   and never for a cross-origin or origin-less document — a plain `dsh web`
+   deployment answers on its first candidate and is byte-identical.
+
 The store resolves that prefix per call and tries it in order: the FRESHLY
 detected base first (a live page can switch instance, and a remembered base that
 still answers would silently serve the OLD instance), the remembered base, then

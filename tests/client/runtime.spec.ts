@@ -18,6 +18,17 @@ import {
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
+/**
+ * jsdom-less suites have no `location`; the chamber recovery reads its origin
+ * (a cross-origin document is never queried). Undone by the global cleanup below.
+ */
+const withLocation = (origin: string, pathname = '/'): void => {
+  Object.defineProperty(globalThis, 'location', {
+    value: { origin, pathname, href: origin + pathname },
+    configurable: true,
+  })
+}
+
 const view = (name: string, state = 'connected') => ({
   name,
   state,
@@ -62,6 +73,77 @@ describe('runtime store refresh', () => {
     })
     await recovered.refresh()
     expect(recovered.getSnapshot().phase).toBe('ready')
+  })
+
+  it('prefers the base the embedding shell supplies over anything sniffed', async () => {
+    const calls: string[] = []
+    const store = createRuntimeStore({
+      shellBasePath: () => '/api/i/local',
+      fetchLike: async (input) => {
+        calls.push(String(input))
+        return json({ ok: true, value: { v: 1, at: 7, servers: [] } })
+      },
+    })
+    await store.refresh()
+    expect(calls).toEqual(['/api/i/local' + RUNTIME_STATUS_PATH])
+    expect(store.getSnapshot().phase).toBe('ready')
+  })
+
+  it('recovers the chamber instance prefix when the document reveals nothing', async () => {
+    // The chamber topology: the root candidate is answered by the shell's static
+    // layer, no base global is injected and every asset URL is root-relative — so
+    // nothing in the document names the instance, and only the shell's own
+    // connections projection can.
+    withLocation('http://localhost:3000')
+    const calls: string[] = []
+    const store = createRuntimeStore({
+      fetchLike: async (input) => {
+        const url = String(input)
+        calls.push(url)
+        if (url.endsWith('/api/connections')) return json({ connection: { id: 'local', status: 'ready' } })
+        if (url.startsWith('/api/i/local/')) return json({ ok: true, value: { v: 1, at: 9, servers: [view('a')] } })
+        return json({ error: 'not_found' }, 404)
+      },
+    })
+    await store.refresh()
+    expect(store.getSnapshot().phase).toBe('ready')
+    expect(store.getSnapshot().at).toBe(9)
+    expect(store.getSnapshot().servers.a?.state).toBe('connected')
+    // Root first (nothing else was known), then the recovered prefix — and the
+    // recovery was asked for exactly once.
+    expect(calls[0]).toBe(RUNTIME_STATUS_PATH)
+    expect(calls.filter((url) => url.endsWith('/api/connections'))).toHaveLength(1)
+    expect(calls[calls.length - 1]).toBe('/api/i/local' + RUNTIME_STATUS_PATH)
+  })
+
+  it('refuses a connection id that is not a plain token', async () => {
+    withLocation('http://localhost:3000')
+    const calls: string[] = []
+    const store = createRuntimeStore({
+      fetchLike: async (input) => {
+        const url = String(input)
+        calls.push(url)
+        if (url.endsWith('/api/connections')) return json({ connection: { id: '../../evil' } })
+        return json({ error: 'not_found' }, 404)
+      },
+    })
+    await store.refresh()
+    expect(store.getSnapshot().phase).toBe('unavailable')
+    expect(calls.some((url) => url.includes('/api/i/'))).toBe(false)
+  })
+
+  it('never probes the shell when the routes answer at the document origin', async () => {
+    // A plain dsh web document: the first candidate answers, so no discovery
+    // request is ever made.
+    const calls: string[] = []
+    const store = createRuntimeStore({
+      fetchLike: async (input) => {
+        calls.push(String(input))
+        return json({ ok: true, value: { v: 1, at: 1, servers: [] } })
+      },
+    })
+    await store.refresh()
+    expect(calls).toEqual([RUNTIME_STATUS_PATH])
   })
 
   it('runs one trailing refresh when a poll was already in flight', async () => {

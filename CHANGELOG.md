@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The runtime panel was blind again in the chamber desktop — every server read
+  "状态未知" and the header's Refresh did nothing.** The shell mounts this UI into
+  its OWN document: it injects no base global, its asset URLs are root-relative
+  (`/plugins/…` behind `<base href="/">`) and this plugin's bundle is not served
+  under the instance prefix either, so all three signals the 0.1.0 fix relied on
+  (global, `location.pathname`, resource timeline) were empty there. The prefix
+  resolved to nothing, the status/action/tools requests hit the shell's static
+  layer, and it answered `404 {"error":"not_found"}` — so the store never got a
+  snapshot and every card fell back to an unknown state. The client now reads the
+  instance prefix from the shell's own `chamberBasePath` service (a plain
+  `dsh web` context has no such service) and, when nothing in the document names
+  the instance, recovers it ONCE from the shell's same-origin `GET
+  /api/connections` projection, validating the id as a plain token before it ever
+  reaches a URL. The recovery runs only after every candidate failed with a
+  route-missing 404 (no request is delivered twice), never for a cross-origin or
+  origin-less document, and a plain `dsh web` deployment is untouched.
+
 > **Release flow (see `docs/RELEASE.md` §Changelog-first flow):** before tagging,
 > move every entry below into the dated `## [<version>] - YYYY-MM-DD` section.
 > `scripts/release-notes.mjs` composes the GitHub Release body from THAT section
