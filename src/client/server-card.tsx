@@ -1026,7 +1026,6 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
             {wsFiltered && visibleWorkspaces.length === 0 && (
               <p className={styles.hint}>{t('wsFilter.none', { query: wsQuery.trim() })}</p>
             )}
-            <p className={styles.hint}>{t('server.defaultOff')}</p>
           </>
         )}
       </div>

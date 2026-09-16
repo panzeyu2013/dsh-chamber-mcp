@@ -51,8 +51,6 @@ export const en = {
   'server.remove': 'Remove',
   'server.removeConfirmTitle': 'Remove server?',
   'server.removeConfirmBody': 'The server stops everywhere and its configuration is deleted. Credentials that no remaining server references are cleared as well.',
-  'server.defaultOff':
-    'Off by default — only the workspaces enabled below get the tools, for their existing and new sessions alike',
   'server.cwd': 'Working directory: {path}',
 
   // per-workspace rows
@@ -270,7 +268,6 @@ export const zh: Record<SettingsKey, string> = {
   'server.remove': '移除',
   'server.removeConfirmTitle': '移除服务器？',
   'server.removeConfirmBody': '该服务器将在所有 workspace 停止并删除配置；其余服务器不再引用的凭据也会一并清除。',
-  'server.defaultOff': '默认关闭：只为下面显式开启的 workspace 注入工具，其中已有和新建的 session 都生效',
   'server.cwd': '工作目录：{path}',
 
   // per-workspace rows

@@ -1121,6 +1121,14 @@ export const css = `
   color: var(--dsw-alias-label-dimmed);
 }
 
+/* The card-local filter shows the card's own surface through a transparent fill,
+   and label-dimmed is tuned for a WHITE field: on the card it read as barely
+   there. One step up, and pinned opacity so the token is not dimmed twice. */
+.mcpScope_wsFilterInput::placeholder {
+  color: var(--dsw-alias-label-secondary);
+  opacity: 1;
+}
+
 .mcpScope_input:disabled {
   opacity: 0.5;
   cursor: default;

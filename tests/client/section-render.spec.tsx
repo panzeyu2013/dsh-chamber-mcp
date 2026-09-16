@@ -933,12 +933,11 @@ describe('McpScopeSection render', () => {
     // Default: the ENABLED row only; the default-off row is collapsed away.
     expect(mounted.text()).toContain('one')
     expect(mounted.text()).not.toContain('two')
-    expect(mounted.text()).not.toContain(en['server.defaultOff'])
     buttonByText(mounted.host, t('row.manage', { count: 1 }))!.click()
     await flush()
-    // Expanded: ALL rows + the bulk switches + the default-off hint.
+    // Expanded: ALL rows + the bulk switches, and no default-off note line: the
+    // OFF switches carry that state (server.defaultOff is retired).
     expect(mounted.text()).toContain('two')
-    expect(mounted.text()).toContain(en['server.defaultOff'])
     // No state word anywhere: the rows are names plus switches.
     expect(Array.from(mounted.host.querySelectorAll('.' + styles.wsRow)).map((row) => row.textContent))
       .toEqual(['one', 'two'])

@@ -42,13 +42,13 @@ describe('locales: en/zh parity', () => {
     expect(zh['add.commandUserHint']).toContain('该命令将以此 dsh 实例的用户身份直接执行。')
   })
 
-  it('keeps exactly ONE workspace default-off sentence', () => {
+  it('keeps NO server-level default sentence and no default-ON copy', () => {
     const enDict = en as Record<string, string>
     const zhDict = zh as Record<string, string>
-    // The single kept sentence lives on the server card / workspace panel: the
-    // default flipped OFF, so this is the only server-level default sentence.
-    expect(enDict['server.defaultOff']).toBeDefined()
-    expect(zhDict['server.defaultOff']).toBeDefined()
+    // The card-level note is retired: the switches (OFF by default) carry it,
+    // and the collapsed state summarizes through row.allOffDefault.
+    expect(enDict['server.defaultOff']).toBeUndefined()
+    expect(zhDict['server.defaultOff']).toBeUndefined()
     // The old default-ON sentence and its duplicate are gone from both halves.
     expect(enDict['server.defaultOn']).toBeUndefined()
     expect(zhDict['server.defaultOn']).toBeUndefined()
@@ -67,11 +67,9 @@ describe('locales: en/zh parity', () => {
     expect(zh['row.manage']).toContain('管理 workspace')
     expect(zh['row.manage']).toContain('{count}')
     expect(en['row.manageHide'].length).toBeGreaterThan(0)
-    // The enable switch and the panel hint are the default-off copy surface.
+    // The enable switch is the default-off copy surface now.
     expect(en['server.enableToggle']).toBe('Allow server')
     expect(zh['server.enableToggle']).toBe('允许使用该服务器')
-    expect(en['server.defaultOff'].length).toBeGreaterThan(0)
-    expect(zh['server.defaultOff'].length).toBeGreaterThan(0)
     // The all-off summary is a plural pair with the same placeholder order.
     expect(countKey('row.allOffDefault', 1)).toBe('row.allOffDefault.one')
     expect(countKey('row.allOffDefault', 2)).toBe('row.allOffDefault.other')

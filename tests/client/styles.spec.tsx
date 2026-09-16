@@ -327,6 +327,11 @@ describe('mcp-scope stylesheet', () => {
     // fill: bg-layer-1 reads as a white slab against the card's bg-layer-3.
     expect(ruleOf('.mcpScope_wsFilterInput')).toMatch(/background:\s*transparent/)
     expect(ruleOf('.mcpScope_wsFilterInput')).toMatch(/border-color:\s*var\(--dsw-alias-border-l3\)/)
+    // The card's surface shows through the transparent fill, and the official
+    // placeholder token (label-dimmed) is tuned for a white field: the inline
+    // filter takes one step up so the hint stays readable on the card.
+    expect(ruleOf('.mcpScope_wsFilterInput::placeholder')).toMatch(/color:\s*var\(--dsw-alias-label-secondary\)/)
+    expect(ruleOf('.mcpScope_wsFilterInput::placeholder')).toMatch(/opacity:\s*1/)
     // The rows are a responsive grid: one column in a narrow panel, more as the
     // settings panel widens, so a long workspace list is not a 20-row stack.
     expect(ruleOf('.mcpScope_wsList')).toMatch(/display:\s*grid/)

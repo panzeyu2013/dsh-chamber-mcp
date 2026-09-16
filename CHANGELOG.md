@@ -91,6 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **The card's default-off note line.** `server.defaultOff` ("Off by default —
+  only the workspaces enabled below get the tools…") sat under every expanded
+  workspace list and said what the OFF switches already show; it is gone from
+  both locales, and with it the last server-level default sentence (the collapsed
+  card still explains an empty list through `row.allOffDefault`).
 - The `@modelcontextprotocol/sdk` (1.x) client dependency (replaced by
   `@modelcontextprotocol/client@2.0.0`), and the `0.1.2` generation from the
   claimed support window: this line re-verifies `0.1.5-rc.2` and
@@ -98,6 +103,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The card-local filter's hint text was hard to read.** Dropping the white
+  field fill left the card's own surface showing through, and the official
+  placeholder token (`label-dimmed`) is tuned for a WHITE field — the hint read
+  as barely there. The inline filter's placeholder now takes the next token up
+  (`label-secondary`) with a pinned `opacity: 1`, so the raised fill contrast
+  does not cost legibility. Panel-level inputs keep the shipped field look.
 - **A switch's hit box no longer spills into the next row.** The 4px slop that
   grew the target to 44×28 was centred in a 20px row, so two neighbouring rows'
   boxes overlapped by 6px — and because the absolutely positioned inputs paint in

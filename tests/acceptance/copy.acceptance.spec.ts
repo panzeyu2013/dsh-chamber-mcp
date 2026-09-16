@@ -1,10 +1,10 @@
 /**
  * INDEPENDENT acceptance suite, C4 axis 1 (CORRECTNESS): locale copy.
  *
- * The frozen contract keeps exactly ONE default-off sentence
- * (server.defaultOff) and requires every key to exist in en AND zh with
- * identical placeholders. The per-row state words (row.on / row.off) were
- * retired when the switch became the only state carrier.
+ * The frozen contract requires every key to exist in en AND zh with identical
+ * placeholders. The per-row state words (row.on / row.off) were retired when the
+ * switch became the only state carrier, and the card's server.defaultOff note
+ * line followed them: no server-level default-off sentence survives.
  */
 import { describe, expect, it } from 'vitest'
 import { en, zh, type SettingsKey } from '../../src/client/locales.ts'
@@ -30,20 +30,17 @@ describe('C4 correctness: locale copy', () => {
     }
   })
 
-  it('[correctness] copy: exactly one default-off sentence per locale', () => {
-    expect(en['server.defaultOff']).toMatch(/default/i)
-    expect(en['server.defaultOff']).toMatch(/off/i)
-    expect(zh['server.defaultOff']).toMatch(/默认/)
-    expect(zh['server.defaultOff']).toMatch(/关闭/)
+  it('[correctness] copy: no server-level default-off sentence survives', () => {
+    // The card's note line is retired: the enable switch (off by default) is the
+    // copy surface, and the collapsed card summarizes through row.allOffDefault,
+    // which lives on the row.* side, not server.*.
+    expect(lookup(en, 'server.defaultOff')).toBeUndefined()
+    expect(lookup(zh, 'server.defaultOff')).toBeUndefined()
     // Exactly ONE server-level default sentence per locale (the plural
     // row.allOffDefault pair is the collapsed summary line, not a second one).
     const serverKeys = keys.filter((key) => key.startsWith('server.'))
-    expect(serverKeys.filter((key) => /default/i.test(en[key] ?? '') && /off/i.test(en[key] ?? ''))).toEqual([
-      'server.defaultOff',
-    ])
-    expect(serverKeys.filter((key) => /默认/.test(zh[key] ?? '') && /关闭/.test(zh[key] ?? ''))).toEqual([
-      'server.defaultOff',
-    ])
+    expect(serverKeys.filter((key) => /default/i.test(en[key] ?? '') && /off/i.test(en[key] ?? ''))).toEqual([])
+    expect(serverKeys.filter((key) => /默认/.test(zh[key] ?? '') && /关闭/.test(zh[key] ?? ''))).toEqual([])
     // No default-ON copy may survive the flip: the old canonical key is gone
     // and no key adds a new-workspace default-ON sentence.
     expect(lookup(en, 'server.defaultOn')).toBeUndefined()

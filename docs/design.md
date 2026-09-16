@@ -624,7 +624,7 @@ written — through the platform's own seams rather than a new channel:
 - Data: `ctx.settingsScope.bind<Doc>({ namespace:'mcp-scope', decode: decodeDoc })` → snapshot
   {status, value, revision, writable}; workspaces via global `useWorkspaces`.
 - Views: server cards (name, transport, "on in N workspaces" / "not on in any
-  workspace", edit, remove, per-workspace enable rows with a default-off note),
+  workspace", edit, remove, per-workspace enable rows that are OFF by default),
   staged Add/Edit form (serverName + transport toggle +
   command/args list/cwd/env key rows | url/header name+ref rows, secret inputs write-only),
   Save = credentials.set dirty secrets first → `scope.mutate([...ops], expectedRevision)`;
@@ -654,8 +654,9 @@ written — through the platform's own seams rather than a new channel:
   collapse to the ENABLED set; with none enabled the card shows one summary line
   ("all N workspaces are off by default"), and a manage toggle reveals every row
   with bulk on/off (the bulk pair appears once more than one workspace exists, §6).
-  This is purely local UI state — no settings write — and the default-off
-  sentence appears exactly once per locale.
+  This is purely local UI state — no settings write — and the card renders NO
+  default-off note line: the enable switch (off by default) is that copy surface,
+  and an empty collapsed list is explained by the `row.allOffDefault` summary.
 - The staged form gained the enable switch, `timeoutMs`, an unsaved-changes
   guard on every dismissal path, clipboard paste helpers and a single-server
   JSON import (`src/client/import.ts`, pure and unit-tested); the section adds
