@@ -226,7 +226,10 @@ export async function probeServer(options: {
   const toolCallTimeoutMs = options.toolCallTimeoutMs ?? DEFAULT_TOOL_CALL_TIMEOUT_MS
   try {
     const transport = await options.buildTransport()
-    await client.connect(transport)
+    // The probe must not hang either: bound the handshake with the same
+    // per-server timeout the supervised attempt passes to `connect` (the SDK
+    // would otherwise stall on its silent 60 s DEFAULT_REQUEST_TIMEOUT_MSEC).
+    await client.connect(transport, { timeout: toolCallTimeoutMs })
     const defs = await fetchToolDefinitions(client, { serverName: options.serverName, toolCallTimeoutMs })
     return { ok: true, toolCount: defs.size }
   } catch (error) {
@@ -432,7 +435,13 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
       { capabilities: {} },
     )
     gaveUp = false
-    lastError = undefined
+    // `lastError` is deliberately NOT cleared at the top of an attempt. The
+    // card renders `snapshot().error`, so clearing it here erased the failure
+    // reason for the whole outage and left a bare "connecting…" while the
+    // supervisor retried (with the SDK's silent 60 s handshake timeout, that is
+    // minutes). A fresh attempt legitimately re-arms the loop (`gaveUp`), but
+    // the reason is retired only once a generation is actually established —
+    // see the `connected = true` path below.
     const closed = deferred<void>()
     let attemptSettled = false
     let closeObserved = false
@@ -464,7 +473,13 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
     )
     try {
       const transport = await options.buildTransport()
-      await generationClient.connect(transport)
+      // Bound the MCP handshake with the operator's per-server timeout: a
+      // server that spawns/accepts HTTP but never answers `initialize` would
+      // otherwise hang on the SDK's silent DEFAULT_REQUEST_TIMEOUT_MSEC (60 s)
+      // for every attempt of the reconnect budget. The SDK rejects with
+      // McpError(RequestTimeout, 'Request timed out'), which the manager's
+      // errorCodeOf maps to the localized 'timeout' copy.
+      await generationClient.connect(transport, { timeout: toolCallTimeoutMs })
       if (hasClosed()) {
         attemptSettled = true
         generationDown(generationClient)
@@ -504,6 +519,11 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
     if (!isCurrent(generationClient)) return
     connected = true
     connectedAt = Date.now()
+    // The generation is established (connect + initial sync committed): only
+    // now is the retained failure text retired, so a healthy snapshot can never
+    // carry a stale error while the reason stays visible for the whole outage
+    // that preceded it.
+    lastError = undefined
     // The budget is deliberately NOT reset here: a connect that immediately
     // crashes must still count against `maxAttempts`. Upstream mcp-client pins
     // this exact case ("a crash loop with briefly successful connects still

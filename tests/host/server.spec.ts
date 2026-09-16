@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import type { ServerDef } from '../../src/shared/model.js'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import {
   EMPTY_DEFS,
   RECONNECT_DEFAULTS,
@@ -19,6 +20,7 @@ import {
   resolveReconnectPolicy,
   startServerSupervisor,
   type ServerHandle,
+  type ServerSnapshot,
 } from '../../src/server.js'
 import { createTransport } from '../../src/transport.js'
 import { renderResultText } from '../../src/tools.js'
@@ -66,6 +68,29 @@ async function waitFor(condition: () => boolean, what: string, timeoutMs = 8000)
     if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for ${what}`)
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
+}
+
+/**
+ * A transport whose server is UP but never answers the MCP handshake: `start()`
+ * resolves and every outgoing message is swallowed, so `initialize` simply
+ * hangs. `close()` honors the Transport contract by firing `onclose` once (a
+ * real transport signals closure there too), so the supervisor's close barrier
+ * settles instead of falling into its 5 s generation-stuck path.
+ */
+function hungTransport(received: string[] = []): Transport {
+  let closed = false
+  const transport: Transport = {
+    async start() {},
+    async send(message) {
+      received.push(JSON.stringify(message))
+    },
+    async close() {
+      if (closed) return
+      closed = true
+      transport.onclose?.()
+    },
+  }
+  return transport
 }
 
 /** Boot one supervisor with an in-memory log + commit collector. */
@@ -309,6 +334,100 @@ describe('server supervisor with a real stdio MCP server', () => {
     expect(commits.length).toBe(0)
     await waitFor(() => lines.some((l) => l.message.includes('connection failed; retrying')), 'retry log')
     expect(lines.some((l) => l.level === 'warn' && l.message.includes('attempt 1/3'))).toBe(true)
+  })
+})
+
+describe('bounded connect against a server that never answers the handshake', () => {
+  it('bounds the hung attempt with the configured timeout, not the SDK 60 s default', async () => {
+    const { log, lines } = makeLogger()
+    const received: string[][] = []
+    const handle = startServerSupervisor({
+      serverName: 'hung',
+      buildTransport: async () => {
+        const messages: string[] = []
+        received.push(messages)
+        return hungTransport(messages)
+      },
+      logger: { info: (m) => log('info', m), warn: (m) => log('warn', m), error: (m) => log('error', m) },
+      onDefsChanged: () => {},
+      toolCallTimeoutMs: 100,
+      reconnect: { enabled: true, initialDelayMs: 100, maxDelayMs: 200, maxAttempts: 3 },
+    })
+    handles.push(handle)
+    const started = Date.now()
+    await waitFor(() => handle.snapshot().error !== undefined, 'bounded handshake failure', 5000)
+    const elapsed = Date.now() - started
+    // The SDK really issued the handshake and the attempt really failed on the
+    // operator's 100 ms bound: with the SDK's silent 60 s default this poll
+    // would never observe an error and the test would fail on its timeout.
+    expect(received[0]?.some((message) => message.includes('initialize'))).toBe(true)
+    expect(elapsed).toBeGreaterThanOrEqual(90)
+    expect(elapsed).toBeLessThan(5000)
+    const snap = handle.snapshot()
+    expect(snap.phase === 'reconnecting' || snap.phase === 'failed').toBe(true)
+    expect(snap.error).toMatch(/timed out/i)
+    expect(lines.some((line) => line.level === 'warn' && line.message.includes('connection attempt failed') && /timed out/i.test(line.message))).toBe(true)
+  })
+
+  it('keeps the failure reason visible while the next attempt is in flight', async () => {
+    const { log } = makeLogger()
+    const handle = startServerSupervisor({
+      serverName: 'hung',
+      buildTransport: async () => hungTransport(),
+      logger: { info: (m) => log('info', m), warn: (m) => log('warn', m), error: (m) => log('error', m) },
+      onDefsChanged: () => {},
+      toolCallTimeoutMs: 300,
+      reconnect: { enabled: true, initialDelayMs: 200, maxDelayMs: 400, maxAttempts: 5 },
+    })
+    handles.push(handle)
+    // Attempt 1 fails on its bound and arms the reconnect timer: the reason is
+    // on the snapshot during the backoff window.
+    await waitFor(
+      () => handle.snapshot().phase === 'reconnecting' && handle.snapshot().error !== undefined,
+      'first bounded failure visible during backoff',
+    )
+    expect(handle.snapshot().error).toMatch(/timed out/i)
+    // The timer fires and attempt 2 is in flight: 'connecting' with no armed
+    // retry and no connection. The previous reason must STILL be there — before
+    // the fix this snapshot carried no error, so the card read a bare
+    // "connecting…" for the whole outage.
+    let inFlight: ServerSnapshot | undefined
+    await waitFor(() => {
+      const snap = handle.snapshot()
+      if (snap.phase !== 'connecting' || snap.error === undefined) return false
+      inFlight = snap
+      return true
+    }, 'error retained on the next in-flight attempt', 5000)
+    expect(inFlight?.error).toMatch(/timed out/i)
+    expect(inFlight?.nextRetryAt).toBeUndefined()
+    expect(inFlight?.attempts).toBe(1)
+  })
+
+  it('retires the retained error once a generation is established', async () => {
+    const { log, lines } = makeLogger()
+    let attempts = 0
+    const handle = startServerSupervisor({
+      serverName: 'fix',
+      buildTransport: async () => {
+        attempts += 1
+        // Attempt 1: the server never answers the handshake. Attempt 2: the
+        // real fixture comes up, so the outage genuinely ends.
+        return attempts === 1 ? hungTransport() : createTransport(stdioDef('fix'), noopResolve, NO_WARN)
+      },
+      logger: { info: (m) => log('info', m), warn: (m) => log('warn', m), error: (m) => log('error', m) },
+      onDefsChanged: () => {},
+      toolCallTimeoutMs: 100,
+      reconnect: { enabled: true, initialDelayMs: 100, maxDelayMs: 200, maxAttempts: 3 },
+    })
+    handles.push(handle)
+    await waitFor(() => handle.snapshot().phase === 'reconnecting', 'first bounded failure')
+    await waitFor(() => handle.state.connected && handle.state.syncId === 1, 'reconnect onto the real server')
+    const snap = handle.snapshot()
+    expect(snap.phase).toBe('connected')
+    // A healthy snapshot must never carry the previous outage's reason, and the
+    // case is not vacuous: a real timeout was reported first.
+    expect(snap.error).toBeUndefined()
+    expect(lines.some((line) => line.level === 'warn' && /timed out/i.test(line.message))).toBe(true)
   })
 })
 
