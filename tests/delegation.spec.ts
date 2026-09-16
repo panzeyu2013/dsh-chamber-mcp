@@ -19,18 +19,45 @@ const continuable = (toolFilter?: unknown): unknown =>
   descriptor({ version: 3, mode: 'continuable', provider: 'in-process', label: 'child', ...(toolFilter === undefined ? {} : { toolFilter }) })
 
 describe('readDelegationNarrowing', () => {
-  it('reports none when the child log carries no descriptor', () => {
-    expect(readDelegationNarrowing([])).toEqual({ kind: 'none' })
-    expect(readDelegationNarrowing([{ type: 'request/header', data: {} }])).toEqual({ kind: 'none' })
-    // Defensive: a non-array input is not a log.
-    expect(readDelegationNarrowing(undefined as unknown as readonly unknown[])).toEqual({ kind: 'none' })
+  it('reports absent when the child log carries no descriptor (normal for one-shot at adopt time)', () => {
+    expect(readDelegationNarrowing([])).toEqual({ kind: 'absent' })
+    expect(readDelegationNarrowing([{ type: 'request/header', data: {} }])).toEqual({ kind: 'absent' })
+    // A snapshot that is not a list is not a log: reported, not guessed.
+    const garbage = readDelegationNarrowing(undefined as unknown as readonly unknown[])
+    expect(garbage.kind).toBe('unreadable')
   })
 
-  it('reports none for a one-shot descriptor, which declares no narrowing', () => {
+  it('reports none for a descriptor that declares no narrowing', () => {
     expect(readDelegationNarrowing([descriptor({ version: 3, mode: 'one-shot', provider: 'in-process' })])).toEqual({
       kind: 'none',
     })
     expect(readDelegationNarrowing([continuable()])).toEqual({ kind: 'none' })
+  })
+
+  it('honours a filter only on a continuable descriptor (the upstream contract)', () => {
+    // Upstream persists `toolFilter` for continuable children only: a filter on a
+    // one-shot descriptor is not this module's to mirror, and a descriptor whose
+    // mode is missing or unknown is one it cannot read at all (upstream rejects
+    // that payload) — fail open WITH a warning, never apply it.
+    // A one-shot descriptor carrying a filter is a payload upstream never writes
+    // (its schema has no such key), so it is reported rather than treated as
+    // "nothing to mirror".
+    expect(
+      readDelegationNarrowing([
+        descriptor({ version: 3, mode: 'one-shot', provider: 'in-process', toolFilter: { allow: ['fs_read'] } }),
+      ]).kind,
+    ).toBe('unreadable')
+    expect(
+      readDelegationNarrowing([
+        descriptor({ version: 3, mode: 'one-shot', provider: 'in-process' }),
+      ]),
+    ).toEqual({ kind: 'none' })
+    for (const mode of [undefined, 'garbage']) {
+      const folded = readDelegationNarrowing([
+        descriptor({ version: 3, mode, provider: 'in-process', toolFilter: { deny: ['bash'] } }),
+      ])
+      expect(folded.kind).toBe('unreadable')
+    }
   })
 
   it('folds an allow list and a deny list', () => {
@@ -69,7 +96,11 @@ describe('readDelegationNarrowing', () => {
 
 describe('admissionOf', () => {
   it('admits everything when there is nothing to enforce (fail open)', () => {
-    for (const narrowing of [{ kind: 'none' } as const, { kind: 'unreadable', reason: 'x' } as const]) {
+    for (const narrowing of [
+      { kind: 'none' } as const,
+      { kind: 'absent' } as const,
+      { kind: 'unreadable', reason: 'x' } as const,
+    ]) {
       const admitted = admissionOf(narrowing)
       expect(admitted('mcp__files__read_file')).toBe(true)
       expect(admitted('bash')).toBe(true)

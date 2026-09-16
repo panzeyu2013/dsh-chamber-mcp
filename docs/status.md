@@ -13,8 +13,22 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
   published; the downloaded asset is byte-identical to the locally verified
   tarball). `v0.0.3` (2026-09-15), `v0.0.2` and `v0.0.1` are the previous
   releases.
-- **Working line: none yet** — `main` equals the `v0.1.0` tag (`4413b0e`); new
-  entries accumulate under `## [Unreleased]` in `CHANGELOG.md`.
+- **Working line: `v0.1.1`, prepared on `main` but NOT tagged yet.** The version
+  identity is `0.1.1` in `package.json`, `package-lock.json` and the dated
+  `## [0.1.1] - 2026-09-16` CHANGELOG section; no `v0.1.1` tag exists yet, so it
+  is not a release and its artifact hash must not be quoted as one.
+- **`v0.1.1` release-candidate verification.** `npm ci` + `npm run check` PASS —
+  `tsc` ×2, **554 tests / 28 files**, 47 packed entries, `verify-client-artifact`
+  PASS, determinism (43 files), `verify:package` PASS;
+  `node scripts/release-notes.mjs 0.1.1` composes the dated section alone;
+  `scripts/verify-workflow-action-pins.mjs` PASS; `npm run verify:low-generation`
+  PASS; the live smoke (`npm run test:smoke`) is green on both anchors —
+  `dsh@0.1.5-rc.2` with `R3-live-capture: PASS`, `dsh@0.1.6-alpha.1` with
+  `not-captured` (the known per-anchor R3 limitation). Reviews of this candidate
+  found and fixed a client accessor regression and a missing production
+  `agents.list()` wiring before the tag existed; the one-shot delegation
+  `toolFilter` limitation below is recorded rather than fixed (upstream does not
+  persist it).
 - **What `v0.1.0` carries.** Headline change: **MCP off by default** — a
   configured server reaches no agent until a workspace explicitly enables it, the
   per-workspace switch now records an enable and the global switch stays a hard
@@ -204,7 +218,7 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
 
 ```sh
 npm run check                                    # typecheck + tests + build + pack surface
-node scripts/release-notes.mjs 0.1.0             # the dated CHANGELOG section (before tagging)
+node scripts/release-notes.mjs 0.1.1             # the dated CHANGELOG section (before tagging)
 npm run verify:workflows                         # action pins + release structure
 npm run verify:low-generation                    # resolve the BUILT half against the LOW generation's real packages
 npm run test:smoke                               # live M1 + M0 on the chamber anchor

@@ -124,7 +124,7 @@ comments, anchors and formatting survive on untouched nodes.
   - Boot scan adopts `agents.list()` when the generation exposes it (every live agent —
     a running child during an HMR reload included), falling back to `agents.roots()`.
 
-**Delegation policy (0.2.0).** Two upstream facts decide this shape, both re-read from
+**Delegation policy (0.1.1).** Two upstream facts decide this shape, both re-read from
 the installed harness: (1) a delegation child is composed by `dsh-subagent`
 `applyChildComposition` → `agentPresets.composeFrom(childCtx, parent.ctx)`, which binds
 the child's scope to its parent's PRESET **mount** — a per-preset standing scope, not
@@ -142,6 +142,19 @@ predicate, and a server whose names are all filtered out publishes neither tools
 context. Malformed or newer descriptors fail open with a warning (the workspace's own
 enablement stays the gate). Mounting into the preset layer instead is not available to
 a host-layer plugin and would leak servers across workspaces that never enabled them.
+
+**Two limits recorded here rather than discovered later.** (1) The mirror covers
+`continuable` children only: upstream persists `toolFilter` for them alone and
+appends a one-shot child's descriptor — which never carries one — at its first
+`agent/pre-step`, i.e. AFTER our adoption, so a deployment that configures
+`toolFilter` on a one-shot delegation gets the workspace's servers unmirrored (one
+info line at adoption; the shipped presets configure no filter). (2) The read uses
+`session.snapshotEvents()` (deprecated in the pinned generation, as is its
+semantic equivalent `ownEvents()`, which is defined as exactly
+`snapshotEvents(inheritedEventCount)`) plus the `inheritedEventCount` boundary.
+The module feature-detects both and fails open with a warning when either is
+missing, so a future removal degrades the mirror to "unnarrowed" instead of
+breaking a child's creation.
 - **Tool semantics are the OFFICIAL adapter's** (pinned contract): the definition —
   canonical `{content, structuredContent?}` output schema, text projection,
   `taskRequired` refusal, `isError` → throw and durable image admission — is
@@ -210,10 +223,10 @@ a host-layer plugin and would leak servers across workspaces that never enabled 
 | `src/server-context.ts` | per-server publication of the `mcp:<serverName>` instructions section and the `mcpResources` provider (the official `registerServerContext` shape) |
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture on the 2.0 server packages (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe; publishes instructions, oversized under `FIXTURE_HUGE_INSTRUCTIONS=1`; serves one resource and one URI TEMPLATE so the resource provider's list/templates/read paths are exercised end to end) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (12 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`, `tests/delegation.spec.ts`; repo total 538 tests / 28 files) |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (12 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`, `tests/delegation.spec.ts`; repo total 554 tests / 28 files) |
 
 Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (538 tests / 28 files).
+`node node_modules/vitest/vitest.mjs run` — both fully green (554 tests / 28 files).
 
 ### (a) API signatures and runtime assumptions
 
@@ -542,27 +555,49 @@ with `404 {"error":"not_found"}` again. Two further signals close it:
 1. **The shell's own service.** The chamber's entry plugin `provide`s
    `chamberBasePath` (`/api/i/<instanceId>`) to the client plugins it mounts, so
    the store reads it through a `shellBasePath` accessor (absent in a plain
-   `dsh web` context — the property is simply undefined) and puts it ahead of
-   every sniffed value.
+   `dsh web` context has no such service at all), read through cordis's
+   non-throwing accessor: a bare PROPERTY read of a service no fiber provided — and
+   that this fiber never declared in `inject` — THROWS
+   (`cannot get property "X" without inject`, the semantics `src/client/index.ts`
+   itself documents at §10), so it would have aborted the first refresh before a
+   single request and left a plain `dsh web` deployment worse off than before the
+   fix. `ctx.get(name)` returns the value or `undefined` and is what the shell's
+   own plugins use; the value must also look like `/api/i/<token>` (a dotted id
+   would be normalized by the browser into a different path). The live shell answer
+   is put ahead of every sniffed value AND of any recovered prefix.
 2. **One guarded recovery.** When NO candidate answered with this plugin's wire
    envelope, the store asks the shell's same-origin connections projection
    (`GET /api/connections`) which instance is on screen, validates the id as a
-   plain token, and retries once with `/api/i/<id>`. It runs at most once per
-   store, only after a route-missing 404 (so no request is ever delivered twice),
-   and never for a cross-origin or origin-less document — a plain `dsh web`
-   deployment answers on its first candidate and is byte-identical.
+   plain token, and retries once with `/api/i/<id>`. It is bounded: at most two
+   probes per store, and ONLY the caller that starts a probe spends budget (a
+   concurrent caller joins the probe in flight). An explicit refresh re-arms the
+   budget, and `connection/reset` drops the dead-base cache, the recovered prefix
+   and the budget too, because a new connection generation means the previous
+   answers prove nothing. It runs only
+   after a route-missing 404 (so no request is ever delivered twice), concurrent
+   callers join one probe, and a cross-origin or origin-less document is never
+   probed. A plain `dsh web` deployment that serves the routes answers on its
+   first candidate (one root-relative request); one that does not degrades through
+   the same bounded probe, once per store unless a refresh re-arms it.
 
-The store resolves that prefix per call and tries it in order: the FRESHLY
-detected base first (a live page can switch instance, and a remembered base that
-still answers would silently serve the OLD instance), the remembered base, then
-the root origin. Only an **origin-level 404 that carries no
+The store resolves that prefix per call and tries it in order: with a LIVE shell
+answer, ONLY that base and the root origin (the shell names the instance on
+screen, and any other prefix could be a different one); otherwise the FRESHLY
+sniffed document base, then a recovered prefix, then the remembered base, then
+the root origin; and once the shell has named an instance it stays PINNED for
+that connection generation, so a shell that stops answering narrows the panel to
+that instance plus root rather than letting a stale or sniffed prefix serve
+another one (a live page can switch instance,
+and a base that still answers would silently serve the OLD instance — a recovered
+prefix is dropped the moment the shell reports a different one, and when it stops
+answering route-missing it is dropped so the next attempt may re-discover). Only an **origin-level 404 that carries no
 plugin wire envelope** falls through to the next candidate — a transport error,
 an auth refusal or a business failure would repeat identically, and a POST must
 never be delivered twice. The base that answered is remembered and re-validated
 on every call, so a stale guess self-heals. A value is accepted only when it is
 a rooted same-origin path (absolute URLs would violate the shell's
-`connect-src 'self'`), and an absent/unsafe value leaves the plain topology
-byte-identical (one root-relative request). Version skew is safe in both
+`connect-src 'self'`), and an absent/unsafe value leaves the plain topology on
+its single root-relative request. Version skew is safe in both
 directions: an older host ignores `?server=` and answers the full view, which
 the per-server merge folds correctly.
 

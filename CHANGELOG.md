@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> **Release flow (see `docs/RELEASE.md` §Changelog-first flow):** before tagging,
+> move every entry below into the dated `## [<version>] - YYYY-MM-DD` section.
+> `scripts/release-notes.mjs` composes the GitHub Release body from THAT section
+> only and ignores this one — an entry left here ships in the tree but never
+> appears in the release notes.
+
 ## [0.1.1] - 2026-09-16
 
 ### Added
@@ -30,9 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fork's inherited prefix is skipped) into an admission predicate over public tool names
   (`src/delegation.ts`, the same `allow`/`deny` math `dsh-tools` `admits()` applies). A
   server whose names are all filtered out publishes neither tools nor context; a
-  descriptor that cannot be folded (newer version, malformed payload, a generation
-  without the read API) fails open with a warning, because the workspace's own explicit
-  enablement stays the gate.
+  descriptor that cannot be folded (newer version, malformed payload, a missing
+  inherited-event boundary, a generation without the read API) fails open with a
+  warning, because the workspace's own explicit enablement stays the gate.
+  **Scope of the mirror:** only a `continuable` child persists a filter (upstream
+  writes `version/mode/provider/label` alone for one-shot children, and appends even
+  that one at the child's first `agent/pre-step`, i.e. after adoption), so a
+  `toolFilter` configured on a one-shot delegation is not observable to any plugin
+  and stays unmirrored (an info line at adoption time) — a limitation of the
+  upstream descriptor, not of this plugin. The deployment's shipped presets configure none.
 
 ### Changed
 
@@ -52,19 +64,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolved to nothing, the status/action/tools requests hit the shell's static
   layer, and it answered `404 {"error":"not_found"}` — so the store never got a
   snapshot and every card fell back to an unknown state. The client now reads the
-  instance prefix from the shell's own `chamberBasePath` service (a plain
-  `dsh web` context has no such service) and, when nothing in the document names
-  the instance, recovers it ONCE from the shell's same-origin `GET
-  /api/connections` projection, validating the id as a plain token before it ever
-  reaches a URL. The recovery runs only after every candidate failed with a
-  route-missing 404 (no request is delivered twice), never for a cross-origin or
-  origin-less document, and a plain `dsh web` deployment is untouched.
-
-> **Release flow (see `docs/RELEASE.md` §Changelog-first flow):** before tagging,
-> move every entry below into the dated `## [<version>] - YYYY-MM-DD` section.
-> `scripts/release-notes.mjs` composes the GitHub Release body from THAT section
-> only and ignores this one — an entry left here ships in the tree but never
-> appears in the release notes.
+  instance prefix from the shell's own `chamberBasePath` service, read through
+  cordis's **non-throwing** accessor (`ctx.get(name)`: a bare property read of a
+  service no fiber provided THROWS, so it would have taken the panel down in a
+  plain `dsh web` deployment instead of fixing it) and validated as an instance
+  proxy path with a plain token id. When nothing in the document names the
+  instance it recovers the prefix from the shell's same-origin `GET
+  /api/connections` projection — bounded (two probes per store, re-armed by an
+  explicit refresh and by `connection/reset`, which also drops bases the previous
+  connection generation proved dead), never for a cross-origin or origin-less
+  document, and only after every candidate failed with a route-missing 404, so no
+  request is ever delivered twice. The live shell answer always outranks a
+  recovered prefix (a page showing instance B must never keep reading — or
+  acting on — instance A). A plain `dsh web` deployment that serves the routes
+  answers on its first candidate (one root-relative request); one that does not
+  degrades through the same bounded probe.
 
 ## [0.1.0] - 2026-09-16
 

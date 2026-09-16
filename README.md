@@ -47,8 +47,10 @@ Releases ship as a GitHub Release whose asset is the packed tarball
 (`npm publish` is temporarily disabled). Pick the newest asset from the
 [Releases page](https://github.com/panzeyu2013/dsh-chamber-mcp/releases) —
 the **newest published release is `v0.1.0`** (published 2026-09-16, tgz +
-`.sha256`; the asset is byte-identical to the locally verified tarball) — and
-install it per instance:
+`.sha256`; the asset is byte-identical to the locally verified tarball). The
+`v0.1.1` line is prepared on `main` but **not tagged yet** — do not install it
+from the Releases page until its tag exists. Install a published release per
+instance:
 
 ```sh
 # into the web profile of one dsh instance (per-instance management)
@@ -128,7 +130,7 @@ workspace root session in an enabled workspace — never into a global registry.
 | Workspace root session, server on for that workspace | Yes — `mcp__<serverName>__<rawName>` |
 | Workspace root session, workspace switched off for that server | No — the definitions are revoked from that agent's scope |
 | Session whose cwd is outside every registered workspace | No |
-| Delegation / subagent child (`origin: 'subagent'`) | Yes — it inherits the parent's workspace, minus the names its delegator's `toolFilter` excludes (`docs/design.md` §4) |
+| Delegation / subagent child (`origin: 'subagent'`) | Yes — it inherits the parent's workspace, minus the names a `continuable` child's delegator `toolFilter` excludes (`docs/design.md` §4) |
 
 Consequences worth knowing:
 
@@ -267,9 +269,13 @@ through its own settings namespace and per-agent tool scopes (`docs/design.md`).
   [Where the configuration lives](#where-the-configuration-lives)).
 - Sessions outside any registered workspace (plain cwd sessions) never receive
   MCP tools. Delegation/subagent children inherit their parent's workspace, so they
-  receive the workspace's enabled servers too, further restricted by the
-  `toolFilter` their delegator declared (a continuable child's durable descriptor) —
-  a child can never widen its own surface.
+  receive the workspace's enabled servers too. A **continuable** child is further
+  restricted by the `toolFilter` its delegator persisted in the child's own
+  `subagent/descriptor`; a one-shot child has no such durable record (upstream
+  writes its descriptor after adoption, without the filter), so a `toolFilter`
+  configured on a one-shot delegation cannot be mirrored by any plugin — the child
+  gets the workspace's servers, nothing more. A child can never widen its own
+  surface beyond the workspace it inherits.
 - Out of scope by design: no file/CLI management surface, no toolPolicy
   allow/ask/deny, no custom naming (`docs/acceptance.md`, cut list C1–C2/C6).
   The 0.0.3 line deliberately supersedes the original pause/status/on-demand
@@ -309,7 +315,7 @@ through its own settings namespace and per-agent tool scopes (`docs/design.md`).
 |---|---|
 | No *MCP servers* section in Settings | The post-install client-module scan raced. Restart the instance once; verify with `dsh plugin --profile web list` that the bundle is installed. |
 | Section renders, but says settings are unavailable | The client is read-only or the namespace is not served to this connection — check that the host half loaded (loader row `mcp-scope`) and the profile was restarted. |
-| A tool never appears in a session | Check, in order: the session is a **workspace root** session; the server is **on** for that workspace (not switched off); the server is connected and listed tools (see the instance log for `mcp-scope(...)`). Subagent children never receive MCP tools by design. |
+| A tool never appears in a session | Check, in order: the session's cwd is a **registered workspace** (roots AND delegation children inherit it); the server is **on** for that workspace (not switched off); the server is connected and listed tools (see the instance log for `mcp-scope(...)`). A narrowed delegation child only gets the names its own durable `toolFilter` admits — for a one-shot child that filter is not observable, so nothing is withheld there. |
 | Hand-edited `settings.yaml` had no effect | The edit violated a document rule and was not published — the instance keeps the last good document and warns. Fix the file; the log names the violated rule (duplicate key, cross-field conflict, pattern mismatch). |
 | A server stopped working after a crash | The supervisor reconnects with 500 ms → 30 s backoff, 10 attempts per outage. After giving up, reload the plugin or restart the instance. |
 | Secret input looks empty after saving | By design: values are write-only. The badge shows *Configured* / *Not configured* / *Status unknown*; only the stored ref name is in the settings document. |
@@ -321,7 +327,7 @@ through its own settings namespace and per-agent tool scopes (`docs/design.md`).
 ```sh
 npm install            # dev deps (all @deepseek-ai/* pinned to one dsh generation)
 npm run typecheck      # src + tests
-npm test               # vitest suite (538 tests, 28 files)
+npm test               # vitest suite (554 tests, 28 files)
 npm run check          # full gate: typecheck + tests + build + package verify
 npm run verify:package # pack → contents whitelist → consumer d.ts → built host entry import → bundle purity → MCP-row artifact check → determinism
 npm run verify:client-artifact # drive the BUILT client bundle in jsdom (MCP row + registered-tools notice registration/render/expand, incl. the PTC prompt-only source)

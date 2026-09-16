@@ -39,7 +39,7 @@ import {
 import { credentialRefsOf, isServerDisabled, type McpScopeDoc, type ServerDef } from './shared/model.js'
 // Side-effect type imports: ctx.tools / ctx.agents / ctx.settings / ctx.credentials merge.
 import type {} from '@deepseek-ai/dsh-tools'
-import type {} from '@deepseek-ai/dsh-agent'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-credentials'
 
 /** Durable storage-domain identity of the workspace registry (dsh-workspace). */
@@ -256,6 +256,12 @@ export function createManager(options: ManagerOptions): ManagerHandle {
     logger,
     agents: {
       roots: () => [...ctx.agents.roots()],
+      // Every live agent: the boot scan must cover one that predates this
+      // applier (a plugin reload while a delegation child runs) — a child is
+      // owned by its initiator, so `roots()` alone never reports it and no
+      // further `agent/created` arrives for it. A generation without `list()`
+      // keeps the documented roots-only fallback.
+      list: () => [...((ctx.agents as { list?: () => Agent[] }).list?.() ?? ctx.agents.roots())],
       get: (id: string) => ctx.agents.get(id as SessionId),
     },
     workspaceRegistry: {

@@ -133,6 +133,7 @@ class Harness {
       events?: readonly unknown[]
       inheritedEvents?: readonly unknown[]
       withoutSnapshotApi?: boolean
+      withoutInheritedCount?: boolean
     } = {},
   ): Agent {
     const inheritedEvents = options.inheritedEvents ?? []
@@ -150,7 +151,7 @@ class Harness {
       },
     }
     if (options.withoutSnapshotApi !== true) {
-      session.inheritedEventCount = inheritedEvents.length
+      if (options.withoutInheritedCount !== true) session.inheritedEventCount = inheritedEvents.length
       session.snapshotEvents = (from = 0): readonly unknown[] => log.slice(from)
     }
     // The agent object itself is the scope key (production: createScope(loopCtx, agent)).
@@ -679,8 +680,12 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
       const root = h.spawnAgent('agent-root', wsA.path)
-      // A one-shot child's descriptor declares no narrowing: nothing to mirror.
+      // A continuable child whose descriptor declares no narrowing: nothing to mirror.
       const child = h.spawnAgent('agent-child', wsA.path, 'subagent', { events: [descriptorEvent()] })
+      // A one-shot child has no descriptor at this point at all (upstream appends
+      // it at its first `agent/pre-step`): absent must behave like unnarrowed.
+      const oneShot = h.spawnAgent('agent-one-shot', wsA.path, 'subagent', { events: [] })
+      h.createAgent(oneShot)
       h.createAgent(root)
       h.createAgent(child)
       const defs = new Map([[TOOL_A, def(TOOL_A)]])
@@ -689,6 +694,12 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       expect(h.ctx.tools.get(TOOL_A, child)).toBeDefined()
       expect(h.lines.some((l) => l.message.includes('tracking agent agent-child'))).toBe(true)
       expect(h.lines.some((l) => l.level === 'warn' && l.message.includes('agent-child'))).toBe(false)
+      expect(h.ctx.tools.get(TOOL_A, oneShot)).toBeDefined()
+      expect(
+        h.lines.some(
+          (l) => l.level === 'info' && l.message.includes('agent-one-shot') && l.message.includes('no descriptor yet'),
+        ),
+      ).toBe(true)
 
       // Boot path: a fresh applier (plugin reload) adopts every live agent the
       // registry reports — a running child during an HMR reload included, which
@@ -708,6 +719,13 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       try {
         expect(bootLines.some((l) => l.message.includes('tracking agent agent-root'))).toBe(true)
         expect(bootLines.some((l) => l.message.includes('tracking agent agent-child'))).toBe(true)
+        // The reload must restore the LIVE child's tools, not just log a line:
+        // the previous applier releases its registrations (what a plugin reload
+        // does) and a push through the reloaded one must reach the child's scope.
+        h.applier.dispose()
+        second.pushServerState(SERVER, { epoch: 2, syncId: 1, defs })
+        expect(h.ctx.tools.get(TOOL_A, child)).toBeDefined()
+        expect(bootLines.some((l) => l.level === 'error')).toBe(false)
       } finally {
         second.dispose()
       }
@@ -845,6 +863,29 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A)]]))
       expect(h.ctx.tools.get(TOOL_A, child)).toBeDefined()
       expect(h.lines.some((l) => l.message.includes('narrowed by its delegator'))).toBe(false)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('fails open when the read API exists without the inherited-event boundary', async () => {
+    const h = await mount()
+    try {
+      const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
+      // A seeded fork's parent descriptor sits in the inherited prefix: without
+      // the boundary that separates it from the child's own events, folding it
+      // would withhold tools the child was never denied.
+      const child = h.spawnAgent('agent-child', wsA.path, 'subagent', {
+        inheritedEvents: [descriptorEvent({ allow: ['fs_read'] })],
+        withoutInheritedCount: true,
+      })
+      h.createAgent(child)
+      h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A)]]))
+      expect(h.ctx.tools.get(TOOL_A, child)).toBeDefined()
+      expect(
+        h.lines.some((l) => l.level === 'warn' && l.message.includes('inheritedEventCount is unavailable')),
+      ).toBe(true)
     } finally {
       h.cleanup()
     }

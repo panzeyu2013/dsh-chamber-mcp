@@ -243,7 +243,14 @@ const fmtError = (error: unknown): string =>
     if (typeof session.snapshotEvents !== 'function') {
       return { kind: 'unreadable', reason: 'session.snapshotEvents is unavailable in this generation' }
     }
-    const from = typeof session.inheritedEventCount === 'number' ? session.inheritedEventCount : 0
+    // The boundary separates a seeded fork's OWN events from the prefix it
+    // inherited: guessing 0 would fold the PARENT's descriptor as if it were this
+    // child's and withhold tools the child was never denied. A session that does
+    // not report it is unreadable (fail open + warn), never "starts at 0".
+    if (typeof session.inheritedEventCount !== 'number') {
+      return { kind: 'unreadable', reason: 'session.inheritedEventCount is unavailable' }
+    }
+    const from = session.inheritedEventCount
     let events: readonly unknown[]
     try {
       events = session.snapshotEvents(from)
@@ -273,6 +280,15 @@ const fmtError = (error: unknown): string =>
       } else if (narrowing.kind === 'unreadable') {
         logger.warn(
           `${label}: delegation child ${agent.id} descriptor is unreadable (${narrowing.reason}) — its enabled servers are registered unnarrowed`,
+        )
+      } else if (narrowing.kind === 'absent') {
+        // Expected for a one-shot child: upstream appends its descriptor at the
+        // first `agent/pre-step`, i.e. AFTER this event, and that descriptor
+        // never carries a filter — so a delegator-configured `toolFilter` is not
+        // observable for it (documented limitation). Info, not warn: every
+        // foreground delegation would otherwise log one.
+        logger.info(
+          `${label}: delegation child ${agent.id} carries no descriptor yet — a delegator tool filter cannot be mirrored for it`,
         )
       }
     }
@@ -478,8 +494,13 @@ const fmtError = (error: unknown): string =>
       entries.delete(agent)
     })
     // Every live agent when the registry exposes it (a reload must not drop a
-    // delegation child that is already running), roots only otherwise.
-    for (const agent of agents.list?.() ?? agents.roots()) adoptContained(agent)
+    // delegation child that is already running), roots only otherwise. A registry
+    // that throws must not take the pre-existing agent scan down with it.
+    try {
+      for (const agent of agents.list?.() ?? agents.roots()) adoptContained(agent)
+    } catch (error) {
+      logger.error(`${label}: agent scan failed — pre-existing agents stay unregistered: ${fmtError(error)}`)
+    }
     return () => {
       offCreated()
       offDisposed()

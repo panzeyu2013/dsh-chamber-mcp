@@ -42,21 +42,27 @@ const DESCRIPTOR_VERSION = 3
 /**
  * What one child's own log says about narrowing.
  *
- * - `none`: no descriptor (a non-child, or a generation that writes none) or a
- *   descriptor that declares no narrowing (one-shot children) — the normal,
- *   unnarrowed case;
+ * - `absent`: the child's own window carries no descriptor at all — normal for a
+ *   one-shot child, whose descriptor upstream appends at its first
+ *   `agent/pre-step`, i.e. after adoption;
+ * - `none`: a descriptor that declares no narrowing (a one-shot descriptor, or a
+ *   continuable one without a `toolFilter`) — the normal, unnarrowed case;
  * - `narrowed`: a folded filter; only names it admits may be registered;
  * - `unreadable`: a descriptor this module cannot turn into a decision — a
  *   newer format or a malformed payload. The caller logs it and proceeds
  *   unnarrowed.
  */
 export type DelegationNarrowing =
+  | { kind: 'absent' }
   | { kind: 'none' }
   | { kind: 'narrowed'; allow?: readonly string[]; deny?: readonly string[] }
   | { kind: 'unreadable'; reason: string }
 
 /** Narrowing that admits every name (the fail-open value). */
 const NONE: DelegationNarrowing = Object.freeze({ kind: 'none' })
+
+/** No descriptor at all — normal for a child whose descriptor is written later. */
+const ABSENT: DelegationNarrowing = Object.freeze({ kind: 'absent' })
 
 /**
  * Fold the narrowing out of a child's OWN events.
@@ -70,7 +76,9 @@ const NONE: DelegationNarrowing = Object.freeze({ kind: 'none' })
  * @returns the folded narrowing; never throws.
  */
 export function readDelegationNarrowing(events: readonly unknown[]): DelegationNarrowing {
-  if (!Array.isArray(events)) return NONE
+  // A snapshot that is not a list is not a log: report it rather than guessing
+  // that the child carries no descriptor.
+  if (!Array.isArray(events)) return { kind: 'unreadable', reason: 'session snapshot is not an array' }
   for (const event of events) {
     if (!isRecord(event) || event.type !== DESCRIPTOR_EVENT) continue
     const descriptor = event.data
@@ -78,6 +86,21 @@ export function readDelegationNarrowing(events: readonly unknown[]): DelegationN
     const version: unknown = descriptor.version
     if (version !== DESCRIPTOR_VERSION) {
       return { kind: 'unreadable', reason: 'descriptor version ' + String(version) + ' is not ' + String(DESCRIPTOR_VERSION) }
+    }
+    // Only a `continuable` child persists a filter (upstream writes
+    // `version/mode/provider/label` alone for one-shot children). An unknown
+    // mode is a payload this module cannot read — upstream rejects it outright —
+    // so it fails open with a warning instead of being treated as narrowable.
+    const mode = descriptor.mode
+    if (mode !== 'continuable') {
+      if (mode !== 'one-shot') return { kind: 'unreadable', reason: 'descriptor mode is missing or unknown' }
+      // A one-shot descriptor carrying a filter is not a payload upstream ever
+      // writes (its schema has no such key): report it instead of silently
+      // treating a malformed record as "nothing to mirror".
+      if (Object.hasOwn(descriptor, 'toolFilter')) {
+        return { kind: 'unreadable', reason: 'a one-shot descriptor carries a toolFilter' }
+      }
+      return NONE
     }
     if (!Object.hasOwn(descriptor, 'toolFilter')) return NONE
     const filter = descriptor.toolFilter
@@ -95,7 +118,7 @@ export function readDelegationNarrowing(events: readonly unknown[]): DelegationN
       ...(deny === undefined ? {} : { deny }),
     }
   }
-  return NONE
+  return ABSENT
 }
 
 /**

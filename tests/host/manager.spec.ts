@@ -53,6 +53,8 @@ async function boot(
   ctx: Context
   manager: ManagerHandle
   lines: LoggedLine[]
+  /** Every `ctx.agents.list()` the applier's boot scan asked for. */
+  agentsListCalls: number[]
   setDoc(next: McpScopeDoc): void
   dispose(): Promise<void>
 }> {
@@ -67,7 +69,18 @@ async function boot(
   const credentials = {
     resolve: (async () => undefined) as CredentialResolver,
   }
-  const disposeAgents = ctx.provide('agents', { roots: () => [], get: () => undefined })
+  /** Every `ctx.agents.list()` the applier's boot scan asked for. */
+  const agentsListCalls: number[] = []
+  const disposeAgents = ctx.provide('agents', {
+    roots: () => [],
+    // The applier's boot scan reads every live agent (a plugin reload must not
+    // drop a delegation child that is already running).
+    list: () => {
+      agentsListCalls.push(1)
+      return []
+    },
+    get: () => undefined,
+  })
   const disposeRegistry = ctx.provide('workspaceRegistry', { list: () => [] })
   let manager: ManagerHandle | undefined
   const managerHost = function managerHost(c: Context) {
@@ -87,6 +100,7 @@ async function boot(
     ctx,
     manager: manager!,
     lines,
+    agentsListCalls,
     setDoc: (next) => {
       doc = next
     },
@@ -103,7 +117,11 @@ const stopped = (lines: LoggedLine[], name: string): number =>
 
 describe('bridge manager lifecycle', () => {
   it('starts, restarts on field change, restarts on credential update, stops on removal', async () => {
-    const { ctx, manager, lines, setDoc, dispose } = await boot()
+    const { ctx, manager, lines, agentsListCalls, setDoc, dispose } = await boot()
+    // The applier's boot scan must reach the registry through the production
+    // adapter: a roots-only adapter would silently drop a running delegation
+    // child on a plugin reload.
+    expect(agentsListCalls.length).toBeGreaterThan(0)
     try {
       // 1. Add a server: reconcile starts the supervisor and its sync commits.
       setDoc({ servers: [stdioServer('fix')], overrides: {} })

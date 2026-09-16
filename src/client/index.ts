@@ -37,7 +37,7 @@ import {
 } from './controller.js'
 import { McpScopeSection } from './section.js'
 import { mountStyles } from './styles.js'
-import { createRuntimeStore } from './runtime.js'
+import { createRuntimeStore, readShellBasePath } from './runtime.js'
 import { mcpToolView } from './tool-card/view.js'
 import {
   DEFAULT_TOOL_VIEW_LIMIT,
@@ -195,14 +195,15 @@ export function apply(ctx: Context): void {
   // plugin request is answered by the shell's static layer with
   // `404 {"error":"not_found"}` — which is why every card read "unknown" there.
   // The shell provides the instance prefix to the plugins it mounts as
-  // `chamberBasePath`, so that service is the authoritative signal; a plain
-  // `dsh web` context has no such service (the property is absent) and keeps the
-  // sniffed/root behaviour.
+  // `chamberBasePath`, so that service is the authoritative signal. It is NOT
+  // reachable by property access: cordis answers a service no fiber provided —
+  // and that this fiber never declared in `inject` — with a THROW, and a plain
+  // `dsh web` document has no such service at all, so a bare `ctx.chamberBasePath`
+  // would abort the first refresh before a single request and leave the panel
+  // exactly as broken as the fix set out to repair (the shell's own plugins read
+  // it the same defensive way). `readShellBasePath` is the total accessor.
   const runtime = createRuntimeStore({
-    shellBasePath: () => {
-      const value = (ctx as unknown as { chamberBasePath?: unknown }).chamberBasePath
-      return typeof value === 'string' ? value : undefined
-    },
+    shellBasePath: () => readShellBasePath(ctx),
   })
 
   ctx.effect(
@@ -221,8 +222,12 @@ export function apply(ctx: Context): void {
           controller.onCredentialRefUpdated(ref)
         }),
       )
-      // A fresh connection generation can mean a restarted host: re-pull.
+      // A fresh connection generation can mean a restarted host or a different
+      // instance: forget every base proven dead by the previous generation (and
+      // re-arm discovery) before re-pulling, or a page whose instance moved stays
+      // dark until it is reloaded.
       const offReset = ctx.on('connection/reset', () => {
+        runtime.resetBases()
         void runtime.refresh({ silent: true })
       })
       disposers.push(offReset)

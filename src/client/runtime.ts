@@ -90,6 +90,13 @@ export interface RuntimeStore {
   getSnapshot(): RuntimeSnapshot
   subscribe(listener: () => void): () => void
   refresh(options?: RuntimeRefreshOptions): Promise<void>
+  /**
+   * Forget every remembered/dead base and re-arm discovery. Called on
+   * `connection/reset`: a fresh connection generation can mean a restarted host
+   * or a different instance, and a base proven dead by the previous generation
+   * must not keep the panel dark.
+   */
+  resetBases(): void
   act(name: string, action: 'connect' | 'disconnect'): Promise<RuntimeActionResult>
   test(name: string): Promise<RuntimeTestResult>
   tools(name: string): Promise<{ tools: RuntimeToolEntry[]; truncated: boolean; total: number }>
@@ -156,10 +163,22 @@ const INSTANCE_PREFIX = /^\/api\/i\/[^/]+/
 const SHELL_CONNECTIONS_PATH = '/api/connections'
 
 /** Instance ids are opaque tokens; anything else must never reach a URL. */
-const INSTANCE_ID = /^[A-Za-z0-9_.-]{1,128}$/
+// The shell mints ids as `local` or `(dsh|gateway|ssh)-` + a token of up to 64
+// `[A-Za-z0-9_-]` characters (its own pattern validates the token AFTER the
+// prefix), so the total may reach 72: a plain total-length cap would silently
+// refuse a legitimate long id and leave that instance's panel permanently
+// unavailable. Dots, percent signs, backslashes and tildes are never minted.
+const INSTANCE_ID = /^(?:[A-Za-z0-9_-]{1,64}|(?:dsh-|gateway-|ssh-)[A-Za-z0-9_-]{1,64})$/
 
 /** Cap of resource/DOM entries inspected per discovery (tail, newest last). */
 const MAX_SCAN_ENTRIES = 64
+
+/**
+ * Discoveries one store may attempt before an explicit refresh re-arms it. Two
+ * covers "the shell answered late" without letting a page that never reaches the
+ * shell issue a probe on every poll or per-server refresh.
+ */
+const MAX_DISCOVERY_ATTEMPTS = 2
 
 /** Accept only a rooted, same-origin prefix; normalize away trailing slashes. */
 function normalizeBasePath(value: unknown): string | undefined {
@@ -167,7 +186,14 @@ function normalizeBasePath(value: unknown): string | undefined {
   const trimmed = value.trim()
   if (trimmed === '' || trimmed === '/') return undefined
   if (!trimmed.startsWith('/') || trimmed.startsWith('//')) return undefined
-  return trimmed.replace(/\/+$/, '')
+  const normalized = trimmed.replace(/\/+$/, '')
+  // A dotted segment is normalized by the browser into a DIFFERENT path than the
+  // one intended (`/api/i/../api` → `/api/api`), and percent-encoding or a
+  // backslash reaches the same place on some layers, so no signal may carry any
+  // of them.
+  if (normalized.split('/').some((segment) => segment === '.' || segment === '..')) return undefined
+  if (/[%\\]/.test(normalized)) return undefined
+  return normalized
 }
 
 /**
@@ -229,6 +255,76 @@ function shellConnectionId(payload: unknown): string | undefined {
   for (const row of rows) {
     const id = pick(row)
     if (id !== undefined) return id
+  }
+  return undefined
+}
+
+/**
+ * Whether a shell-supplied prefix is one this store may act on.
+ *
+ * The shell's `chamberBasePath` is always `/api/i/<instanceId>` (the shell
+ * validates exactly that shape before providing it), so anything else is not
+ * trusted here — and a dotted id (`.`, `..`) is refused even though it matches
+ * the loose pattern, because the browser would normalize
+ * `/api/i/../api/…` into a DIFFERENT path than the one intended.
+ */
+function isUsableShellBase(value: string): boolean {
+  if (!INSTANCE_PREFIX.test(value)) return false
+  return INSTANCE_ID.test(value.slice('/api/i/'.length))
+}
+
+/**
+ * Read the embedding shell's per-instance proxy prefix (`/api/i/<instanceId>`).
+ *
+ * `ctx.get` is the contract: it answers value-or-undefined, and a plain property
+ * read must NOT be consulted when it returns `undefined` (a service this fiber
+ * provided and disposed still answers the property read with a ghost). The
+ * property form exists only for a context whose `get` itself is unusable.
+ *
+ * TOTAL by construction, because both halves of this contract are hostile:
+ * cordis answers a PROPERTY read of a service that no fiber provided — and that
+ * this fiber never declared in `inject` — with a THROW
+ * (`cannot get property "X" without inject`), and a plain `dsh web` deployment
+ * has no shell service at all. Aborting the first refresh there would leave the
+ * panel dead exactly as before the fix. The documented non-throwing accessor is
+ * `ctx.get(name)`, which returns the value or `undefined`; the property read is
+ * kept only as a last resort inside a try/catch, for a generation that exposes
+ * the value without registering it as a service.
+ *
+ * @param ctx - the plugin context (typed loosely: the shell's service is outside
+ *   this plugin's typed context surface).
+ * @returns the prefix string, or `undefined` when no shell signal is available.
+ */
+export function readShellBasePath(ctx: unknown): string | undefined {
+  if (ctx === null || typeof ctx !== 'object') return undefined
+  const scope = ctx as { get?: unknown; chamberBasePath?: unknown }
+  // Every step is guarded, including the probe for `get` itself: a proxied
+  // context is allowed to throw on ANY property access, and this accessor's one
+  // contract is that it never throws.
+  let getter: unknown
+  try {
+    getter = scope.get
+  } catch {
+    // A proxied context is allowed to throw on ANY property access.
+    return undefined
+  }
+  if (typeof getter === 'function') {
+    // The documented accessor answers value-or-undefined: trust it COMPLETELY.
+    // Falling back to the property form on a legitimate `undefined` would read a
+    // ghost (a service this fiber provided and disposed still answers the
+    // property read), i.e. a stale instance prefix.
+    try {
+      const value = (getter as (name: string) => unknown).call(ctx, 'chamberBasePath')
+      return typeof value === 'string' ? value : undefined
+    } catch {
+      /* this composition's service store misbehaved: try the property form */
+    }
+  }
+  try {
+    const value = scope.chamberBasePath
+    if (typeof value === 'string') return value
+  } catch {
+    /* cordis throws for an unprovided service this fiber never declared */
   }
   return undefined
 }
@@ -361,30 +457,73 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
   const deadBases = new Set<string>()
 
   /**
-   * Bases to try in order. The FRESHLY detected base goes first: a live page can
-   * switch instance (the resource timeline then carries the new prefix) and a
-   * remembered base that still answers would silently serve the OLD instance's
-   * data. The remembered base is the second candidate, the root origin is always
-   * last, and a base that already answered without our wire envelope is skipped
-   * so a dead candidate costs one request instead of one per poll.
+   * Prefix recovered by `discoverShellBasePath` (chamber topology), if any, and
+   * the in-flight probe: concurrent callers JOIN one discovery instead of one of
+   * them failing while the other is still awaiting.
    */
-  /** Prefix recovered by discoverShellBasePath (chamber topology), if any. */
   let recoveredBase: string | undefined
-  /** The shell is asked at most once per store; its answer cannot change here. */
-  let discoveryTried = false
+  /**
+   * The instance the shell itself named the last time it answered. Once the
+   * shell has spoken, it PINS the candidate set for the rest of the connection
+   * generation: if its service disappears (an older shell unloads, a route
+   * clears) the panel may serve that instance or nothing — never a sniffed or
+   * recovered prefix that could be a DIFFERENT one.
+   */
+  let pinnedBase: string | undefined
+  let discoveryInFlight: Promise<string | undefined> | undefined
+  /** Discoveries attempted for this store; bounded so a dead shell costs two. */
+  let discoveryAttempts = 0
+  /**
+   * Bumped by {@link resetBases}. A call that awaited a probe (or a full pass
+   * that awaited a route) across a reset must discard its answer: the previous
+   * connection generation's instance may no longer be the one on screen, and
+   * adopting it would show — and act on — the wrong one.
+   */
+  let baseGeneration = 0
   const candidateBases = (): string[] => {
     const bases: string[] = []
     const add = (value: string): void => {
       if (!bases.includes(value) && !deadBases.has(value)) bases.push(value)
     }
-    // The shell's own answer wins over anything sniffed out of the document: it
-    // names the instance this page is showing, which the document cannot.
-    const supplied = normalizeBasePath(recoveredBase ?? options.shellBasePath?.())
-    if (supplied !== undefined) add(supplied)
+    // A LIVE shell answer PINS the instance this page is showing. Only it and the
+    // root origin (same origin, no instance at all) stay candidates: a sniffed,
+    // recovered or remembered prefix that disagrees with the shell could be
+    // ANOTHER instance, and serving it would show — and ACT on — the wrong one
+    // (connect/disconnect POSTs included). A live base that stops answering
+    // leaves the panel on root/unavailable until it answers again or the shell
+    // publishes a new value; showing nothing beats showing someone else's state.
+    //
+    // Without a live answer: the freshly sniffed document base first, then a
+    // recovered prefix, then the remembered one, then the root origin. A base
+    // that already answered without this plugin's wire envelope is skipped, so a
+    // dead candidate costs one request instead of one per poll.
+    const live = liveInstanceBase()
+    if (live !== undefined) {
+      pinnedBase = live
+      if (recoveredBase !== undefined && recoveredBase !== live) recoveredBase = undefined
+      add(live)
+      add('')
+      return bases
+    }
+    if (pinnedBase !== undefined) {
+      // The shell already named the instance on this page and has now stopped
+      // answering: falling back to a sniffed/recovered/remembered prefix would
+      // risk another instance's data (and its connect/disconnect POSTs).
+      add(pinnedBase)
+      add('')
+      return bases
+    }
     add(readBasePath() ?? '')
+    if (recoveredBase !== undefined) add(recoveredBase)
     if (hasBase) add(basePath ?? '')
     add('')
     return bases
+  }
+
+  /** The shell's own answer for the instance on screen, when it is usable. */
+  function liveInstanceBase(): string | undefined {
+    const candidate = normalizeBasePath(options.shellBasePath?.())
+    return candidate !== undefined && isUsableShellBase(candidate) ? candidate : undefined
   }
 
   /** One attempt against one origin; never retried internally. */
@@ -432,29 +571,66 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
     let last: RuntimeCallError | undefined
     let answered: T | undefined
     let delivered = false
+    /**
+     * The connection generation this attempt belongs to. Everything the awaits
+     * below learn describes THAT generation: after a `connection/reset` the
+     * remembered base, the dead-base cache and the recovered prefix must keep the
+     * new generation's meaning, or a stale answer could re-arm a base the reset
+     * dropped — or mark the NEW live base dead forever, which is exactly the
+     * "panel stays dark" failure the reset exists to prevent.
+     */
+    const generation = baseGeneration
+    /** Bases this call itself proved dead: never re-adopted by its own probe. */
+    const killedHere = new Set<string>()
     for (const base of candidateBases()) {
       try {
         answered = await callOnce<T>(base + path, init)
-        basePath = base === '' ? undefined : base
-        hasBase = true
+        if (generation === baseGeneration) {
+          basePath = base === '' ? undefined : base
+          hasBase = true
+        }
         delivered = true
         break
       } catch (error) {
         const failure = error instanceof RuntimeCallError ? error : new RuntimeCallError('error', String(error))
         last = failure
         if (!failure.routeMissing) throw failure
+        killedHere.add(base)
+        if (generation !== baseGeneration) continue
         deadBases.add(base)
+        // A recovered prefix that stops answering is not evidence that the
+        // instance is gone: the shell may simply have moved on, so drop it and
+        // let the next attempt re-discover (bounded below).
+        if (base === recoveredBase) recoveredBase = undefined
       }
     }
     if (delivered) return answered as T
     // Every candidate was answered by something that is not this plugin. In the
     // chamber topology the instance prefix is invisible in the document, so ask
-    // the shell ONCE and retry with the recovered candidate; only route-missing
-    // failures reach here, so no request was ever delivered twice.
-    if (recoveredBase === undefined && !discoveryTried) {
-      discoveryTried = true
-      const found = await discoverShellBasePath(options.fetchLike ?? ((...args) => globalThis.fetch(...args)))
-      if (found !== undefined) {
+    // the shell and retry with the recovered candidate; only route-missing
+    // failures reach here, so no request was ever delivered twice. The budget is
+    // bounded (a page that never reaches the shell cannot spin) and concurrent
+    // callers JOIN the probe in flight. An explicit refresh re-arms it.
+    // A pinned instance never guesses: the shell already named it, and a probe
+    // could only produce a DIFFERENT one.
+    if (
+      liveInstanceBase() === undefined &&
+      pinnedBase === undefined &&
+      (discoveryInFlight !== undefined || discoveryAttempts < MAX_DISCOVERY_ATTEMPTS)
+    ) {
+      // Only the caller that actually starts a probe spends budget; callers that
+      // JOIN one must not exhaust it before the shell had a chance to answer —
+      // and a probe already in flight is joined even when the budget is spent.
+      if (discoveryInFlight === undefined) discoveryAttempts += 1
+      const probe = discoveryInFlight ?? discoverShellBasePath(options.fetchLike ?? ((...args) => globalThis.fetch(...args)))
+      discoveryInFlight = probe
+      const found = await probe
+      if (discoveryInFlight === probe) discoveryInFlight = undefined
+      // Discard an answer that crossed a reset, and never resurrect a base this
+      // very call proved dead (that would break the one-request-per-dead-base
+      // contract, and a middle layer could turn it into a real double delivery).
+      if (generation !== baseGeneration) return call<T>(path, init)
+      if (found !== undefined && !killedHere.has(found)) {
         recoveredBase = found
         deadBases.delete(found)
         return call<T>(path, init)
@@ -470,6 +646,10 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
    * post-action refreshes are fire-and-forget.
    */
   async function refreshAll(refreshOptions?: RuntimeRefreshOptions): Promise<void> {
+    // A pass that crosses a `connection/reset` describes the PREVIOUS connection
+    // generation: its answer must not be published (the instance on screen may
+    // have changed with it).
+    const generation = baseGeneration
     if (fullInFlight !== undefined) {
       // An action's post-write refresh must not be absorbed by a poll that was
       // already in flight when the click landed.
@@ -480,10 +660,14 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
     const run = (async () => {
       try {
         const value = await call<{ v: 1; at: number; servers: ServerRuntimeView[] }>(RUNTIME_STATUS_PATH)
+        if (generation !== baseGeneration) return
         const servers: Record<string, ServerRuntimeView> = {}
         for (const server of value.servers) servers[server.name] = server
         publish({ phase: 'ready', at: value.at, servers })
       } catch (error) {
+        // A failure learned against the PREVIOUS connection generation must not
+        // paint the new one (its bases may be fine).
+        if (generation !== baseGeneration) return
         const runtimeError =
           error instanceof RuntimeCallError ? error : new RuntimeCallError('error', String(error))
         publish({
@@ -515,10 +699,14 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
   async function refreshServer(server: string): Promise<void> {
     const running = serverInFlight.get(server)
     if (running !== undefined) return running
+    // Same rule as a full pass: an answer that crossed a `connection/reset`
+    // describes the instance that was on screen BEFORE it.
+    const generation = baseGeneration
     const run = (async () => {
       const value = await call<{ v: 1; at: number; servers: ServerRuntimeView[] }>(
         RUNTIME_STATUS_PATH + '?server=' + encodeURIComponent(server),
       )
+      if (generation !== baseGeneration) return
       const servers: Record<string, ServerRuntimeView> = { ...snapshot.servers }
       for (const entry of value.servers) servers[entry.name] = entry
       // One server answering does not prove the OTHER entries are fresh: keep
@@ -545,9 +733,37 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
    * merged, and a failure rejects (the card owns the error).
    */
   async function refresh(refreshOptions?: RuntimeRefreshOptions): Promise<void> {
+    // An EXPLICIT refresh re-arms DISCOVERY — a shell that answered late deserves
+    // another chance — but never the dead-base cache: "a base that answered
+    // without this plugin's wire envelope costs one request, not one per poll" is
+    // a documented contract of the cheap poll path. The full reset (dead bases
+    // included) belongs to `connection/reset`, where a new connection generation
+    // means the old answers prove nothing.
+    if (refreshOptions?.silent !== true) discoveryAttempts = 0
     const server = refreshOptions?.server
     if (typeof server === 'string') return refreshServer(server)
     return refreshAll(refreshOptions)
+  }
+
+  /**
+   * Drop every remembered base and re-arm discovery (see {@link RuntimeStore.resetBases}).
+   */
+  function resetBases(): void {
+    baseGeneration += 1
+    discoveryInFlight = undefined
+    // A pass from the previous generation would return without publishing, so a
+    // caller joining it would see neither a request nor a fresh snapshot (and a
+    // request that never settles would hold the panel on `loading` forever).
+    // The passes' own `finally` blocks use identity checks, so they cannot clear
+    // the fresh ones.
+    serverInFlight.clear()
+    fullInFlight = undefined
+    deadBases.clear()
+    recoveredBase = undefined
+    pinnedBase = undefined
+    discoveryAttempts = 0
+    hasBase = false
+    basePath = undefined
   }
 
   async function act(name: string, action: 'connect' | 'disconnect'): Promise<RuntimeActionResult> {
@@ -582,6 +798,7 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
       return () => listeners.delete(listener)
     },
     refresh,
+    resetBases,
     act,
     test,
     tools,

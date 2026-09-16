@@ -6,6 +6,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
 import {
   RUNTIME_ACTION_PATH,
   RUNTIME_STATUS_PATH,
@@ -13,6 +14,7 @@ import {
   RuntimeCallError,
   createRuntimeStore,
   readBasePath,
+  readShellBasePath,
 } from '../../src/client/runtime.js'
 
 const json = (body: unknown, status = 200): Response =>
@@ -73,6 +75,333 @@ describe('runtime store refresh', () => {
     })
     await recovered.refresh()
     expect(recovered.getSnapshot().phase).toBe('ready')
+  })
+
+  it('reads the shell prefix through a TOTAL accessor (real cordis fiber: absent service must not throw)', async () => {
+    // Regression: on a REAL plugin fiber cordis answers a PROPERTY read of a
+    // service no fiber provided with `cannot get property "chamberBasePath"
+    // without inject`, so a plain `dsh web` document — which has no such service
+    // — used to abort the first refresh before a single request. A detached
+    // `new Context()` does NOT throw on that read, so this test uses a plugin
+    // fiber; otherwise a bare-property-read regression would pass it.
+    const root = new Context()
+    let fiberCtx: Context | undefined
+    await root.plugin((c: Context) => {
+      fiberCtx = c
+    })
+    const ctx = fiberCtx as Context
+    expect(ctx).toBeDefined()
+    // Precondition: this is the composition where the dangerous read throws.
+    expect(() => (ctx as unknown as { chamberBasePath?: unknown }).chamberBasePath).toThrow()
+    expect(readShellBasePath(ctx)).toBeUndefined()
+    const dispose = (ctx as unknown as { provide(name: string, value: unknown): () => void }).provide(
+      'chamberBasePath',
+      '/api/i/local',
+    )
+    expect(readShellBasePath(ctx)).toBe('/api/i/local')
+    dispose()
+    expect(readShellBasePath(ctx)).toBeUndefined()
+    // Non-context inputs are inert, and an accessor that throws is contained.
+    expect(readShellBasePath(undefined)).toBeUndefined()
+    expect(readShellBasePath({ get: () => { throw new Error('boom') } })).toBeUndefined()
+  })
+
+  it('stays on the root candidate in a plain dsh web deployment (no shell service)', async () => {
+    const ctx = new Context()
+    const calls: string[] = []
+    const store = createRuntimeStore({
+      shellBasePath: () => readShellBasePath(ctx),
+      fetchLike: async (input) => {
+        calls.push(String(input))
+        return json({ ok: true, value: { v: 1, at: 3, servers: [] } })
+      },
+    })
+    await store.refresh()
+    expect(calls).toEqual([RUNTIME_STATUS_PATH])
+    expect(store.getSnapshot().phase).toBe('ready')
+  })
+
+  it('never lets a recovered base outrank the live shell answer', async () => {
+    const calls: string[] = []
+    let live: string | undefined
+    const store = createRuntimeStore({
+      shellBasePath: () => live,
+      fetchLike: async (input) => {
+        const url = String(input)
+        calls.push(url)
+        if (url.endsWith('/api/connections')) return json({ connection: { id: 'A', status: 'ready' } })
+        if (url.startsWith('/api/i/A/')) return json({ ok: true, value: { v: 1, at: 1, servers: [view('from-a')] } })
+        if (url.startsWith('/api/i/B/')) return json({ ok: true, value: { v: 1, at: 2, servers: [view('from-b')] } })
+        return json({ error: 'not_found' }, 404)
+      },
+    })
+    withLocation('http://localhost:3000')
+    await store.refresh()
+    expect(store.getSnapshot().servers['from-a']).toBeDefined()
+    // The shell now reports a DIFFERENT instance: the recovered prefix must be
+    // dropped, or the page would keep showing (and acting on) the old instance.
+    live = '/api/i/B'
+    await store.refresh()
+    expect(store.getSnapshot().servers['from-b']).toBeDefined()
+    expect(store.getSnapshot().servers['from-a']).toBeUndefined()
+    expect(calls[calls.length - 1]).toBe('/api/i/B' + RUNTIME_STATUS_PATH)
+    // The recovered prefix was dropped when the live answer disagreed, and it
+    // must NOT come back once the live answer disappears: that would resurrect
+    // the old instance on a page that was told otherwise.
+    live = undefined
+    const beforeLast = calls.length
+    await store.refresh()
+    expect(calls.slice(beforeLast).some((url) => url.startsWith('/api/i/A/'))).toBe(false)
+  })
+
+  it('prefers a freshly sniffed document base over a recovered prefix', async () => {
+    withLocation('http://localhost:3000')
+    const calls: string[] = []
+    const store = createRuntimeStore({
+      fetchLike: async (input) => {
+        const url = String(input)
+        calls.push(url)
+        if (url.endsWith('/api/connections')) return json({ connection: { id: 'A', status: 'ready' } })
+        if (url.startsWith('/api/i/A/')) return json({ ok: true, value: { v: 1, at: 1, servers: [view('from-a')] } })
+        if (url.startsWith('/api/i/S/')) return json({ ok: true, value: { v: 1, at: 2, servers: [view('from-s')] } })
+        return json({ error: 'not_found' }, 404)
+      },
+    })
+    await store.refresh()
+    expect(store.getSnapshot().servers['from-a']).toBeDefined()
+    // The document now names another instance: the fresh signal outranks the
+    // recovered prefix (declared order: live → sniffed → recovered → …).
+    ;(globalThis as Record<string, unknown>).__DSH_BASE_PATH__ = '/api/i/S'
+    try {
+      await store.refresh()
+      expect(store.getSnapshot().servers['from-s']).toBeDefined()
+      expect(calls[calls.length - 1]).toBe('/api/i/S' + RUNTIME_STATUS_PATH)
+    } finally {
+      delete (globalThis as Record<string, unknown>).__DSH_BASE_PATH__
+    }
+  })
+
+  it('never merges a per-server answer that crossed a connection reset', async () => {
+    let live: string | undefined = '/api/i/A'
+    let releaseStale: (() => void) | undefined
+    const stale = new Promise<void>((resolve) => {
+      releaseStale = resolve
+    })
+    const store = createRuntimeStore({
+      shellBasePath: () => live,
+      fetchLike: async (input) => {
+        const url = String(input)
+        if (url.includes('?server=')) {
+          await stale
+          return json({ ok: true, value: { v: 1, at: 9, servers: [view('a-stale')] } })
+        }
+        if (url.startsWith('/api/i/A/')) return json({ ok: true, value: { v: 1, at: 1, servers: [view('a')] } })
+        if (url.startsWith('/api/i/B/')) return json({ ok: true, value: { v: 1, at: 2, servers: [view('b')] } })
+        return json({ error: 'not_found' }, 404)
+      },
+    })
+    await store.refresh()
+    expect(store.getSnapshot().servers['a']).toBeDefined()
+    const perServer = store.refresh({ server: 'a-stale' })
+    store.resetBases()
+    live = '/api/i/B'
+    await store.refresh()
+    expect(store.getSnapshot().servers['b']).toBeDefined()
+    releaseStale?.()
+    await perServer
+    // The answer describes the instance that was on screen BEFORE the reset.
+    expect(store.getSnapshot().servers['a-stale']).toBeUndefined()
+    expect(store.getSnapshot().servers['b']).toBeDefined()
+  })
+
+  it('does not let the previous generation undo a reset', async () => {
+    let releaseStale: (() => void) | undefined
+    const stale = new Promise<void>((resolve) => {
+      releaseStale = resolve
+    })
+    let calls = 0
+    const store = createRuntimeStore({
+      shellBasePath: () => '/api/i/A',
+      fetchLike: async (input) => {
+        const url = String(input)
+        if (url.startsWith('/api/i/A/')) {
+          calls += 1
+          if (calls === 1) {
+            await stale
+            return json({ error: 'not_found' }, 404)
+          }
+          return json({ ok: true, value: { v: 1, at: 5, servers: [view('a')] } })
+        }
+        return json({ error: 'not_found' }, 404)
+      },
+    })
+    const pending = store.refresh()
+    store.resetBases()
+    releaseStale?.()
+    await pending
+    // Neither the stale failure may paint the new generation…
+    expect(store.getSnapshot().phase).not.toBe('unavailable')
+    expect(store.getSnapshot().phase).not.toBe('error')
+    // …nor may its route-missing verdict mark the LIVE base dead.
+    await store.refresh()
+    expect(store.getSnapshot().servers['a']).toBeDefined()
+  })
+
+  it('does not adopt a discovery that crossed a connection reset', async () => {
+    withLocation('http://localhost:3000')
+    const calls: string[] = []
+    const store = createRuntimeStore({
+      fetchLike: async (input) => {
+        const url = String(input)
+        calls.push(url)
+        if (url.endsWith('/api/connections')) return json({ connection: { id: 'A', status: 'ready' } })
+        if (url.startsWith('/api/i/A/')) return json({ ok: true, value: { v: 1, at: 1, servers: [view('from-a')] } })
+        return json({ error: 'not_found' }, 404)
+      },
+    })
+    await store.refresh()
+    expect(store.getSnapshot().servers['from-a']).toBeDefined()
+    // A reset must invalidate the remembered probe answer with it: after it, the
+    // store has to ask the shell again instead of reusing the old instance.
+    const probesBefore = calls.filter((url) => url.endsWith('/api/connections')).length
+    store.resetBases()
+    await store.refresh()
+    expect(calls.filter((url) => url.endsWith('/api/connections')).length).toBeGreaterThan(probesBefore)
+  })
+
+  it('re-arms every base on a connection reset (the panel must not stay dark)', async () => {
+    let calls = 0
+    const store = createRuntimeStore({
+      fetchLike: async () => {
+        calls += 1
+        return json({ error: 'not_found' }, 404)
+      },
+    })
+    await store.refresh()
+    expect(calls).toBeGreaterThan(0)
+    expect(store.getSnapshot().phase).toBe('unavailable')
+    // Without the reset every candidate stays dead and the store would issue
+    // ZERO requests from here on.
+    store.resetBases()
+    const before = calls
+    await store.refresh()
+    expect(calls).toBeGreaterThan(before)
+  })
+
+  it('accepts a long prefixed instance id (the shell mints up to 72 characters)', async () => {
+    // The shell validates the TOKEN after the prefix, so `dsh-` + 64 characters
+    // is legal: a total-length cap would refuse a real instance and leave its
+    // panel permanently unavailable.
+    const long = 'dsh-' + 'a'.repeat(61)
+    const calls: string[] = []
+    const store = createRuntimeStore({
+      shellBasePath: () => '/api/i/' + long,
+      fetchLike: async (input) => {
+        calls.push(String(input))
+        return json({ ok: true, value: { v: 1, at: 7, servers: [view('long-id')] } })
+      },
+    })
+    await store.refresh()
+    expect(store.getSnapshot().servers['long-id']).toBeDefined()
+    expect(calls[0]).toBe('/api/i/' + long + RUNTIME_STATUS_PATH)
+  })
+
+  it('stays TOTAL for a context whose every property access throws', async () => {
+    const hostile = new Proxy(
+      {},
+      {
+        get() {
+          throw new Error('hostile context')
+        },
+      },
+    )
+    expect(readShellBasePath(hostile)).toBeUndefined()
+  })
+
+  it('joins the probe in flight even when the discovery budget is spent', async () => {
+    let releaseProbe: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      releaseProbe = resolve
+    })
+    let probes = 0
+    const store = createRuntimeStore({
+      fetchLike: async (input) => {
+        const url = String(input)
+        if (url.endsWith('/api/connections')) {
+          probes += 1
+          await gate
+          return json({ connection: { id: 'Z', status: 'ready' } })
+        }
+        if (url.startsWith('/api/i/Z/')) return json({ ok: true, value: { v: 1, at: 1, servers: [view('from-z')] } })
+        return json({ error: 'not_found' }, 404)
+      },
+    })
+    const first = store.refresh()
+    const second = store.refresh()
+    const third = store.refresh()
+    releaseProbe?.()
+    await Promise.all([first, second, third])
+    // One probe, joined by all three callers — not one caller failing because
+    // another already spent the budget.
+    expect(probes).toBe(1)
+    expect(store.getSnapshot().servers['from-z']).toBeDefined()
+  })
+
+  it('refuses ids the shell could never mint', async () => {
+    for (const id of ['a'.repeat(65), 'dsh-' + 'a'.repeat(65), 'a.b', 'a~b', 'a%b', 'a\\b', 'a/b', 'a b']) {
+      const calls: string[] = []
+      const store = createRuntimeStore({
+        shellBasePath: () => '/api/i/' + id,
+        fetchLike: async (input) => {
+          const url = String(input)
+          calls.push(url)
+          // Only the instance base would answer: a refused id must never reach it.
+          if (url.startsWith('/api/i/')) return json({ ok: true, value: { v: 1, at: 1, servers: [view('never')] } })
+          return json({ error: 'not_found' }, 404)
+        },
+      })
+      await store.refresh()
+      expect(store.getSnapshot().servers['never']).toBeUndefined()
+      expect(calls.some((url) => url.includes(encodeURIComponent(id)) || url.includes(id))).toBe(false)
+    }
+  })
+
+  it('re-issues a per-server refresh after a reset instead of joining the old pass', async () => {
+    let calls = 0
+    const store = createRuntimeStore({
+      shellBasePath: () => '/api/i/A',
+      fetchLike: async (input) => {
+        const url = String(input)
+        if (url.includes('?server=')) {
+          calls += 1
+          return json({ ok: true, value: { v: 1, at: calls, servers: [view('srv')] } })
+        }
+        return json({ ok: true, value: { v: 1, at: 1, servers: [] } })
+      },
+    })
+    await store.refresh()
+    store.resetBases()
+    const before = calls
+    await store.refresh({ server: 'srv' })
+    expect(calls).toBeGreaterThan(before)
+    expect(store.getSnapshot().servers['srv']).toBeDefined()
+  })
+
+  it('refuses a dotted instance id and keeps the token contract', async () => {
+    for (const id of ['..', '.']) {
+      const calls: string[] = []
+      const store = createRuntimeStore({
+        shellBasePath: () => '/api/i/' + id,
+        fetchLike: async (input) => {
+          calls.push(String(input))
+          return json({ error: 'not_found' }, 404)
+        },
+      })
+      await store.refresh()
+      // Whatever the shell says, a dotted id must never become the base we act on.
+      expect(store.getSnapshot().phase).toBe('unavailable')
+      expect(calls.some((url) => url.includes('/api/i/..'))).toBe(false)
+    }
   })
 
   it('prefers the base the embedding shell supplies over anything sniffed', async () => {
