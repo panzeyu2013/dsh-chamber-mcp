@@ -18,6 +18,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { registerInjectionRow, type InjectionRegistrationHost } from './injection-row.js'
+import { mountNavGlyph } from './nav-icon.js'
 import type { CredentialInfo as CredentialInfoView } from '@deepseek-ai/dsh-credentials/types'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client' // 'settings.section' SlotMap entry + ctx.settingsScope merge (type-only)
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client' // 'tool.call.toolview' SlotMap entry (type-only)
@@ -147,6 +148,20 @@ export function apply(ctx: Context): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'mcp-scope: dictionaries')
 
   const t = ctx.locale.bind(NS)
+
+  // (a1) settings sidebar glyph. The shell owns the nav row's mark and picks it
+  // from a hardcoded map by section id, falling back to its settings gear for
+  // ours — and the section registration carries no icon option — so the plugin
+  // paints its own plug into ITS row. Degrades to no-op wherever the shell's DOM
+  // shape differs (see nav-icon.ts); never throws.
+  ctx.effect(
+    () =>
+      mountNavGlyph({
+        label: () => t('nav'),
+        subscribe: (onChange) => ctx.locale.subscribe(onChange),
+      }),
+    'mcp-scope: sidebar glyph',
+  )
 
   // (b/c) controller over the bound namespace scope + the credentials wire.
   // The credentials domain is reached through `ctx.remote.credentials` in

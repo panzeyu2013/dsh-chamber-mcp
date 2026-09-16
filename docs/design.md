@@ -183,10 +183,10 @@ comments, anchors and formatting survive on untouched nodes.
 | `src/server-context.ts` | per-server publication of the `mcp:<serverName>` instructions section and the `mcpResources` provider (the official `registerServerContext` shape) |
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture on the 2.0 server packages (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe; publishes instructions, oversized under `FIXTURE_HUGE_INSTRUCTIONS=1`) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (10 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`; repo total 498 tests / 25 files) |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (10 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`; repo total 503 tests / 26 files) |
 
 Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (498 tests / 25 files).
+`node node_modules/vitest/vitest.mjs run` — both fully green (503 tests / 26 files).
 
 ### (a) API signatures and runtime assumptions
 
@@ -672,6 +672,7 @@ written — through the platform's own seams rather than a new channel:
 | `src/client/import.ts` | 0.0.3 single-server JSON import (`mcpServers` / VS Code `servers` / opencode `mcp`, flat and array shapes → draft; tolerant of a brace-less or torn section (with or without the `mcp` wrapper, dangling separators/closers included), comments, trailing commas, fences and prose; candidates are tried until one resolves a server, so an example snippet above the real config cannot shadow it; discovery is iterative and bounded, so a deeply nested paste cannot throw; `env` takes a map or a `{name,value}` list; secrets land write-only) |
 | `src/client/runtime.ts` | 0.0.3 runtime store over the three host routes: status/action/tool-list reads (`refresh`/`act`/`test`/`tools`); pending-action state lives in the card (§6) |
 | `src/client/styles.ts` | style seat: the plugin's stylesheet, its class-name map, and the `data-plugin-css` tag mount (§9) |
+| `src/client/nav-icon.ts` | settings sidebar glyph: paints the plugin's plug mark into OUR nav row (§9.4), because the shell picks the mark from a hardcoded map by section id and the registration carries no icon option |
 | `src/client/workspaces.ts` | minimal workspace-row narrowing (typed items) |
 | `src/client/tool-card/{names,icon,row,view,register}.ts(x)` | transcript lane: MCP tool identity from the session's request header, the keyed tool view, and its registration lifecycle (§6, §5(f)) |
 | `tests/client/{controller,locales,styles,section-render,tool-card,tool-register,import,runtime,injection,injection-row}.spec.ts(x)` | browser-half vitest suites (10 files) |
@@ -1006,6 +1007,23 @@ byte-equal declaration.
 | section column | `ui-settings-models` `.section` | same (flex column, gap 12, max-width 720, `label-primary`) |
 | section title | `.title` | same (16px/24px, 500) |
 | header action / row actions | `ui-primitives` Button `.sm` + `outline` (what the official `settings.action` seat renders) | same (h28, r14, 0 10px, 12/18, `border-l3`); Edit / Remove / Disconnect / Test share that one capsule — one neutral frame — and the destructive action differs only by the error token on its LABEL |
+
+### 9.4 Settings sidebar glyph (the one patch the shell forces)
+
+The settings nav row's mark is shell-owned: `navIcon(id)` hardcodes one per known
+section id (`models`, `agent-presets`, `plugins`, and `archived-sessions` on
+0.1.6) and falls back to the shipped settings gear for every other id — true in
+BOTH supported generations, which also give a registrant no `icon` option and no
+icon seat. Our row would therefore keep the gear, so `src/client/nav-icon.ts`
+paints the plugin's own plug mark into it: the row is matched by the one fact the
+shell renders from our registration (the localized `nav` label) and accepted only
+in the shell's own shape (a button whose two element children are the glyph svg
+and the label span), the replacement carries the shell glyph's class so sizing
+and colour stay shell-owned, and a marker attribute makes re-application
+idempotent. Repaints ride a capture-phase click (opening the panel renders the
+rows), a childList observer scoped to the row's own list, and the locale feed. A
+renamed DOM shape, a composition without the settings panel or a different label
+all degrade to the shipped gear, and nothing in the patch throws.
 
 ## 10. Settings UI layout reference
 

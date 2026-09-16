@@ -364,6 +364,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `docs/design.md` records the removal as a deliberate gap. The acceptance
   suite pins the new header contract (Add/Cancel only), the per-card refresh and
   the banner's single full refresh.
+- **The settings sidebar shows the plugin's own plug mark.** The settings shell
+  picks a section's nav glyph from a hardcoded map by id and falls back to its
+  settings gear for ours — both supported generations do, and the
+  `settings.section` registration carries no icon option — so the browser half
+  paints the repo's plug glyph into its own nav row: the row is matched by the
+  localized `nav` label and accepted only in the shell's own shape, the shell
+  glyph's class rides along so sizing and colour stay shell-owned, and a
+  re-render or a locale flip repaints. Anywhere the DOM shape differs the patch
+  is a no-op and the shipped gear stays.
 - **The card's four actions are one capsule again — one frame, and only the
   destructive one is red.** Edit, Remove, Disconnect and Test share the official
   `.sm` outline recipe (h28 / r14 / `0 10px` / 12-18, transparent fill, the
