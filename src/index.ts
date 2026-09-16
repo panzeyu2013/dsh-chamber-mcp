@@ -3,7 +3,7 @@
  *
  * Manages MCP servers per workspace: a settings namespace document
  * (`mcp-scope`) defines servers (stdio / streamable-http) and per-workspace
- * explicit off-switches; each server is supervised by a per-server supervisor
+ * explicit ENABLES (off by default); each server is supervised by a per-server supervisor
  * ({@link ./manager.js}) mirroring the official mcp-client reconnect
  * semantics; tools are injected per-agent-scope (never globally) into the
  * tool scopes of live agents whose session cwd belongs to an enabled

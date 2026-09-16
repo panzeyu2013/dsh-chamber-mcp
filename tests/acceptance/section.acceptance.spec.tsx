@@ -39,7 +39,8 @@ afterEach(() => {
 const SERVER = 'alpha'
 const WS_TITLES = Array.from({ length: 20 }, (_, index) => 'workspace-' + String(index + 1).padStart(2, '0'))
 const WS_ITEMS = WS_TITLES.map((title) => ({ workspaceId: title, title }))
-const OFF_TITLES = ['workspace-03', 'workspace-07', 'workspace-15']
+/** Workspaces whose row ENABLES the server: the only rows shown while collapsed. */
+const ENABLED_TITLES = ['workspace-03', 'workspace-07', 'workspace-15']
 
 function runtimeWith(names: readonly string[], phase: RuntimeSnapshot['phase'] = 'ready'): RuntimeSnapshot {
   const servers: Record<string, ReturnType<typeof viewOf>> = {}
@@ -47,7 +48,8 @@ function runtimeWith(names: readonly string[], phase: RuntimeSnapshot['phase'] =
   return { phase, servers }
 }
 
-function offOverrides(titles: readonly string[]): ReturnType<typeof overridesOf> {
+/** Presence of a server name in a workspace row now means ENABLED there. */
+function enabledOverrides(titles: readonly string[]): ReturnType<typeof overridesOf> {
   const rows: Record<string, string[]> = {}
   for (const title of titles) rows[title] = [SERVER]
   return overridesOf(rows)
@@ -82,12 +84,12 @@ function smallestWithButton(root: HTMLElement, text: string): HTMLElement | unde
     .sort((left, right) => left.querySelectorAll('*').length - right.querySelectorAll('*').length)[0]
 }
 
-/** Locale keys carrying the manage/hide exceptions toggle label of either state. */
+/** Locale keys carrying the manage/hide workspace-rows toggle label of either state. */
 function manageKeys(): string[] {
   return (Object.keys(en) as SettingsKey[]).filter(
     (key) =>
-      /管理例外|收起\s*workspace/.test(zh[key] ?? '') ||
-      /manage exceptions|hide workspaces/i.test(en[key] ?? ''),
+      /管理\s*workspace|收起\s*workspace/.test(zh[key] ?? '') ||
+      /manage workspaces|hide workspaces/i.test(en[key] ?? ''),
   )
 }
 
@@ -134,23 +136,23 @@ function placeholdersOf(text: string): string[] {
 }
 
 describe('C4 correctness: collapse invariants', () => {
-  it('[correctness] collapse: the default renders only OFF (exception) rows', async () => {
+  it('[correctness] collapse: the default renders only the ENABLED rows', async () => {
     const mounted = mountSection({
-      doc: { servers: [stdioServer(SERVER)], overrides: offOverrides(OFF_TITLES) },
+      doc: { servers: [stdioServer(SERVER)], overrides: enabledOverrides(ENABLED_TITLES) },
       wsItems: WS_ITEMS,
       runtime: runtimeWith([SERVER]),
     })
     await flush()
     const rendered = renderedWorkspaceTitles(mounted.host, WS_TITLES)
-    expect(rendered.sort()).toEqual([...OFF_TITLES].sort())
+    expect(rendered.sort()).toEqual([...ENABLED_TITLES].sort())
     expect(rendered.length).toBeLessThan(WS_TITLES.length)
   })
 
-  it('[correctness] collapse: zero exceptions renders exactly one summary line carrying the workspace count', async () => {
-    // The sentence is a plural pair (row.allOnDefault.one/.other): assert the
+  it('[correctness] collapse: zero enabled workspaces renders exactly one summary line carrying the workspace count', async () => {
+    // The sentence is a plural pair (row.allOffDefault.one/.other): assert the
     // CONTRACT (one summary line, real workspace count, both dictionary forms
     // resolvable) without freezing the copy itself.
-    const key = countKey('row.allOnDefault', WS_TITLES.length)
+    const key = countKey('row.allOffDefault', WS_TITLES.length)
     expect(placeholdersOf(zh[key]), 'summary placeholder contract').toEqual(['count'])
     const expected = templateOf(key)
     const mounted = mountSection({
@@ -163,33 +165,33 @@ describe('C4 correctness: collapse invariants', () => {
     expect(occurrencesOf(mounted.text(), expected)).toEqual([WS_TITLES.length])
   })
 
-  it('[correctness] collapse: the manage-exceptions toggle reveals every workspace row and collapses again', async () => {
+  it('[correctness] collapse: the manage-workspaces toggle reveals every workspace row and collapses again', async () => {
     const mounted = mountSection({
-      doc: { servers: [stdioServer(SERVER)], overrides: offOverrides(OFF_TITLES) },
+      doc: { servers: [stdioServer(SERVER)], overrides: enabledOverrides(ENABLED_TITLES) },
       wsItems: WS_ITEMS,
       runtime: runtimeWith([SERVER]),
     })
     await flush()
-    const toggle = requireButton(manageToggleButton(mounted), 'manage-exceptions toggle')
+    const toggle = requireButton(manageToggleButton(mounted), 'manage-workspaces toggle')
     toggle.click()
     await flush()
     expect(renderedWorkspaceTitles(mounted.host, WS_TITLES).length).toBe(WS_TITLES.length)
-    const collapse = requireButton(manageToggleButton(mounted), 'manage-exceptions toggle (collapse)')
+    const collapse = requireButton(manageToggleButton(mounted), 'manage-workspaces toggle (collapse)')
     collapse.click()
     await flush()
-    expect(renderedWorkspaceTitles(mounted.host, WS_TITLES).length).toBe(OFF_TITLES.length)
+    expect(renderedWorkspaceTitles(mounted.host, WS_TITLES).length).toBe(ENABLED_TITLES.length)
   })
 
-  it('[correctness] collapse: toggling manage-exceptions performs no settings write', async () => {
+  it('[correctness] collapse: toggling manage-workspaces performs no settings write', async () => {
     const mounted = mountSection({
-      doc: { servers: [stdioServer(SERVER)], overrides: offOverrides(OFF_TITLES) },
+      doc: { servers: [stdioServer(SERVER)], overrides: enabledOverrides(ENABLED_TITLES) },
       wsItems: WS_ITEMS,
       runtime: runtimeWith([SERVER]),
     })
     await flush()
-    requireButton(manageToggleButton(mounted), 'manage-exceptions toggle').click()
+    requireButton(manageToggleButton(mounted), 'manage-workspaces toggle').click()
     await flush()
-    requireButton(manageToggleButton(mounted), 'manage-exceptions toggle (collapse)').click()
+    requireButton(manageToggleButton(mounted), 'manage-workspaces toggle (collapse)').click()
     await flush()
     expect(mounted.calls.writes).toEqual([])
   })
@@ -345,10 +347,10 @@ describe('C4 completeness: one test per user-visible capability', () => {
     expect(mounted.calls.test).toEqual([SERVER])
   })
 
-  it('[completeness] capability: only exception rows render by default (exceptions-only default)', async () => {
+  it('[completeness] capability: only enabled rows render by default (enabled-only default)', async () => {
     const titles = ['workspace-01', 'workspace-02', 'workspace-03']
     const mounted = mountSection({
-      doc: { servers: [stdioServer(SERVER)], overrides: offOverrides(['workspace-02']) },
+      doc: { servers: [stdioServer(SERVER)], overrides: enabledOverrides(['workspace-02']) },
       wsItems: titles.map((title) => ({ workspaceId: title, title })),
       runtime: runtimeWith([SERVER]),
     })
@@ -356,15 +358,15 @@ describe('C4 completeness: one test per user-visible capability', () => {
     expect(renderedWorkspaceTitles(mounted.host, titles)).toEqual(['workspace-02'])
   })
 
-  it('[completeness] capability: the manage-exceptions toggle reveals all rows and offers all-on/all-off', async () => {
+  it('[completeness] capability: the manage-workspaces toggle reveals all rows and offers all-on/all-off', async () => {
     const titles = ['workspace-01', 'workspace-02']
     const mounted = mountSection({
-      doc: { servers: [stdioServer(SERVER)], overrides: offOverrides(['workspace-02']) },
+      doc: { servers: [stdioServer(SERVER)], overrides: enabledOverrides(['workspace-02']) },
       wsItems: titles.map((title) => ({ workspaceId: title, title })),
       runtime: runtimeWith([SERVER]),
     })
     await flush()
-    requireButton(manageToggleButton(mounted), 'manage-exceptions toggle').click()
+    requireButton(manageToggleButton(mounted), 'manage-workspaces toggle').click()
     await flush()
     expect(renderedWorkspaceTitles(mounted.host, titles)).toEqual(titles)
     const card = visibleCard(mounted)
@@ -426,14 +428,14 @@ describe('C4 completeness: one test per user-visible capability', () => {
     for (const locale of ['en', 'zh'] as const) {
       const titles = ['workspace-01', 'workspace-02']
       const mounted = mountSection({
-        doc: { servers: [stdioServer(SERVER)], overrides: offOverrides(['workspace-02']) },
+        doc: { servers: [stdioServer(SERVER)], overrides: enabledOverrides(['workspace-02']) },
         wsItems: titles.map((title) => ({ workspaceId: title, title })),
         runtime: { phase: 'error', servers: { [SERVER]: viewOf(SERVER) }, error: 'boom' },
         locale,
         missingKeys: missing[locale],
       })
       await flush()
-      requireButton(manageToggleButton(mounted), 'manage-exceptions toggle in ' + locale).click()
+      requireButton(manageToggleButton(mounted), 'manage-workspaces toggle in ' + locale).click()
       await flush()
       requireButton(
         perCardRefreshButton(visibleCard(mounted), dictOf(locale)),
@@ -514,16 +516,16 @@ describe('C4 optimality: request counts, timers and node counts', () => {
     }
   })
 
-  it('[optimality] the collapse default renders O(OFF) workspace rows, not O(all workspaces)', async () => {
+  it('[optimality] the collapse default renders O(ENABLED) workspace rows, not O(all workspaces)', async () => {
     const mounted = mountSection({
-      doc: { servers: [stdioServer(SERVER)], overrides: offOverrides(OFF_TITLES) },
+      doc: { servers: [stdioServer(SERVER)], overrides: enabledOverrides(ENABLED_TITLES) },
       wsItems: WS_ITEMS,
       runtime: runtimeWith([SERVER]),
     })
     await flush()
-    expect(renderedWorkspaceTitles(mounted.host, WS_TITLES).length).toBe(OFF_TITLES.length)
-    expect(checkboxCount(visibleCard(mounted))).toBe(OFF_TITLES.length + 1)
-    requireButton(manageToggleButton(mounted), 'manage-exceptions toggle').click()
+    expect(renderedWorkspaceTitles(mounted.host, WS_TITLES).length).toBe(ENABLED_TITLES.length)
+    expect(checkboxCount(visibleCard(mounted))).toBe(ENABLED_TITLES.length + 1)
+    requireButton(manageToggleButton(mounted), 'manage-workspaces toggle').click()
     await flush()
     expect(checkboxCount(visibleCard(mounted))).toBe(WS_TITLES.length + 1)
   })

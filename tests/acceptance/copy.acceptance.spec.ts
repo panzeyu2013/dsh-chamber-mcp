@@ -1,8 +1,8 @@
 /**
  * INDEPENDENT acceptance suite, C4 axis 1 (CORRECTNESS): locale copy.
  *
- * The frozen contract keeps exactly ONE default-on sentence
- * (server.defaultOn), narrows row.on to a plain On/开启, and requires every
+ * The frozen contract keeps exactly ONE default-off sentence
+ * (server.defaultOff), narrows row.on to a plain On/开启, and requires every
  * key to exist in en AND zh with identical placeholders.
  */
 import { describe, expect, it } from 'vitest'
@@ -29,18 +29,31 @@ describe('C4 correctness: locale copy', () => {
     }
   })
 
-  it('[correctness] copy: exactly one default-on sentence per locale', () => {
-    expect(en['server.defaultOn']).toMatch(/default/i)
-    expect(zh['server.defaultOn']).toMatch(/默认/)
-    // The redundant per-card second sentence must be gone or repurposed: no
-    // remaining new-workspace-default-on copy anywhere in the dictionary.
+  it('[correctness] copy: exactly one default-off sentence per locale', () => {
+    expect(en['server.defaultOff']).toMatch(/default/i)
+    expect(en['server.defaultOff']).toMatch(/off/i)
+    expect(zh['server.defaultOff']).toMatch(/默认/)
+    expect(zh['server.defaultOff']).toMatch(/关闭/)
+    // Exactly ONE server-level default sentence per locale (the plural
+    // row.allOffDefault pair is the collapsed summary line, not a second one).
+    const serverKeys = keys.filter((key) => key.startsWith('server.'))
+    expect(serverKeys.filter((key) => /default/i.test(en[key] ?? '') && /off/i.test(en[key] ?? ''))).toEqual([
+      'server.defaultOff',
+    ])
+    expect(serverKeys.filter((key) => /默认/.test(zh[key] ?? '') && /关闭/.test(zh[key] ?? ''))).toEqual([
+      'server.defaultOff',
+    ])
+    // No default-ON copy may survive the flip: the old canonical key is gone
+    // and no key adds a new-workspace default-ON sentence.
+    expect(lookup(en, 'server.defaultOn')).toBeUndefined()
+    expect(lookup(zh, 'server.defaultOn')).toBeUndefined()
     const legacyEn = lookup(en, 'server.newWorkspaceDefault')
     const legacyZh = lookup(zh, 'server.newWorkspaceDefault')
     if (legacyEn !== undefined) {
-      expect(legacyEn, 'server.newWorkspaceDefault must not stay a second default-on sentence').not.toMatch(
+      expect(legacyEn, 'server.newWorkspaceDefault must not stay a second default sentence').not.toMatch(
         /new workspaces?/i,
       )
-      expect(legacyEn, 'server.newWorkspaceDefault must not stay a second default-on sentence').not.toMatch(/default/i)
+      expect(legacyEn, 'server.newWorkspaceDefault must not stay a second default sentence').not.toMatch(/default/i)
       expect(legacyZh ?? '').not.toMatch(/新\s*workspace/i)
     }
     const survivors = keys.filter((key) => /new workspaces?/i.test(en[key] ?? '') && /default/i.test(en[key] ?? ''))

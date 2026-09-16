@@ -157,17 +157,18 @@ export function apply(ctx: Context): void {
   })
   const remote = ctx.remote as unknown as McpRemoteWire
   const controller = new McpScopeController(scope, remoteCredentials(remote))
-  // (a2) conversation-lane notice: "MCP tools injected" (optional seat — a
+  // (a2) conversation-lane notice: "MCP tools registered" (optional seat — a
   // deployment without the conversation service simply never renders it). The
-  // row is DERIVED from the session's own `request/header` events, so neither
-  // half writes a private session event (see `src/client/injection.ts`); the
-  // settings document supplies the server identity each public name belongs to.
+  // row is DERIVED from the session's own events — the request tool array and
+  // the rendered system prompt — so neither half writes a private session event
+  // (see `src/client/injection.ts`); the settings document supplies the server
+  // identity each public name belongs to.
   registerInjectionRow(ctx as unknown as InjectionRegistrationHost, {
     servers: () => controller.store.getSnapshot().doc.servers,
     onError: (error) => {
       // Contained like the tool-row lane: the notice stays off, the plugin apply
       // and the rest of the UI keep working.
-      logger?.warn(`mcp-scope: conversation-lane notice could not register — the injected-tools row stays off: ${String(error)}`)
+      logger?.warn(`mcp-scope: conversation-lane notice could not register — the registered-tools row stays off: ${String(error)}`)
     },
   })
   // Live runtime status/actions over the Connection carrier's JSON routes.

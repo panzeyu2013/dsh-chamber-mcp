@@ -45,13 +45,14 @@ export const en = {
   'server.envKeys.other': '{count} env keys',
   'server.headers.one': '{count} header',
   'server.headers.other': '{count} headers',
-  'server.offWorkspaces.one': 'Off in {count} workspace',
-  'server.offWorkspaces.other': 'Off in {count} workspaces',
+  'server.enabledWorkspaces.one': 'On in {count} workspace',
+  'server.enabledWorkspaces.other': 'On in {count} workspaces',
+  'server.notEnabled': 'Not on in any workspace',
   'server.edit': 'Edit',
   'server.remove': 'Remove',
   'server.removeConfirmTitle': 'Remove server?',
   'server.removeConfirmBody': 'The server stops everywhere and its configuration is deleted. Credentials that no remaining server references are cleared as well.',
-  'server.defaultOn': 'On by default unless turned off here',
+  'server.defaultOff': 'Off by default — enable it in the workspaces you want',
   'server.cwd': 'Working directory: {path}',
 
   // per-workspace rows
@@ -102,8 +103,9 @@ export const en = {
   'add.headerSectionHint': 'Headers are sent with each MCP request. Values are write-only: a blank input keeps the stored value.',
   'add.commandUserHint': "This command runs as this dsh instance's user.",
   'add.toolPrefixHint': 'Tools are exposed as mcp__{name}__*',
-  'add.enabled': 'Enabled',
-  'add.enabledHint': 'Disabled servers stay configured but run nowhere and expose no tools.',
+  'add.enabled': 'Allow server',
+  'add.enabledHint':
+    'A server is allowed by default and still runs nowhere: MCP is off until a workspace enables the pair, so this switch only decides whether the server may run at all.',
   'add.timeout': 'Timeout (ms)',
   'add.timeoutHint': 'Leave blank for the default 60 s; applies to tool calls and tool-list sync.',
   'add.pasteCommand': 'Paste command',
@@ -137,11 +139,11 @@ export const en = {
   'search.none': 'No server matches "{query}"',
   'row.allOn': 'All on',
   'row.allOff': 'All off',
-  'row.manage': 'Manage exceptions ({count})',
+  'row.manage': 'Manage workspaces ({count} on)',
   'row.manageHide': 'Hide workspaces',
-  'row.allOnDefault.one': '{count} workspace is on by default',
-  'row.allOnDefault.other': 'All {count} workspaces are on by default',
-  'server.enableToggle': 'Enable server',
+  'row.allOffDefault.one': 'This workspace is off by default ({count} in total)',
+  'row.allOffDefault.other': 'All {count} workspaces are off by default',
+  'server.enableToggle': 'Allow server',
   'server.disabledTag': 'Disabled',
 
   // runtime status + connection actions
@@ -201,10 +203,11 @@ export const en = {
   'error.secretWriteFailed': 'Failed to write credential(s): {refs}',
   'error.unexpected': 'Unexpected error.',
 
-  // injected-tools notice (conversation lane)
-  'injection.title': 'MCP tools injected',
+  // registered-tools notice (conversation lane)
+  'injection.title': 'MCP tools registered',
   'injection.entry': '{name} ({count})',
-  'injection.total': '{count} tools in context',
+  'injection.total': '{count} tools registered',
+  'injection.omitted': '…and {count} more not listed',
 } as const satisfies Record<string, string>
 
 export type SettingsKey = keyof typeof en
@@ -215,7 +218,7 @@ export type SettingsKey = keyof typeof en
  * right one (other locales carry identical mirrors for key parity).
  */
 export function countKey(
-  kind: 'server.envKeys' | 'server.headers' | 'server.offWorkspaces' | 'row.allOnDefault',
+  kind: 'server.envKeys' | 'server.headers' | 'server.enabledWorkspaces' | 'row.allOffDefault',
   count: number,
 ): SettingsKey {
   return `${kind}.${count === 1 ? 'one' : 'other'}` as SettingsKey
@@ -259,13 +262,14 @@ export const zh: Record<SettingsKey, string> = {
   'server.envKeys.other': '{count} 个环境变量键',
   'server.headers.one': '{count} 个请求头',
   'server.headers.other': '{count} 个请求头',
-  'server.offWorkspaces.one': '在 {count} 个 workspace 中已关闭',
-  'server.offWorkspaces.other': '在 {count} 个 workspace 中已关闭',
+  'server.enabledWorkspaces.one': '已在 {count} 个 workspace 开启',
+  'server.enabledWorkspaces.other': '已在 {count} 个 workspace 开启',
+  'server.notEnabled': '未在任何 workspace 开启',
   'server.edit': '编辑',
   'server.remove': '移除',
   'server.removeConfirmTitle': '移除服务器？',
   'server.removeConfirmBody': '该服务器将在所有 workspace 停止并删除配置；其余服务器不再引用的凭据也会一并清除。',
-  'server.defaultOn': '默认开启，除非在此关闭',
+  'server.defaultOff': '默认关闭：仅在下面显式开启的 workspace 中注入工具',
   'server.cwd': '工作目录：{path}',
 
   // per-workspace rows
@@ -316,8 +320,9 @@ export const zh: Record<SettingsKey, string> = {
   'add.headerSectionHint': '请求头随每次 MCP 请求发送；值仅写入——留空输入框即保留已存值。',
   'add.commandUserHint': '该命令将以此 dsh 实例的用户身份直接执行。',
   'add.toolPrefixHint': '工具将以 mcp__{name}__* 命名',
-  'add.enabled': '启用',
-  'add.enabledHint': '停用的服务器保留配置，但不会运行，也不会暴露任何工具。',
+  'add.enabled': '允许使用该服务器',
+  'add.enabledHint':
+    '默认允许，但仍不会在任何 workspace 运行：MCP 需要 workspace 显式开启，因此这个开关只决定该服务器是否被允许运行。',
   'add.timeout': '超时（毫秒）',
   'add.timeoutHint': '留空使用默认 60 秒；作用于工具调用与工具列表同步。',
   'add.pasteCommand': '粘贴命令',
@@ -351,15 +356,16 @@ export const zh: Record<SettingsKey, string> = {
   'search.none': '没有匹配“{query}”的服务器',
   'row.allOn': '全部开启',
   'row.allOff': '全部关闭',
-  'injection.title': 'MCP 工具已注入',
+  'injection.title': 'MCP 工具已注册',
   'injection.entry': '{name}（{count}）',
-  'injection.total': '上下文内共 {count} 个工具',
+  'injection.total': '共注册 {count} 个工具',
+  'injection.omitted': '……还有 {count} 个未列出',
 
-  'row.manage': '管理例外（{count}）',
+  'row.manage': '管理 workspace（已开启 {count}）',
   'row.manageHide': '收起 workspace',
-  'row.allOnDefault.one': '该 workspace 默认开启（{count} 个）',
-  'row.allOnDefault.other': '全部 {count} 个 workspace 默认开启',
-  'server.enableToggle': '启用服务器',
+  'row.allOffDefault.one': '该 workspace 默认关闭（共 {count} 个）',
+  'row.allOffDefault.other': '全部 {count} 个 workspace 默认关闭',
+  'server.enableToggle': '允许使用该服务器',
   'server.disabledTag': '已停用',
 
   // runtime status + connection actions

@@ -33,16 +33,16 @@ import {
 import { canonicalCwd, workspaceIdOf } from '../../src/workspace.js'
 
 describe('isEnabled', () => {
-  it('defaults on when no record exists (new servers and workspaces)', () => {
-    expect(isEnabled({}, 'ws-a', 'files')).toBe(true)
-    expect(isEnabled({ 'ws-other': { files: true } }, 'ws-a', 'files')).toBe(true)
-    expect(isEnabled({ 'ws-a': {} }, 'ws-a', 'files')).toBe(true)
+  it('defaults off when no record exists (new servers and workspaces)', () => {
+    expect(isEnabled({}, 'ws-a', 'files')).toBe(false)
+    expect(isEnabled({ 'ws-other': { files: true } }, 'ws-a', 'files')).toBe(false)
+    expect(isEnabled({ 'ws-a': {} }, 'ws-a', 'files')).toBe(false)
   })
 
-  it('turns off only when overrides[w][s] === true', () => {
-    expect(isEnabled({ 'ws-a': { files: true } }, 'ws-a', 'files')).toBe(false)
-    // Another server in the same workspace stays on.
-    expect(isEnabled({ 'ws-a': { files: true } }, 'ws-a', 'git')).toBe(true)
+  it('turns on only when overrides[w][s] has an own record', () => {
+    expect(isEnabled({ 'ws-a': { files: true } }, 'ws-a', 'files')).toBe(true)
+    // Another server in the same workspace stays off by default.
+    expect(isEnabled({ 'ws-a': { files: true } }, 'ws-a', 'git')).toBe(false)
   })
 })
 
@@ -251,15 +251,15 @@ describe('own-property override semantics (pre-release F1)', () => {
     for (const name of names) out[name] = true
     return out
   }
-  it('a serverName colliding with an Object.prototype member stays default-on until its own row exists', () => {
-    expect(isEnabled({}, 'ws-a', 'toString')).toBe(true)
-    expect(isEnabled({ 'ws-other': row('toString') }, 'ws-a', 'toString')).toBe(true)
-    // Own record present => off; another member of the same row is unaffected.
-    expect(isEnabled({ 'ws-a': row('toString') }, 'ws-a', 'toString')).toBe(false)
-    expect(isEnabled({ 'ws-a': row('toString') }, 'ws-a', 'valueOf')).toBe(true)
+  it('a serverName colliding with an Object.prototype member stays default-off until its own row exists', () => {
+    expect(isEnabled({}, 'ws-a', 'toString')).toBe(false)
+    expect(isEnabled({ 'ws-other': row('toString') }, 'ws-a', 'toString')).toBe(false)
+    // Own record present => on; another member of the same row is unaffected.
+    expect(isEnabled({ 'ws-a': row('toString') }, 'ws-a', 'toString')).toBe(true)
+    expect(isEnabled({ 'ws-a': row('toString') }, 'ws-a', 'valueOf')).toBe(false)
     // valueOf must not read the inherited member either.
-    expect(isEnabled({ 'ws-a': row('valueOf') }, 'ws-a', 'valueOf')).toBe(false)
-    expect(isEnabled({ 'ws-a': row() }, 'ws-a', 'toString')).toBe(true)
+    expect(isEnabled({ 'ws-a': row('valueOf') }, 'ws-a', 'valueOf')).toBe(true)
+    expect(isEnabled({ 'ws-a': row() }, 'ws-a', 'toString')).toBe(false)
   })
 })
 

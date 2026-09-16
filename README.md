@@ -13,10 +13,12 @@ tools.
 - **Settings-native management.** *Settings → MCP servers* (`MCP 服务器`) adds,
   edits and removes servers; no `cordis.patch.yml` editing and no instance
   restart to change what runs.
-- **Per-workspace tool scopes.** Each server is on by default in every
-  workspace of the instance; switching one off removes
-  `mcp__<serverName>__*` from that workspace's model-visible tool set at the
-  injection layer — not merely at execution time.
+- **Per-workspace tool scopes, off by default.** A server reaches a
+  workspace's model-visible tool set only after that workspace is explicitly
+  enabled for it — a new server, a new workspace and a fresh session carry no
+  MCP tools until then — and switching it off removes
+  `mcp__<serverName>__*` from that workspace's sessions at the injection layer,
+  not merely at execution time.
 - **Credential refs, not secrets.** The settings document stores ref names
   only; values are write-only, live in the dsh credentials domain, and never
   ride a settings document, an API response or a log line.
@@ -82,10 +84,10 @@ What the install does:
      row's value input is write-only.
    - **Streamable HTTP** — URL and header rows (name + write-only credential
      ref).
-2. A new server is **on by default in every workspace** of this dsh. The card
-   lists the **exceptions** only: the workspaces explicitly switched off, or one
-   "all N workspaces are on by default" line when there are none. **Manage
-   exceptions (N)** reveals every workspace row — switching one off drops
+2. A new server is **off in every workspace** of this dsh; the card lists the
+   **enabled** workspaces only — the ones explicitly switched on — or one
+   "all N workspaces are off by default" line when there are none. **Manage
+   workspaces (N on)** reveals every workspace row — switching one on/off drops
    `mcp__<serverName>__*` from that workspace's sessions — plus **All on /
    All off** once more than one workspace exists. The switch beside the server
    name is the **global** enable: a disabled server is not started and exposes no
@@ -183,7 +185,7 @@ mcp-scope:
       headers:
         - name: Authorization
           ref: GITHUB_TOKEN       # a credential REF, never a value
-  overrides:                      # presence = that workspace is OFF (default on)
+  overrides:                      # presence = that workspace is ON (default off)
     ws-2f1c:
       github: true
 ```
@@ -307,10 +309,10 @@ through its own settings namespace and per-agent tool scopes (`docs/design.md`).
 ```sh
 npm install            # dev deps (all @deepseek-ai/* pinned to one dsh generation)
 npm run typecheck      # src + tests
-npm test               # vitest suite (412 tests, 24 files)
+npm test               # vitest suite (452 tests, 24 files)
 npm run check          # full gate: typecheck + tests + build + package verify
 npm run verify:package # pack → contents whitelist → consumer d.ts → built host entry import → bundle purity → MCP-row artifact check → determinism
-npm run verify:client-artifact # drive the BUILT client bundle in jsdom (MCP row + injected-tools notice registration/render/expand)
+npm run verify:client-artifact # drive the BUILT client bundle in jsdom (MCP row + registered-tools notice registration/render/expand, incl. the PTC prompt-only source)
 npm run pack:tgz       # build + .smoke/dsh-chamber-mcp-<ver>.tgz
 npm run test:smoke     # live M0/M1 smoke (needs the chamber-anchored dsh CLI; see docs/RELEASE.md)
 npm run verify:workflows # action pins + release-structure invariants

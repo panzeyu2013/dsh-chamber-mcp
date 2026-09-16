@@ -42,33 +42,44 @@ describe('locales: en/zh parity', () => {
     expect(zh['add.commandUserHint']).toContain('该命令将以此 dsh 实例的用户身份直接执行。')
   })
 
-  it('keeps exactly ONE workspace default-on sentence', () => {
+  it('keeps exactly ONE workspace default-off sentence', () => {
     const enDict = en as Record<string, string>
     const zhDict = zh as Record<string, string>
-    // The single kept sentence lives on the server card / exceptions panel.
-    expect(enDict['server.defaultOn']).toBeDefined()
-    expect(zhDict['server.defaultOn']).toBeDefined()
-    // Its duplicate is gone from both halves (the meaning moved into the panel).
+    // The single kept sentence lives on the server card / workspace panel: the
+    // default flipped OFF, so this is the only server-level default sentence.
+    expect(enDict['server.defaultOff']).toBeDefined()
+    expect(zhDict['server.defaultOff']).toBeDefined()
+    // The old default-ON sentence and its duplicate are gone from both halves.
+    expect(enDict['server.defaultOn']).toBeUndefined()
+    expect(zhDict['server.defaultOn']).toBeUndefined()
     expect(enDict['server.newWorkspaceDefault']).toBeUndefined()
     expect(zhDict['server.newWorkspaceDefault']).toBeUndefined()
   })
 
-  it('carries the card-retry, stale-banner and exceptions-panel copy in both locales', () => {
+  it('carries the card-retry, stale-banner and default-off panel copy in both locales', () => {
     expect(zh['runtime.stale']).toBe('状态可能过期')
     expect(en['runtime.stale'].length).toBeGreaterThan(0)
     expect(en['action.retry']).toBe('Retry')
     expect(zh['action.retry']).toBe('重试')
+    // The manage control counts the ENABLED workspaces; both labels are new.
+    expect(en['row.manage']).toContain('Manage workspaces')
     expect(en['row.manage']).toContain('{count}')
-    expect(zh['row.manage']).toContain('管理例外')
+    expect(zh['row.manage']).toContain('管理 workspace')
+    expect(zh['row.manage']).toContain('{count}')
     expect(en['row.manageHide'].length).toBeGreaterThan(0)
-    // The all-on summary is a plural pair with the same placeholder order.
-    expect(countKey('row.allOnDefault', 1)).toBe('row.allOnDefault.one')
-    expect(countKey('row.allOnDefault', 2)).toBe('row.allOnDefault.other')
-    expect(placeholdersOf(en['row.allOnDefault.one'])).toEqual(placeholdersOf(zh['row.allOnDefault.one']))
-    expect(placeholdersOf(en['row.allOnDefault.other'])).toEqual(placeholdersOf(zh['row.allOnDefault.other']))
+    // The enable switch and the panel hint are the default-off copy surface.
+    expect(en['server.enableToggle']).toBe('Allow server')
+    expect(zh['server.enableToggle']).toBe('允许使用该服务器')
+    expect(en['server.defaultOff'].length).toBeGreaterThan(0)
+    expect(zh['server.defaultOff'].length).toBeGreaterThan(0)
+    // The all-off summary is a plural pair with the same placeholder order.
+    expect(countKey('row.allOffDefault', 1)).toBe('row.allOffDefault.one')
+    expect(countKey('row.allOffDefault', 2)).toBe('row.allOffDefault.other')
+    expect(placeholdersOf(en['row.allOffDefault.one'])).toEqual(placeholdersOf(zh['row.allOffDefault.one']))
+    expect(placeholdersOf(en['row.allOffDefault.other'])).toEqual(placeholdersOf(zh['row.allOffDefault.other']))
     // The singular copy must be its own sentence (a single-workspace user sees
   // exactly this line) while keeping the placeholder contract.
-  expect(placeholdersOf(zh['row.allOnDefault.one'])).toEqual(['count'])
-  expect(zh['row.allOnDefault.one']).not.toBe(zh['row.allOnDefault.other'])
+  expect(placeholdersOf(zh['row.allOffDefault.one'])).toEqual(['count'])
+  expect(zh['row.allOffDefault.one']).not.toBe(zh['row.allOffDefault.other'])
   })
 })

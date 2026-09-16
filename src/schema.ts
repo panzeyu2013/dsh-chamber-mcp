@@ -55,7 +55,8 @@ export const ServerSchema: z<ServerDef> = z.union([
 /**
  * The settings namespace document schema: `servers` (stable identity =
  * serverName) plus `overrides` — dict-of-dicts of `true`, presence meaning an
- * explicit per-workspace OFF switch (default on).
+ * explicit per-workspace ENABLE (the default is off, so a configured server
+ * reaches no agent until a workspace turns it on).
  */
 export const DocumentSchema: z<McpScopeDoc> = z.object({
   servers: z.array(ServerSchema).default([]),

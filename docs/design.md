@@ -49,15 +49,17 @@ credential refs) are removed by hand.
 // resolved: schema defaults ← composition base {} ← user layer (settings.yaml "mcp-scope:")
 servers: ServerDef[]        // serverName is the stable identity; timeoutMs optional
 disabled: { [serverName]: true }                       // presence = globally OFF (0.0.3)
-overrides: { [workspaceId]: { [serverName]: true } }   // presence = explicitly OFF
+overrides: { [workspaceId]: { [serverName]: true } }   // presence = explicitly ON
 ```
 Deviations from the plan's shorthand (same semantics, documented in docs/acceptance.md):
 (a) `overrides[w]` stored as dict-of-dicts so a toggle is one atomic path op
 `set/unset ['overrides', w, s]`; (b) http headers stored as `{ name, ref }` pairs —
 values always come from the credentials domain (a bare env-style name cannot be a
-header name). Semantics preserved: **enabled(w,s) = the override row has no OWN
-property `s` (`Object.hasOwn`)** — prototype-member server names must keep working;
-new servers/workspaces default on; no record = default.
+header name). Semantics: **enabled(w,s) = the override row has an OWN property `s`
+(`Object.hasOwn`)** — prototype-member server names must keep working. The default
+is OFF: a new server, a new workspace and a fresh session register no MCP tools
+until the user enables the pair, so opening a session never silently exposes a
+configured server to its agent.
 
 ```ts
 ServerDef =
@@ -172,10 +174,10 @@ comments, anchors and formatting survive on untouched nodes.
 | `src/routes.ts` | 0.0.3 runtime routes on the Connection carrier: `status` / `action` / `tools` (fixed host codes only; §(d)) |
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index,routes}.spec.ts` | the 8 `tests/host/` suites plus `tests/tools.spec.ts`, all green (10 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`; repo total 412 tests / 24 files) |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index,routes}.spec.ts` | the 8 `tests/host/` suites plus `tests/tools.spec.ts`, all green (10 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`; repo total 452 tests / 24 files) |
 
 Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (412 tests / 24 files).
+`node node_modules/vitest/vitest.mjs run` — both fully green (452 tests / 24 files).
 
 ### (a) API signatures and runtime assumptions
 
@@ -430,11 +432,13 @@ byte-identical (one root-relative request). Version skew is safe in both
 directions: an older host ignores `?server=` and answers the full view, which
 the per-server merge folds correctly.
 
-### (f) Injected-tools notice (conversation lane)
+### (f) Registered-tools notice (conversation lane)
 
-The plugin deliberately injects no PROSE into the model context, so nothing in
-the conversation showed that MCP tools are part of a session's context. The
-notice closes that gap with the platform's own seams rather than a new channel:
+The plugin registers MCP tools into an agent's scope and deliberately injects no
+PROSE into the model context, so nothing in the conversation told the user which
+servers and tools had been registered. This notice closes that gap as a UI hint
+— derived, never written — through the platform's own seams rather than a new
+channel:
 
 - **Why nothing is written**: a private session event is required-on-read. The
   persisted envelope's `ignorable?: true` marker is the only admission a reader
@@ -447,16 +451,28 @@ notice closes that gap with the platform's own seams rather than a new channel:
   therefore made the session unreadable to every reader, the writing harness
   included. Upstream rationale:
   `.agents/notes/implemented/architecture/2026-08-30-retain-ignorable-external-session-events.md`.
-- **Source**: the harness's own `request/header` events. `header.tools` is the
-  complete model-facing tool array of that request, so the `mcp__…` names in it
-  are exactly the tools this plugin injected for it: the row shows what the model
-  actually received, survives a reload, and costs the session log nothing. Under
-  a `ptc` agent preset the header lists only `run_code` (the MCP names live
-  inside the dispatched program), so that preset shows no notice — the row
-  reports model-facing tool schemas, and that request carries none.
-  `src/client/injection.ts` owns the projection (grouped by
-  longest-configured-prefix ownership, the same rule the tool-row lane uses) and
-  the defensive payload reader.
+- **Source**: the two model-facing shapes ONE request can carry MCP tools in,
+  both read from the harness's own events — the union is the registered set,
+  whichever presentation produced it. `request/header.tools` is the tool array
+  of a NATIVE presentation, so its `mcp__…` names are what that request's tools
+  field carried; the rendered system prompt (via the Chat lane's own
+  `system-message` Context, the same lookup its `request-prompt` definition
+  performs) is where a `ptc` presentation declares the same tools, because under
+  `ptc` the header lists only `run_code`. The row is therefore truthful (it
+  names every MCP tool the request exposed), durable (it survives a reload from
+  the stored log), and costs the session log nothing.
+  `src/client/injection.ts` owns the extraction (the `mcp__` contract's own
+  `[A-Za-z0-9_-]` alphabet, maximal run after the prefix — a public name is never
+  split), the projection (grouped by longest-configured-prefix ownership, the
+  same rule the tool-row lane uses, treated as a SET so a `both` presentation
+  cannot double count) and the defensive payload reader; it carries the public
+  NAMES each server contributed, not only the counts, bounded per server by
+  `INJECTION_NAME_LIMIT` (256 — the transcript lane's own cap) with the
+  remainder reported in the expanded body.
+  With MCP OFF by default (§3), a session whose workspaces enable nothing
+  exposes no MCP names, so the notice renders NO row there by design: the
+  settings section is the surface that reports the off state, and the row appears
+  the first time a request carries registered tools.
 - **One row per CHANGED set**: `src/client/injection-row.tsx` registers a
   `ConversationNodeDefinition` on `ctx.uiConversation.events` — the same seam the
   Chat lane's own `request-prompt` definition uses for `request/header`. Every
@@ -464,11 +480,28 @@ notice closes that gap with the platform's own seams rather than a new channel:
   produce a second `start` for one id; `start` compares its set against the
   nearest predecessor Context of this kind, so a re-sync with the same tools
   renders no node while a real change adds one line where it took effect.
-- **Render**: the keyed `conversation.chat.node` seat renders the shipped
-  `McpPlugIcon`, the localized title, per-server counts and the tool total, just
-  before the header event's own position. Registration is behind a nested
-  `ctx.inject(['uiConversation'])`, so a host without that service stays fully
-  functional; malformed payloads render nothing instead of an error.
+- **Render**: one disclosure row in the shipped conversation-row chrome — the
+  form the system-prompt card and the injected-context rows use: a 24px head
+  with the plugin's own plug glyph, a hover/open chevron swap, the localized
+  title, the per-server counts and the tool total, expanding (click, or
+  Enter/Space) into the shipped 141px code-block scrollport that lists each
+  server and its public tool names. No shipped component is imported — the
+  built client bundle may require nothing but react — so the geometry is
+  reproduced in `src/client/styles.ts` against the same `--dsw-*` tokens, and it
+  scales like the shipped rows do: the head, leading box and glyph add
+  `--dsh-content-font-delta` and the labels defer to
+  `--dsh-content-font-size-secondary`, so a non-default content-font setting
+  cannot knock the row out of line with the cards next to it. The
+  row is positioned as a header for the model-facing input that follows it: a
+  hair BEFORE the system-prompt card that opens the request's step (mirroring the
+  anchor the Chat lane's own `request-prompt` definition gives that card — the
+  turn start for a first step, the step start afterwards). The card, the user
+  message and every auto-injected context row follow it, and the header event
+  that names the tools is the LAST event of that assembly; a window with no
+  resolved step location falls back to the header's own neighborhood.
+  Registration is behind a nested `ctx.inject(['uiConversation'])`, so a host
+  without that service stays fully functional; malformed payloads render
+  nothing instead of an error.
 - Two client modules join `dsh.client.inject` for this
   (`dsh-client-ui-chat`, `dsh-client-ui-conversation`).
 
@@ -502,8 +535,9 @@ notice closes that gap with the platform's own seams rather than a new channel:
   there because its module id is generation-dependent. Detail and evidence: §6.
 - Data: `ctx.settingsScope.bind<Doc>({ namespace:'mcp-scope', decode: decodeDoc })` → snapshot
   {status, value, revision, writable}; workspaces via global `useWorkspaces`.
-- Views: server cards (name, transport, "off in N workspaces", edit, remove, per-workspace
-  on/off rows with default-on note), staged Add/Edit form (serverName + transport toggle +
+- Views: server cards (name, transport, "on in N workspaces" / "not on in any
+  workspace", edit, remove, per-workspace enable rows with a default-off note),
+  staged Add/Edit form (serverName + transport toggle +
   command/args list/cwd/env key rows | url/header name+ref rows, secret inputs write-only),
   Save = credentials.set dirty secrets first → `scope.mutate([...ops], expectedRevision)`;
   removal cascades to refs no longer referenced (credentials.unset). Edit reopens the same
@@ -528,11 +562,12 @@ notice closes that gap with the platform's own seams rather than a new channel:
   owns a refresh/retry button (busy while in flight, the failed card promotes
   its Connect action to the accent-filled retry), so one flapping server no
   longer costs a full-table re-read.
-- **Workspace exceptions instead of a row per workspace.** Workspace rows
-  collapse to the OFF (exception) set; with no exceptions the card shows one
-  summary line, and a manage toggle reveals every row with bulk on/off. This is
-  purely local UI state — no settings write — and the default-on sentence now
-  appears exactly once per locale.
+- **Enabled workspaces instead of a row per workspace.** Workspace rows
+  collapse to the ENABLED set; with none enabled the card shows one summary line
+  ("all N workspaces are off by default"), and a manage toggle reveals every row
+  with bulk on/off (the bulk pair appears once more than one workspace exists, §6).
+  This is purely local UI state — no settings write — and the default-off
+  sentence appears exactly once per locale.
 - The staged form gained the enable switch, `timeoutMs`, an unsaved-changes
   guard on every dismissal path, clipboard paste helpers and a single-server
   JSON import (`src/client/import.ts`, pure and unit-tested); the section adds
@@ -563,9 +598,9 @@ Also edited (build-gate fixes, see `docs/RELEASE.md`): `tsconfig.json` (added `D
 
 Two conversation-lane surfaces are easy to conflate: the per-call **MCP tool row**
 (registered per exact wire name through the keyed `tool.call.toolview` slot) and
-the **injected-tools notice** (§5(f), derived from the harness's own
-`request/header` events). The first renders one node per call, the second one
-line per non-empty change — an unchanged or emptied set adds none; neither
+the **registered-tools notice** (§5(f), derived from the request's tool array
+and the rendered system prompt). The first renders one node per call, the second
+one line per non-empty change — an unchanged or emptied set adds none; neither
 writes anything into a session.
 
 One tool call — `src/client/tool-card/row.tsx`, styles in `styles.ts` (`toolHead`
@@ -593,37 +628,85 @@ expanded body is a left-ruled block (`toolBody`): the Input block appears when
 the call carried arguments, and the Output label is always present — a running
 call says Running…, a settled call with no text says No output.
 
-One notice line — `src/client/injection-row.tsx`, styles in `styles.ts`
-(`injectionRow`: one r12 pill on the layer-2 fill):
+One notice row — `src/client/injection-row.tsx`, styles in `styles.ts`
+(`injectionRoot`/`injectionHead`/`injectionBody`: the shipped disclosure-row
+chrome, no pill and no card of its own):
 
 ```
-[plug]   MCP tools injected   zotero (43) · email (18)   61 tools in context
+[plug]   MCP tools registered   zotero (43) · email (18)   61 tools registered
+         expanded (click):
+           zotero (43)
+           mcp__zotero__fetch
+           mcp__zotero__scite_check_retractions
+           …
 ```
+
+The row sits immediately BEFORE the system-prompt card of the request it
+describes: it is a UI hint about what that request registered, not a row of the
+prompt, the request, or the conversation.
+
+A server that listed more than `INJECTION_NAME_LIMIT` (256) tools ends its
+block with the localized `injection.omitted` line naming the remainder; a
+server whose list fits omits nothing.
 
 The strings are the en dictionary (`src/client/locales.ts`: `injection.title`,
 `injection.entry` = `{name} ({count})` joined with `·`, `injection.total` =
-`{count} tools in context`); the plug is the plugin's own `McpPlugIcon`. Rules
-lane derives, each traceable to source:
+`{count} tools registered`, `injection.omitted` for names past the cap); the
+plug and chevron are the plugin's own inline glyphs (`tool-card/icon.tsx`, the
+chevron is the shipped `IconChevronDownOutline14` geometry). Rules lane
+derives, each traceable to source:
 
 - **One Context per `request/header`.** `match()` answers every `request/header`
-  with `{ id: String(seq), role: 'start' }` (`injection-row.tsx:185-189`), so a
+  with `{ id: String(seq), role: 'start' }` (the registered Definition's `match()`
+  in `injection-row.tsx`), so a
   bounded window can never produce a second `start` for one id and every header
   keeps its own row position.
 - **An identical signature is not rendered again.** The signature is the
-  `name:count` key over the name-sorted server list (`injection.ts:102-104`,
-  `:114-116`); `start()` compares it against the nearest predecessor Context of
-  this kind and an unchanged set
-  renders no node (`injection-row.tsx`: `start()` at :190-201, the node built by
-  `buildViewNode()` at :206-231); an empty set has nothing to announce either.
-- **Position.** `anchorSeq = seq + INJECTION_ANCHOR_OFFSET`, and the offset is
-  `-0.1` (`injection-row.tsx:130`, `:198`) — the notice lands immediately before
-  the header event's own row, inside the step whose request carried the tools.
+  `name:count:names` key over the name-sorted server list (the names are part of
+  the key, so a same-count tool swap is still a change); `start()` compares it
+  against the nearest predecessor Context of this kind and an unchanged set
+  renders no node (`buildViewNode()` returns null until the list changes again);
+  an empty set has nothing to announce either.
+- **Position.** `anchorSeq = cardAnchor + INJECTION_CARD_OFFSET` where the card
+  anchor mirrors the official `requestPromptAnchor` (`dsh-client-ui-chat`,
+  `request-prompt.js`) rule for rule, four guards included: an unresolved
+  location, a series whose predecessor left the loaded window (no predecessor AND
+  a reason other than `initial`), and a header repeating its predecessor's
+  turn/step all put the card on the header event itself — the row then follows at
+  `header.seq - 0.1`; otherwise the card sits at `turn.start.seq` for the first
+  step of a turn and at `step.start.seq` afterwards. Copying the whole rule
+  rather than its common branch keeps the row on the card's left in every window
+  shape, ahead of the user message and every auto-injected context row that
+  follow it in seq order.
+- **The node declares a SESSION location, not the request's step.** The Chat lane
+  re-anchors any turn/step-located node sitting before the turn's opening human
+  input onto that input at rank 2 (rendering it after the user message and the
+  collapsed process control) and folds process-window members away in the compact
+  view; a location that is neither turn nor step short-circuits both rules to
+  `{ anchor: anchorSeq, rank: 0 }`. The row is session-scoped by nature, so this
+  is the honest location as well as the one that keeps the hint immediately
+  before the system-prompt card.
+- **Dual source.** `start()` projects the union of the request's tool array
+  (`header.tools`) and the names its effective system prompt declares
+  (`reader.previous('system-message')?.state.effective.text`, the lookup the Chat
+  lane's `request-prompt` definition itself performs). Under a `ptc` preset the
+  header carries only `run_code` and the SDK section carries the names; under
+  `native` the prompt declares none. Extraction uses the `mcp__` contract's own
+  `[A-Za-z0-9_-]` alphabet, never splits a name into server/tool parts, and takes
+  only DECLARATION positions — the `name:` member the TypeScript renderer emits
+  and the `async def name(` / `# tools["name"](…)` forms the Python one does — so
+  a tool description (rendered into the same block as a JSDoc line) that merely
+  mentions another tool's name is not read as a registration. A name is reported
+  only when a CONFIGURED server owns it: the tool-row lane deliberately falls
+  back to the first `__` boundary for historical calls, but a registration with
+  no configured owner would claim a server that does not exist.
 - **Materialised rows are only hidden, never withdrawn.** A later evaluation can
   flip a Context to unchanged or empty (a prepended history page supplies the
   predecessor, or a live settings edit re-shapes server ownership); it then
   re-emits the same key with `visibility: 'hidden'` instead of returning null,
   because the engine rejects a definition that withdraws a materialized target
-  (`injection-row.tsx:206-231`).
+  (the materialized check and the hidden re-emission in `buildViewNode()`,
+  `injection-row.tsx`, `buildViewNode()`).
 
 ## 7. Browser half — type and runtime contracts
 
@@ -875,19 +958,20 @@ slots, never replacing the shell.
 │ search_issues — Search issues                              │
 │ 共 120 个工具，显示前 2 个。                                │
 └────────────────────────────────────────────────────────────┘
-工作区例外：[管理例外（2）]                                  ← 折叠态
-  · alpha (switch) 关闭            ← 只列显式关闭的 workspace
-  · 全部 3 个 workspace 默认开启   ← 无例外时的单行摘要
+管理 workspace：[管理 workspace（已开启 1）]                  ← 折叠态
+  · alpha (switch) 开启            ← 只列显式开启的 workspace
+  · 全部 3 个 workspace 默认关闭   ← 无显式开启时的单行摘要
 npx -y @modelcontextprotocol/server-github                   ← 定义
 工作目录：/srv/github
 Authorization  AUTH_TOKEN  已配置  [清除]                    ← 凭据徽标
 ```
 
-**管理例外（N）** is local UI state and never writes the settings document:
-expanding it replaces the exception block with every workspace row plus
+**管理 workspace（N）** is local UI state and never writes the settings document:
+expanding it replaces the enabled block with every workspace row plus
 **全部开启 / 全部关闭** (only when more than one workspace exists) and the
-"新建 workspace 默认开启" note. A single-workspace dsh reaches its only row the
-same way — a collapsed view would otherwise hide the only off-switch. Cards are
+"默认关闭：仅在下面显式开启的 workspace 中注入工具" note. A single-workspace dsh
+reaches its only row the same way — a collapsed view would otherwise hide the only
+switch, and MCP is off until it is flipped. Cards are
 listed in document order; an open add/edit form renders above the list; removing
 a server replaces the action row with the confirmation until it is confirmed or
 cancelled.
@@ -917,14 +1001,15 @@ so the figure is read for shape, not detail.
 
 | Difference | Resolution |
 |---|---|
-| Per-card refresh, the per-card refresh-failure row, the stale-while-revalidate banner and the collapsed workspace-exception block (the figure draws every workspace row; §6 collapses them to the exception set) are not drawn — all 0.0.4 additions. | The figure lags; the version note on the figure says so. The controls stay as shipped (§6). |
-| The figure gives `stopped`/`unknown` no runtime action, while the code renders **Connect** for every **enabled** server the host reports a runtime view for — the `stopped` and `unknown` phases included, and `unknown` is what a configured server with no live handle reports (`manager.ts:452-461`) — with the accent-filled primary reserved for `failed`. | Keep the code; the figure's `disabled` clause is the one that holds: a disabled server also reports a view (`manager.ts:434-441`), but `server-card.tsx:589-592` gates Connect/Disconnect (and `:619`, `:629` Test/Tools) on `!globallyDisabled`. A genuinely missing runtime view drops only those three runtime controls (`runtime !== undefined`); the card keeps its head switch, per-card refresh and Edit/Remove. |
+| Per-card refresh, the per-card refresh-failure row, the stale-while-revalidate banner and the collapsed workspace block (the figure draws every workspace row; §6 collapses them to the ENABLED set, and to one off-by-default line when nothing is enabled) are not drawn — all 0.0.4 additions. | The figure lags; the version note on the figure says so. The controls stay as shipped (§6). |
+| The figure gives `stopped`/`unknown` no runtime action, while the code renders **Connect** for every **enabled** server the host reports a runtime view for — the `stopped` and `unknown` phases included, and `unknown` is what a configured server with no live handle reports (`manager.ts:452-461`) — with the accent-filled primary reserved for `failed`. | Keep the code; the figure's `disabled` clause is the one that holds: a disabled server also reports a view (`manager.ts:434-441`), but `server-card.tsx:598-601` gates Connect/Disconnect (and `:628` Test) on `!globallyDisabled` (the Tools control at `:638` is gated on a loaded view with `runtime.toolCount > 0` instead). A genuinely missing runtime view drops only those three runtime controls (`runtime !== undefined`); the card keeps its head switch, per-card refresh and Edit/Remove. |
 | The figure draws a dot inside the credential badge; the code uses a tone plus text. | Keep the code — the badge is a Tag pill, not a status row. |
 | The figure puts a check mark on the success notice; the code uses plain `role=status` text. | Keep the code. |
 | Card radius r14 and padding `12px 14px` (`.mcpScope_card` in `styles.ts`; §9.3's r14 is the Button capsule, not the card) versus the figure's drawn max r12 — and the figure's own metric caption names r16 / `12 16 14`. | Keep the code; the figure is indicative. |
 | The tool panel in the figure carries a "first 2 of 120" label (`共 120 个工具，显示前 2 个。`), which reads as always-on. | The label is illustrative: the code renders exactly the host's list and adds the same hint (`tools.truncated`) only when the HOST truncates — `manager.ts` caps the list at 200 (`capToolList`), and `server-card.tsx` renders the hint. Keep the code. |
 | The figure draws the import dialog in a side panel beside the staged form (annotated `role=dialog`). | Keep the code — the import opens inline inside the staged form, between the import button and the fields; the panel is a side rail in the figure only for legibility. |
 | The figure draws a global **刷新状态** button in both of its section-header views; the code removed it — each card refreshes its own server, the section re-reads the runtime snapshot per document revision and polls every 5 s while visible, and a failed full refresh surfaces the stale banner whose **重试** re-runs it. | Keep the code. |
+| The figure labels the workspace rows **默认开启，除非在此关闭** / **新建 workspace 默认开启** and its summary reads **Off in 2 workspaces** (the 0.0.3 baseline, where every workspace had MCP on until it was switched off). The 0.0.4 line inverts that contract: MCP is OFF until a workspace explicitly enables the pair, the collapsed card lists the ENABLED workspaces, the manage button reads **Manage workspaces (N on)** and the summary line reads **全部 N 个 workspace 默认关闭**. | Keep the code — the figure keeps its 0.0.3-baseline caption, and this row is the recorded decision. The figure's geometry (a card head, a workspace block and a manage toggle) is unchanged. |
 
-The two session lanes (the MCP tool-call transcript and the injected-tools
+The two session lanes (the MCP tool-call transcript and the registered-tools
 notice) are not part of that wireframe; their contract lives in §5(f) and §6.

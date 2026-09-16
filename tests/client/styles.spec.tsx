@@ -72,6 +72,9 @@ const THEME_TOKENS = new Set([
   '--dsw-alias-label-primary-foreground',
   '--dsw-alias-label-secondary',
   '--dsw-alias-label-tertiary',
+  // The expanded notice body is the shipped code-block scrollport; the theme
+  // bundle declares this fill (verified like the accent entries above).
+  '--dsw-alias-markdown-code-block',
   '--dsw-alias-state-business-primary',
   '--dsw-alias-state-error-primary',
   '--dsw-alias-state-success-primary',
@@ -243,9 +246,9 @@ describe('mcp-scope stylesheet', () => {
         '.mcpScope_choiceInput:focus-visible + .mcpScope_choicePill',
         '.mcpScope_focusRing:focus-visible',
         '.mcpScope_iconButton:focus-visible',
-        // the injected-tools notice: its glyph is the plugin's identity mark, so
-        // it carries the accent while the row text stays monochrome
-        '.mcpScope_injectionIcon',
+        // the registered-tools notice is a shipped-chrome disclosure row: only
+        // its keyboard focus ring spends the accent, like every other control
+        '.mcpScope_injectionHead:focus-visible',
         '.mcpScope_input:focus',
         '.mcpScope_linkButton:focus-visible',
         '.mcpScope_switchInput:checked + .mcpScope_switch',
@@ -264,6 +267,28 @@ describe('mcp-scope stylesheet', () => {
     expect([...exported].filter((name) => !styled.has(name))).toEqual([]) // no unstyled class
     expect(cx(styles.card, false, undefined, styles.button)).toBe(`${styles.card} ${styles.button}`)
     expect(cx()).toBe('')
+  })
+
+  it('scales the notice chrome with the shipped content-font variables', () => {
+    // The shipped disclosure rows size themselves as
+    // `calc(<px> + var(--dsh-content-font-delta, 0px))` and defer their label to
+    // `--dsh-content-font-size-secondary`; a hardcoded px row stops lining up
+    // with the adjacent cards as soon as the content font changes.
+    const ruleOf = (selector: string): string => {
+      const rule = rules(css).find((candidate) => candidate.selector === selector)
+      if (rule === undefined) throw new Error(`no rule for ${selector}`)
+      return rule.body
+    }
+    const has = (selector: string, fragment: string): void => {
+      expect(ruleOf(selector), selector + ' must declare ' + fragment).toContain(fragment)
+    }
+    has('.mcpScope_injectionHead', 'height: calc(24px + var(--dsh-content-font-delta, 0px))')
+    has('.mcpScope_injectionLeading', 'width: calc(16px + var(--dsh-content-font-delta, 0px))')
+    has('.mcpScope_injectionLeading svg', 'width: calc(14px + var(--dsh-content-font-delta, 0px))')
+    has('.mcpScope_injectionTitle', 'font-size: var(--dsh-content-font-size-secondary, 13px)')
+    // The body keeps the shipped fixed 11/16 metrics and its 22px indent.
+    has('.mcpScope_injectionBody', 'max-height: 141px')
+    has('.mcpScope_injectionBody', 'margin: 4px 0 0 calc(22px + var(--dsh-content-font-delta, 0px))')
   })
 
   it('keeps the layout guards that stop hostile content from widening the column', () => {

@@ -146,13 +146,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Workspace exceptions panel (browser half).** A card now lists only the
-  EXCEPTIONS — the workspaces explicitly switched off — or one "all N workspaces
-  are on by default" line when there are none, and a **Manage exceptions (N)**
-  toggle reveals every row plus **All on / All off** (once more than one
-  workspace exists) and the default-on note. The toggle is local UI state and
-  never writes the settings document, and a single-workspace dsh reaches its only
-  row through it instead of having it hidden.
+- **Workspace switching panel (browser half).** A card lists only the
+  workspaces whose state differs from the default — under the default-OFF
+  contract below that is the ENABLED set, or one "all N workspaces are off by
+  default" line when there are none — and a **Manage workspaces (N on)** toggle
+  reveals every row plus **All on / All off** (once more than one workspace
+  exists) and the default-off note. The toggle is local UI state and never writes
+  the settings document, and a single-workspace dsh reaches its only row through
+  it instead of having it hidden.
 - **Per-server runtime refresh.** `GET /api/mcp-scope.status?server=NAME`
   projects a single server (an invalid name keeps the existing `400`
   `bad-request` envelope, an unknown name answers `ok:true` with an empty list,
@@ -171,15 +172,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is where those names actually appear. (The model context itself was never
   missing them: the session's system message carries all `mcp__…` bindings.)
 
-- **Injected-tools notice in the conversation (one row per changed set).** A
-  session now shows that MCP tools are part of its context without the user
-  having to call one first — `MCP tools injected · zotero (43) · email (18)`
-  plus the tool total, with the shipped plug glyph. The row is DERIVED from the
-  harness's own `request/header` events (`header.tools` is the complete
-  model-facing tool array of that request), so it reports exactly what that
-  request carried, survives a reload and writes nothing into the session (under
-  a `ptc` agent preset the header lists only `run_code`, so no notice appears
-  there).
+- **Registered-tools notice in the conversation (one row per changed set).** A
+  session now shows which MCP tools were registered without the user having to
+  call one first — `MCP tools registered · zotero (43) · email (18)` plus the
+  tool total, with the shipped plug glyph. The row is DERIVED client-side (see
+  the Changed entry below for the two sources it unions: the request's tool array
+  and the names the rendered system prompt declares), so it reports what the
+  request exposed, survives a reload and writes nothing into the session.
   `src/client/injection-row.tsx` rides the official seams the shipped lanes
   use — `ctx.uiConversation.events.register` (the seam the Chat lane's own
   `request-prompt` definition uses for the same event type) and the keyed
@@ -189,6 +188,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps working and simply shows no row (a malformed payload renders nothing).
 
 ### Changed
+
+- **MCP is now OFF by default in every session.** Enablement used to be
+  default-ON: every workspace had every configured server until it was switched
+  off there. The contract is inverted — `overrides[workspaceId][serverName]`
+  now records an explicit ENABLE (presence = on, absence = off) — so a new
+  server, a new workspace and a fresh session register no tools until the user
+  turns the pair on. The global switch stays a hard kill
+  (`disabled[serverName]`, unoverridable by any workspace enable), the per-card
+  bulk actions stay one mutation for all workspaces, and the browser half
+  follows: the collapsed card lists the ENABLED workspaces and says "not on in
+  any workspace" when there are none, the manage toggle is **Manage
+  workspaces (N on)**, and the note under the rows is **off by default — enable
+  it in the workspaces you want**.
+- **BREAKING: a pre-0.0.4 document's records change meaning — deliberately,
+  with no migration.** Under the released contract `overrides[w][s] = true`
+  meant "off in w"; it now means "on in w", and absence (previously on) is the
+  new off. Compatibility is explicitly NOT preserved: the maintainer accepts the
+  one-time inversion, so no marker, decoder migration or one-time write ships.
+  Consequence for anyone upgrading: pairs that were explicitly switched OFF in
+  v0.0.1–v0.0.3 are now ENABLED, and everything else goes off — re-check every
+  workspace switch after upgrading. A document with no `overrides` rows, or an
+  empty one, needs nothing (everything simply starts off).
+- **The injected-tools notice is now a registered-tools row above the system
+  prompt.** The conversation-lane notice reported "tools in context" from the
+  request header alone, so it said nothing under a `ptc` agent preset (whose
+  header carries only `run_code`) and rendered as a standalone r12 pill that
+  read as a foreign element next to the system-prompt card. It now reports what
+  the request REGISTERED, from both model-facing shapes the harness emits: the
+  request tool array (`header.tools`) and the names the rendered system prompt
+  declares (the generated SDK section a `ptc` presentation writes them into,
+  read through the Chat lane's own `system-message` Context). Extraction uses
+  the `mcp__` contract's own `[A-Za-z0-9_-]` alphabet — `-` included, since a
+  server or tool name may carry one — and treats the two sources as a set. Only
+  DECLARATION positions in the prompt count (the TypeScript `name:` member and
+  the Python `async def name(` / `# tools["name"](…)` forms), so a tool
+  description that mentions a name is not read as a registration, and a name is
+  reported only when a CONFIGURED server owns it. The
+  row itself follows the shipped conversation rows rule for rule: one 24px
+  disclosure line with the plugin's plug glyph, a hover/open chevron swap, the
+  13px secondary title, the server summary and the tool total, expanding by
+  click or Enter/Space into the shipped 141px code-block scrollport, which
+  lists each owning server's public `mcp__…` names (bounded per server by
+  `INJECTION_NAME_LIMIT`, 256, with the remainder reported). Its change
+  signature keys on the names, so a same-count tool swap is a real change. It
+  is anchored a hair BEFORE the system-prompt card that opens the request's
+  step — mirroring the official `requestPromptAnchor` rule for rule, its four
+  guards included, so a resumed window or a repeated step cannot send the row to
+  the top of the window — so it reads as a
+  header for the model-facing input that follows, and the previous
+  `header.seq - 0.1` position survives only as the fallback for a window that
+  resolves no step. The row's node carries a session-level location on purpose:
+  the Chat lane re-anchors any turn/step-located node sitting before the turn's
+  opening human input onto that input (which would land it after the user
+  message) and folds process-window members away in the compact view, while a
+  location that is neither turn nor step short-circuits both rules. Still nothing is written into a session: the row is derived
+  client-side, no shipped component is imported (the built client bundle still
+  requires only react/react/jsx-runtime), and `verify-client-artifact` drives
+  the collapsed row, the click expansion, the named tool list and the PTC
+  prompt-only derivation in the packed bundle.
 
 - **Verification hardening (release gates).** `verify:package` now builds
   explicitly before packing (some pack paths skip the `prepack` hook, which
@@ -200,7 +258,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real body (`gh release view` / `gh release delete` / `exit 1`), the
   dry-run skip on both release-mutation steps, a `# vX.Y.Z` comment on every
   SHA pin, and both step names for the gate-before-mutation ordering.
-  `verify-client-artifact` drives the injected-tools notice lane in the packed
+  `verify-client-artifact` drives the registered-tools notice lane in the packed
   bundle (definition, match rule, keyed view and a rendered row), so a dropped
   registration fails the release gate instead of passing silently.
 
@@ -215,7 +273,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries its version note (0.0.3 baseline; the 0.0.4 increments are not drawn),
   `docs/design.md` gains *Differences from the wireframe* — the seven decided
   figure-vs-code gaps, each resolved in the code's favour — and *The two lanes
-  at a glance*, the tool-row and injected-tools-notice anatomy with the rules the
+  at a glance*, the tool-row and registered-tools-notice anatomy with the rules the
   lane derives. The glyph comment no longer claims the shipped set is authored
   on a 24-unit canvas (its marks are mostly 14/16-unit filled paths) or that the
   chevron already followed the shipped rows.

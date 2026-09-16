@@ -77,12 +77,20 @@ export interface StreamableHttpServerDef {
 
 export type ServerDef = StdioServerDef | StreamableHttpServerDef
 
-/** Per-workspace explicit off-switches: overrides[w][serverName] === true ⇔ off. */
+/**
+ * Per-workspace explicit ENABLES: `overrides[w][serverName] === true` ⇔ that
+ * server is ON in that workspace. ABSENCE is the default, and the default is
+ * OFF: a new server, a new workspace and a fresh session register no MCP tools
+ * until the user turns them on. The record's PRESENCE is the signal (the value
+ * stays `true`) so the dict-of-dicts shape keeps one switch = one atomic path
+ * op (`set/unset ['overrides', w, serverName]`).
+ */
 export type WorkspaceOverrides = Record<string, Record<string, true>>
 
 /**
  * Explicit global off-switches, keyed by serverName: presence (own property)
- * of `true` ⇔ that server is disabled everywhere. Like `overrides`, this is a
+ * of `true` ⇔ that server is disabled everywhere (a hard kill that no
+ * workspace enable can override). Like `overrides`, this is a
  * dict-of-dicts-shaped sparse map so one switch is ONE atomic path op
  * (`set/unset ['disabled', serverName]`) instead of a whole-array rewrite.
  */
@@ -118,21 +126,25 @@ export const EMPTY_DOC: McpScopeDoc = Object.freeze({
 }) as unknown as McpScopeDoc
 
 /**
- * Default-on evaluation: no record ⇒ enabled (new servers & workspaces on).
- * Presence is OWN-property presence: rows are plain objects and a serverName
- * that collides with an Object.prototype member (e.g. `toString`) must never
- * read as an inherited "off" record (pre-release F1).
+ * Default-OFF evaluation: only an explicit per-workspace record enables a
+ * server, so a new server, a new workspace and a fresh session all start with
+ * no MCP tools registered until the user turns them on. Presence is OWN-property
+ * presence: rows are plain objects and a serverName that collides with an
+ * Object.prototype member (e.g. `toString`) must never read as an inherited
+ * "enabled" record (pre-release F1).
  */
 export function isEnabled(overrides: WorkspaceOverrides, workspaceId: string, serverName: string): boolean {
-  if (!Object.hasOwn(overrides, workspaceId)) return true
+  if (!Object.hasOwn(overrides, workspaceId)) return false
   const row = overrides[workspaceId]
-  return row === null || typeof row !== 'object' || !Object.hasOwn(row, serverName)
+  return row !== null && typeof row === 'object' && Object.hasOwn(row, serverName)
 }
 
 /**
  * Global enablement: a serverName that has an OWN `true` entry in `disabled`
- * is off everywhere. Absence = enabled (new servers default on), mirroring
- * {@link isEnabled}'s own-property rule so prototype-member names keep working.
+ * is off everywhere. Absence = not globally disabled: the server is allowed,
+ * and {@link isEnabled} still decides whether any workspace enables it —
+ * mirroring that function's own-property rule so prototype-member names keep
+ * working.
  */
 export function isServerDisabled(doc: McpScopeDoc, serverName: string): boolean {
   const disabled = doc.disabled
@@ -186,7 +198,7 @@ export function setServerDisabled(doc: McpScopeDoc, serverName: string, off: boo
   return { servers: doc.servers, overrides: doc.overrides, disabled: setDisabledKey(current, serverName, off) }
 }
 
-/** Drop a removed server's global off-switch so a re-add starts enabled. */
+/** Drop a removed server's global off-switch so a re-add starts allowed (still off until a workspace enables it). */
 export function removeServerDisabled(disabled: DisabledServers | undefined, serverName: string): DisabledServers {
   return setDisabledKey(disabled, serverName, false)
 }
@@ -207,9 +219,9 @@ export function renameDisabledKey(
 }
 
 /**
- * Remove a server from every workspace's off-switch rows, pruning rows that
- * become empty. Used by removal flows so a removed server cannot resurrect
- * as "off" through an orphaned row when it is later re-added.
+ * Remove a server from every workspace's ENABLE rows, pruning rows that become
+ * empty. Used by removal flows so a removed server cannot resurrect as
+ * "enabled" through an orphaned row when it is later re-added.
  */
 export function removeServerOverrides(overrides: WorkspaceOverrides, serverName: string): WorkspaceOverrides {
   let changed = false
@@ -249,7 +261,7 @@ export function validateDoc(doc: McpScopeDoc): string[] {
       errors.push(`server "${server.serverName}": name must match ${SERVER_NAME_PATTERN}`)
     }
     if (RESERVED_OVERRIDE_KEYS.has(server.serverName)) {
-      errors.push(`server "${server.serverName}": reserved name (would break the per-workspace off-switch)`)
+      errors.push(`server "${server.serverName}": reserved name (would break the per-workspace enable record)`)
     }
     if (seen.has(server.serverName)) errors.push(`server "${server.serverName}": duplicate serverName`)
     seen.add(server.serverName)

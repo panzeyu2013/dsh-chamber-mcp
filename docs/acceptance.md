@@ -9,8 +9,8 @@ requirement → how we prove it (smoke / unit / E2E) → evidence location.
 | # | Requirement | Proof method | Evidence |
 |---|---|---|---|
 | R1 | Settings → MCP section with server rows + add/edit/remove forms; management is UI-native (the settings document stays hand-editable by design) | jsdom render/flow tests of the real components + `scripts/verify-client-artifact.mjs`; a live in-GUI click-through is still open (`docs/status.md`) | tests/client/section-render.spec.tsx, scripts/verify-client-artifact.mjs, docs/design.md §9 |
-| R2 | Default on: after add, effective in all of this dsh's workspaces | unit (evaluation fn) + E2E two workspaces | tests/host/agents.spec.ts, tests/host/manager.spec.ts |
-| R3 | Explicit per-workspace off; when off, that workspace session's model-visible tool set excludes the server's tools (injection gate, not mere exec denial) | E2E: session tool listing per workspace (remote-mux capture) | `npm run test:smoke` (M1 live capture), tests/host/agents.spec.ts |
+| R2 | **Default OFF (0.0.4, supersedes the original):** after add, the server is configured but effective NOWHERE until a workspace explicitly enables it | unit (evaluation fn) + E2E two workspaces | tests/host/agents.spec.ts, tests/host/model.spec.ts |
+| R3 | Explicit per-workspace ENABLE; a workspace without the enable record has the server's tools excluded from its session's model-visible tool set (injection gate, not mere exec denial). The live M1 capture in `docs/status.md` predates the 0.0.4 default flip and must be re-run | E2E: session tool listing per workspace (remote-mux capture) | `npm run test:smoke` (M1 live capture — pending re-run, `docs/status.md`), tests/host/agents.spec.ts |
 | R4 | Distribution: ordinary third-party dsh plugin, user-installed per dsh; chamber not seeded, not bundled, zero code involvement | install test on scratch instance; chamber untouched | `npm run test:smoke` (M0) |
 
 ## Extended (0.0.3 — supersedes the original cuts C3–C5)
@@ -41,14 +41,16 @@ requirement → how we prove it (smoke / unit / E2E) → evidence location.
 
 - `servers: ServerDef[]` — stable identity `serverName`; optional `timeoutMs`.
 - `disabled: Record<string, true>` — sparse global off-switch, OWN-property
-  presence = off; flat so one toggle is one atomic path op.
+  presence = OFF (it is a hard kill no workspace enable can override); flat so one
+  toggle is one atomic path op.
 - `overrides: WorkspaceOverrides` = `Record<string, Record<string, true>>` —
-  recorded = explicitly off; dict-of-dicts so a toggle is one atomic path op.
+  recorded = explicitly ON; dict-of-dicts so a toggle is one atomic path op.
 - Enablement is two predicates combined at the call sites (`src/agents.ts`,
   `src/manager.ts`, the client gate): `isEnabled(overrides, w, s)` (the override
-  row has no OWN property `s`, `Object.hasOwn`) AND NOT
-  `isServerDisabled(doc, s)`. New server/workspace default-on, and
-  prototype-member server names keep working.
+  row HAS an OWN property `s`, `Object.hasOwn`) AND NOT
+  `isServerDisabled(doc, s)`. The default is OFF — a new server, a new workspace
+  and a fresh session register no tools until the pair is explicitly enabled —
+  and prototype-member server names keep working.
 - Decisions: subagent/delegation children are not adopted
   (preset-governed); workspace membership is re-derived per push/reconcile;
   credential values with CR/LF/NUL are rejected at the transport.

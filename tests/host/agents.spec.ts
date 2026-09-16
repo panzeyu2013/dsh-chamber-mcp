@@ -7,8 +7,9 @@
  * real temp directories, and drives the agent applier with fake server defs:
  *
  * - tools visible only to agents whose session cwd canonicalizes to a
- *   registered workspace with the server enabled (default on);
- * - overrides off → invisible; cwd outside every workspace → invisible;
+ *   registered workspace holding an explicit ENABLE record for the server
+ *   (default off: an absent record means invisible);
+ * - no enable record → invisible; cwd outside every workspace → invisible;
  * - settings reconcile + sync-driven revocation; nothing ever lands in the
  *   global layer.
  */
@@ -66,6 +67,7 @@ class Harness {
   hostCtx!: Context
   readonly live = new Map<string, Agent>()
   workspaces: WorkspaceLike[] = []
+  /** Per-workspace explicit enables: a row exists ⇔ the server is on there. */
   overrides: WorkspaceOverrides = {}
   /** serverNames the harness reports as globally disabled (manager's live view). */
   readonly globalDisabled = new Set<string>()
@@ -202,7 +204,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     try {
       const wsA = await h.addWorkspace('a')
       const wsB = await h.addWorkspace('b')
-      h.overrides = { [wsB.id]: { files: true } } // B explicitly OFF
+      h.overrides = { [wsA.id]: { files: true } } // only A enables it; B has no record
 
       const agentA = h.spawnAgent('agent-a', wsA.path)
       const agentB = h.spawnAgent('agent-b', wsB.path)
@@ -219,10 +221,10 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       ])
       h.push(SERVER, 1, defs)
 
-      // Enabled workspace agent (default on).
+      // Workspace A explicitly enables the server.
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
       expect(h.ctx.tools.get(TOOL_B, agentA)).toBeDefined()
-      // Workspace B has the server switched off.
+      // Workspace B has no enable record (default off).
       expect(h.ctx.tools.get(TOOL_A, agentB)).toBeUndefined()
       expect(h.ctx.tools.get(TOOL_B, agentB)).toBeUndefined()
       // Cwd outside every registered workspace.
@@ -244,6 +246,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     try {
       const wsA = await h.addWorkspace('a')
       const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.overrides = { [wsA.id]: { files: true, other: true } }
       // Prove the spy is LIVE before trusting an empty result, then clear it:
       // adoption itself is part of the exercised surface.
       appended.length = 0
@@ -258,7 +261,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       h.push('files', 1, new Map<string, ToolDefinition>([[TOOL_A, def(TOOL_A)], [TOOL_B, def(TOOL_B)]]))
       h.applier.reconcile()
       h.push('other', 1, new Map<string, ToolDefinition>([['mcp__other__only', def('mcp__other__only')]]))
-      h.overrides = { [wsA.id]: { files: true } }
+      h.overrides = { [wsA.id]: { other: true } } // settings flip: "files" no longer enabled
       h.applier.reconcile()
       h.push('files', 2, new Map())
       h.applier.revokeServer('other')
@@ -281,6 +284,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     try {
       const wsA = await h.addWorkspace('a')
       const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.overrides = { [wsA.id]: { alpha: true, beta: true } }
       h.createAgent(agentA)
 
       // Public names are namespaced by server, so two servers exposing the same
@@ -298,7 +302,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       expect(h.ctx.tools.get(ALPHA_SEARCH, agentA)).not.toBe(h.ctx.tools.get(BETA_SEARCH, agentA))
 
       // Switching ONE server off for this workspace leaves the other's tools.
-      h.overrides = { [wsA.id]: { alpha: true } }
+      h.overrides = { [wsA.id]: { beta: true } }
       h.applier.reconcile()
       expect(h.ctx.tools.get(ALPHA_SEARCH, agentA)).toBeUndefined()
       expect(h.ctx.tools.get(ALPHA_ONLY, agentA)).toBeUndefined()
@@ -306,7 +310,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       expect(h.ctx.tools.get(BETA_ONLY, agentA)).toBeDefined()
 
       // …and switching it back on restores exactly its own tools.
-      h.overrides = {}
+      h.overrides = { [wsA.id]: { alpha: true, beta: true } }
       h.applier.reconcile()
       for (const name of [ALPHA_SEARCH, ALPHA_ONLY, BETA_SEARCH, BETA_ONLY]) {
         expect(h.ctx.tools.get(name, agentA), name).toBeDefined()
@@ -321,19 +325,20 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     try {
       const wsA = await h.addWorkspace('a')
       const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.overrides = { [wsA.id]: { files: true } }
       h.createAgent(agentA)
 
       const defs = new Map([[TOOL_A, def(TOOL_A)]])
       h.push(SERVER, 1, defs)
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
 
-      // Settings reconcile disables the workspace → revoked everywhere.
-      h.overrides = { [wsA.id]: { files: true } }
+      // Settings reconcile removes the enable record → revoked everywhere.
+      h.overrides = {}
       h.applier.reconcile()
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeUndefined()
 
       // Reconcile re-enables → re-registered from the retained server state.
-      h.overrides = {}
+      h.overrides = { [wsA.id]: { files: true } }
       h.applier.reconcile()
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
 
@@ -351,6 +356,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     try {
       const wsA = await h.addWorkspace('a')
       const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.overrides = { [wsA.id]: { files: true } }
       h.createAgent(agentA)
 
       h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A, 'v1')]]))
@@ -375,6 +381,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     try {
       const wsA = await h.addWorkspace('a')
       const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.overrides = { [wsA.id]: { files: true } }
       h.createAgent(agentA)
       // A second applier instance simulates a plugin (re)load AFTER the
       // agent was already published.
@@ -400,6 +407,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     const h = await mount()
     try {
       const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
       const agentA = h.spawnAgent('agent-a', wsA.path)
       h.createAgent(agentA)
       h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A)]]))
@@ -427,6 +435,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     const h = await mount()
     try {
       const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
       const agentA = h.spawnAgent('agent-a', wsA.path)
       h.createAgent(agentA)
       const defs = new Map([[TOOL_A, def(TOOL_A)]])
@@ -443,6 +452,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     const h = await mount()
     try {
       const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
       const agentA = h.spawnAgent('agent-a', wsA.path)
       h.createAgent(agentA)
 
@@ -482,6 +492,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     const h = await mount()
     try {
       const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
       const agentA = h.spawnAgent('agent-a', wsA.path)
       h.createAgent(agentA)
 
@@ -498,15 +509,15 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       expect(h.lines.length).toBe(before)
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBe(registered)
 
-      // A real OFF flip still revokes…
-      h.overrides = { [wsA.id]: { files: true } }
+      // A real OFF flip (the enable record is removed) still revokes…
+      h.overrides = {}
       h.applier.reconcile()
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeUndefined()
       expect(h.ctx.tools.get(TOOL_B, agentA)).toBeUndefined()
       expect(h.lines.at(-1)?.message).toContain('revoked server "files" from agent agent-a (disabled for this workspace)')
 
       // …and a real ON flip still re-registers from the retained state.
-      h.overrides = {}
+      h.overrides = { [wsA.id]: { files: true } }
       h.applier.reconcile()
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
       expect(h.ctx.tools.get(TOOL_B, agentA)).toBeDefined()
@@ -520,6 +531,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     const h = await mount()
     try {
       const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
       const agentA = h.spawnAgent('agent-a', wsA.path)
       h.createAgent(agentA)
       h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A)]]))
@@ -545,6 +557,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     const h = await mount()
     try {
       const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
       const agentA = h.spawnAgent('agent-a', wsA.path)
       h.createAgent(agentA)
       const defs = new Map([[TOOL_A, def(TOOL_A)]])
@@ -570,6 +583,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     const h = await mount()
     try {
       const wsA = await h.addWorkspace('dirgone')
+      h.overrides = { [wsA.id]: { files: true } }
       const agentA = h.spawnAgent('agent-a', wsA.path)
       h.createAgent(agentA)
       const defs = new Map([[TOOL_A, def(TOOL_A)]])
@@ -598,8 +612,10 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeUndefined()
 
       // The session's directory becomes a registered workspace AFTER
-      // adoption: the next reconcile resolves the entry into it.
+      // adoption, and that workspace enables the server: the next reconcile
+      // resolves the entry into it and registers its tools.
       h.workspaces.push({ id: 'ws-late', path: dir })
+      h.overrides = { 'ws-late': { files: true } }
       h.applier.reconcile()
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
     } finally {
@@ -611,6 +627,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     const h = await mount()
     try {
       const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
       const root = h.spawnAgent('agent-root', wsA.path)
       const child = h.spawnAgent('agent-child', wsA.path, 'subagent')
       // Listener path: both agents are published AFTER activation. The child

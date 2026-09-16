@@ -1,8 +1,8 @@
 /**
  * One MCP server card: definition details (command/URL), transport/summary
  * header, credential badges with a configured/unset/unknown tri-state, and
- * the per-workspace on/off rows (presence in `overrides[w][name]` =
- * explicitly OFF; absence = on by default).
+ * the per-workspace enable rows (presence in `overrides[w][name]` = explicitly
+ * ON; absence = off by default, so this list is what the user turns on).
  *
  * The card owns the outcome feedback of its own actions: a localized
  * transient role="alert" banner appears here (not at the section top) for a
@@ -50,9 +50,9 @@ export interface ServerCardProps {
   onRefresh?(serverName: string): Promise<void>
   onEdit(): void
   onRemove(name: string): Promise<SaveOutcome>
-  onToggle(workspaceId: string, serverName: string, off: boolean): Promise<SaveOutcome>
+  onToggle(workspaceId: string, serverName: string, enabled: boolean): Promise<SaveOutcome>
   /** Batch per-workspace switch ("all on" / "all off"). */
-  onToggleAll(serverName: string, off: boolean, workspaceIds: readonly string[]): Promise<SaveOutcome>
+  onToggleAll(serverName: string, enabled: boolean, workspaceIds: readonly string[]): Promise<SaveOutcome>
   /** Global enable/disable switch. */
   onSetEnabled(serverName: string, enabled: boolean): Promise<SaveOutcome>
   onUnsetCredential(ref: string): Promise<SaveOutcome>
@@ -262,11 +262,15 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
   const refs = credentialRefsOf(server)
   const rowsReady = workspaceStatus === 'ready'
   const globallyDisabled = isServerDisabled(doc, server.serverName)
-  /** Explicitly-OFF (exception) rows: the only rows shown while collapsed. */
-  const exceptions = rowsReady
-    ? workspaces.filter((ws) => !isEnabled(doc.overrides, ws.workspaceId, server.serverName))
+  /**
+   * Workspaces that explicitly ENABLE this server: the only rows shown while
+   * collapsed. MCP is off by default, so these — not the disabled ones — are the
+   * exceptions the collapsed card has to surface.
+   */
+  const enabledWorkspaces = rowsReady
+    ? workspaces.filter((ws) => isEnabled(doc.overrides, ws.workspaceId, server.serverName))
     : []
-  const offCount = exceptions.length
+  const enabledCount = enabledWorkspaces.length
   const busy =
     removing ||
     pendingWs !== undefined ||
@@ -303,8 +307,13 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
   if (globallyDisabled) {
     summaryBits.push(t('server.disabledTag'))
   }
-  if (rowsReady && offCount > 0) {
-    summaryBits.push(t(countKey('server.offWorkspaces', offCount), { count: offCount }))
+  if (rowsReady) {
+    // Off is the default, so the notable state is the absence of any enable.
+    summaryBits.push(
+      enabledCount > 0
+        ? t(countKey('server.enabledWorkspaces', enabledCount), { count: enabledCount })
+        : t('server.notEnabled'),
+    )
   }
 
   const transportLabel = server.transport === 'stdio' ? t('transport.stdio') : t('transport.http')
@@ -318,7 +327,7 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
     setPendingWs(workspaceId)
     let outcome: SaveOutcome
     try {
-      outcome = await props.onToggle(workspaceId, server.serverName, !checked)
+      outcome = await props.onToggle(workspaceId, server.serverName, checked)
     } catch {
       outcome = { ok: false, reason: 'save-failed' }
     }
@@ -341,14 +350,14 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
     if (!outcome.ok) setFailure(outcome)
   }
 
-  async function handleToggleAll(off: boolean): Promise<void> {
+  async function handleToggleAll(enabled: boolean): Promise<void> {
     setFailure(null)
     setPendingAll(true)
     let outcome: SaveOutcome
     try {
       outcome = await props.onToggleAll(
         server.serverName,
-        off,
+        enabled,
         workspaces.map((ws) => ws.workspaceId),
       )
     } catch {
@@ -466,7 +475,7 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
 
   /** One workspace row (shared by the exception list and the expanded list). */
   function workspaceRow(ws: WorkspaceItem): JSX.Element {
-    const off = !isEnabled(doc.overrides, ws.workspaceId, server.serverName)
+    const on = isEnabled(doc.overrides, ws.workspaceId, server.serverName)
     // ONE toggle per card at a time: the controller judges a save by comparing
     // the landed document against the expectation it built from the base it
     // read, so a second overlapping toggle would report a spurious 'conflict'
@@ -482,7 +491,7 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
             type="checkbox"
             role="switch"
             className={styles.switchInput}
-            checked={!off}
+            checked={on}
             disabled={rowsDisabled || pending}
             onChange={(event) => void handleToggle(ws.workspaceId, event.target.checked)}
           />
@@ -493,7 +502,7 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
         <label htmlFor={id} className={styles.wsLabel}>
           {ws.title}
         </label>
-        <span className={styles.wsState}>{off ? t('row.off') : t('row.on')}</span>
+        <span className={styles.wsState}>{on ? t('row.on') : t('row.off')}</span>
       </li>
     )
   }
@@ -822,34 +831,40 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
         {workspaceStatus === 'loading' && <p className={styles.hint}>{t('workspaces.loading')}</p>}
         {workspaceStatus === 'error' && <p className={styles.hint}>{t('workspaces.error')}</p>}
         {rowsReady && workspaces.length === 0 && <p className={styles.hint}>{t('workspaces.empty')}</p>}
-        {/* Collapsed default: the exception rows only — or ONE summary line
-            when every workspace is on (the common case). */}
+        {/* Collapsed default: the ENABLED rows only — or ONE summary line when
+            the server is off everywhere (the common, initial state). */}
         {rowsReady && workspaces.length > 0 && !wsExpanded && (
-          exceptions.length > 0 ? (
+          enabledWorkspaces.length > 0 ? (
             <ul id={`mcp-scope-ws-rows-${server.serverName}`} className={styles.wsList}>
-              {exceptions.map(workspaceRow)}
+              {enabledWorkspaces.map(workspaceRow)}
             </ul>
           ) : (
             <p className={styles.hint}>
-              {t(countKey('row.allOnDefault', workspaces.length), { count: workspaces.length })}
+              {t(countKey('row.allOffDefault', workspaces.length), { count: workspaces.length })}
             </p>
           )
         )}
         {/* Local UI state only (never a settings write): the toggle reveals
             every row and the bulk switches. */}
-        {/* A single workspace needs this too: in the collapsed view its only row
-            is hidden and no checkbox would be reachable, so the server could not
-            be turned off for it at all. */}
+        {/* A single workspace needs this too: with nothing enabled the collapsed
+            view hides its only row and no checkbox would be reachable, so the
+            server could not be turned ON for it at all — and MCP is off by
+            default, which makes that the first thing a new user hits. */}
         {rowsReady && workspaces.length > 0 && (
           <div className={styles.row}>
             <button
               type="button"
               className={cx(styles.button, styles.buttonOutline)}
               aria-expanded={wsExpanded}
-              aria-controls={`mcp-scope-ws-rows-${server.serverName}`}
+              // The list this controls exists while expanded OR while the
+              // collapsed block lists the enabled rows; with none enabled the
+              // summary line has no id, and a dangling IDREF is worse than none.
+              aria-controls={
+                wsExpanded || enabledWorkspaces.length > 0 ? `mcp-scope-ws-rows-${server.serverName}` : undefined
+              }
               onClick={() => setWsExpanded((open) => !open)}
             >
-              {wsExpanded ? t('row.manageHide') : t('row.manage', { count: offCount })}
+              {wsExpanded ? t('row.manageHide') : t('row.manage', { count: enabledCount })}
             </button>
           </div>
         )}
@@ -865,7 +880,7 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
                 type="button"
                 className={cx(styles.button, styles.buttonOutline)}
                 disabled={rowsDisabled}
-                onClick={() => void handleToggleAll(false)}
+                onClick={() => void handleToggleAll(true)}
               >
                 {t('row.allOn')}
               </button>
@@ -873,13 +888,13 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
                 type="button"
                 className={cx(styles.button, styles.buttonOutline)}
                 disabled={rowsDisabled}
-                onClick={() => void handleToggleAll(true)}
+                onClick={() => void handleToggleAll(false)}
               >
                 {t('row.allOff')}
               </button>
             </div>
             )}
-            <p className={styles.hint}>{t('server.defaultOn')}</p>
+            <p className={styles.hint}>{t('server.defaultOff')}</p>
           </>
         )}
       </div>

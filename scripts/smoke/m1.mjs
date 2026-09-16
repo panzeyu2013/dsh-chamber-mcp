@@ -115,8 +115,10 @@ try {
     ns: 'mcp-scope',
     ops: [
       { op: 'set', path: ['servers'], value: servers },
-      { op: 'set', path: ['overrides', offId, 'fixture'], value: true },
-      { op: 'unset', path: ['overrides', onId, 'fixture'] },
+      // Presence IS the enable (MCP is off by default): the on-workspace gets
+      // the record, the off-workspace keeps none.
+      { op: 'set', path: ['overrides', onId, 'fixture'], value: true },
+      { op: 'unset', path: ['overrides', offId, 'fixture'] },
     ],
   })
   await new Promise((r) => setTimeout(r, 3000)) // supervisor connects + syncs

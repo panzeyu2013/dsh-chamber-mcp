@@ -2,8 +2,9 @@
  * Per-agent injection gate (host half): the ONLY place MCP tools are ever
  * registered. Master definitions live in the per-server supervisors; this
  * module pushes them into the tool scopes of live agents whose session cwd
- * canonicalizes to a registered workspace in which the server is enabled
- * (`isEnabled` on the document's overrides — default on). Workspace-less
+ * canonicalizes to a registered workspace that explicitly enables the server
+ * (`isEnabled` on the document's overrides — default off, so a session is
+ * exposed to nothing until the pair is turned on). Workspace-less
  * sessions and cwd outside every registered workspace never receive MCP
  * tools.
  *
@@ -30,8 +31,8 @@
  * Every listener and every push is effect-wrapped through the owning plugin
  * context so teardown (including HMR) is safe.
  *
- * This module NEVER writes into a session log. The injected-tools notice is
- * derived client-side from the harness's own `request/header` events
+ * This module NEVER writes into a session log. The registered-tools notice is
+ * derived client-side from the harness's own session events
  * (`src/client/injection.ts`): a third-party session event is
  * required-on-read — the envelope's `ignorable` marker has no write path in
  * this generation — so appending one would make the persisted session

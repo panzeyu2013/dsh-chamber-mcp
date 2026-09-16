@@ -46,8 +46,8 @@ interface Actions {
   addServer?(input: ServerSaveInput): Promise<SaveOutcome>
   replaceServer?(oldName: string, input: ServerSaveInput): Promise<SaveOutcome>
   removeServer?(name: string): Promise<SaveOutcome>
-  toggleWorkspace?(workspaceId: string, serverName: string, off: boolean): Promise<SaveOutcome>
-  toggleWorkspaces?(serverName: string, off: boolean, workspaceIds: readonly string[]): Promise<SaveOutcome>
+  toggleWorkspace?(workspaceId: string, serverName: string, enabled: boolean): Promise<SaveOutcome>
+  toggleWorkspaces?(serverName: string, enabled: boolean, workspaceIds: readonly string[]): Promise<SaveOutcome>
   setServerEnabled?(serverName: string, enabled: boolean): Promise<SaveOutcome>
   unsetCredential?(ref: string): Promise<SaveOutcome>
   connectServer?(serverName: string): Promise<unknown>
@@ -235,21 +235,23 @@ describe('McpScopeSection render', () => {
     // singular plural forms for count 1
     expect(text).toContain(t(countKey('server.envKeys', 1), { count: 1 })) // '1 env key'
     expect(text).toContain(t(countKey('server.headers', 1), { count: 1 })) // '1 header'
-    expect(text).toContain(t(countKey('server.offWorkspaces', 1), { count: 1 })) // 'Off in 1 workspace'
+    expect(text).toContain(t(countKey('server.enabledWorkspaces', 1), { count: 1 })) // 'On in 1 workspace'
+    // the never-enabled server reports the off-by-default state
+    expect(text).toContain(en['server.notEnabled'])
     // definition details (UX-04): command + args line and http url
     expect(text).toContain('node a.js --x')
     expect(text).toContain('http://x/mcp')
     // header names ride the badge rows
     expect(text).toContain('Authorization')
     expect(text).toContain('AUTH')
-    // workspace rows: exceptions only — ws-b is OFF for fixture, so ONLY that
-    // row renders; ws-a (on by default) stays collapsed away.
+    // workspace rows: ENABLED workspaces only — ws-b enables fixture, so ONLY
+    // that row renders; ws-a (default off) stays collapsed away.
     expect(text).toContain('beta')
     expect(text).not.toContain('alpha')
-    expect(text).toContain(en['row.off'])
+    expect(text).toContain(en['row.on'])
     expect(text).toContain(t('row.manage', { count: 1 }))
-    // the all-on card summarizes instead of listing every workspace
-    expect(text).toContain(t(countKey('row.allOnDefault', 2), { count: 2 }))
+    // a card with zero enabled workspaces summarizes instead of listing them
+    expect(text).toContain(t(countKey('row.allOffDefault', 2), { count: 2 }))
     // no describe has run: badges are neutral 'unknown', not 'Not configured'
     expect(text).toContain(en['secret.unknown'])
     expect(text).not.toContain(en['secret.unset'])
@@ -275,7 +277,10 @@ describe('McpScopeSection render', () => {
     await flush()
     const text = mounted.text()
     expect(text).toContain(t(countKey('server.envKeys', 2), { count: 2 })) // '2 env keys'
-    expect(text).toContain(t(countKey('server.offWorkspaces', 2), { count: 2 })) // 'Off in 2 workspaces'
+    expect(text).toContain(t(countKey('server.enabledWorkspaces', 2), { count: 2 })) // 'On in 2 workspaces'
+    // both enabled workspaces are the collapsed card's exception rows
+    expect(text).toContain('alpha')
+    expect(text).toContain('beta')
     expect(text).toContain(en['secret.configured'])
     expect(text).toContain(en['secret.unset'])
     expect(text).toContain(en['secret.clear']) // only the configured ref is clearable
@@ -287,12 +292,15 @@ describe('McpScopeSection render', () => {
     await flush()
     expect(loading.text()).toContain(en['workspaces.loading'])
     expect(loading.text()).not.toContain(en['workspaces.empty'])
-    expect(loading.text()).not.toContain(en[countKey('server.offWorkspaces', 1)].replace('{count}', '1'))
+    // The workspace list is not ready, so neither enablement summary renders.
+    expect(loading.text()).not.toContain(en['server.notEnabled'])
+    expect(loading.text()).not.toContain(t(countKey('server.enabledWorkspaces', 1), { count: 1 }))
     loading.unmount()
     const failed = mountSection(doc, {}, { wsState: 'error', wsPhase: 'ready', wsItems: [] })
     await flush()
     expect(failed.text()).toContain(en['workspaces.error'])
     expect(failed.text()).not.toContain(en['workspaces.empty'])
+    expect(failed.text()).not.toContain(en['server.notEnabled'])
     // settled list with zero workspaces is the only "empty" case
     failed.unmount()
     const empty = mountSection(doc, {}, { wsState: 'idle', wsPhase: 'ready', wsItems: [] })
@@ -303,7 +311,7 @@ describe('McpScopeSection render', () => {
   it('shows a per-card role="alert" banner when a card action fails (not a section-top notice)', async () => {
     const doc: McpScopeDoc = {
       servers: [stdioServer('a', ['TOK'])],
-      // ws-1 is an explicit OFF exception, i.e. a visible row by default
+      // ws-1 explicitly ENABLES 'a', so its row is visible while collapsed
       overrides: overridesOf({ 'ws-1': ['a'] }),
     }
     const mounted = mountSection(
@@ -348,13 +356,13 @@ describe('McpScopeSection render', () => {
   })
 
   it('batches per-workspace switches through the card\'s all-on/all-off controls', async () => {
-    const calls: { off: boolean; ids: readonly string[] }[] = []
+    const calls: { enabled: boolean; ids: readonly string[] }[] = []
     const doc: McpScopeDoc = { servers: [stdioServer('a')], overrides: {} }
     const mounted = mountSection(
       doc,
       {
-        toggleWorkspaces: async (_name, off, ids) => {
-          calls.push({ off, ids })
+        toggleWorkspaces: async (_name, enabled, ids) => {
+          calls.push({ enabled, ids })
           return { ok: true }
         },
       },
@@ -369,9 +377,14 @@ describe('McpScopeSection render', () => {
     // The bulk switches live in the expanded (all-rows) view.
     buttonByText(mounted.host, t('row.manage', { count: 0 }))!.click()
     await flush()
+    buttonByText(mounted.host, en['row.allOn'])!.click()
+    await flush()
     buttonByText(mounted.host, en['row.allOff'])!.click()
     await flush()
-    expect(calls).toEqual([{ off: true, ids: ['ws-1', 'ws-2'] }])
+    expect(calls).toEqual([
+      { enabled: true, ids: ['ws-1', 'ws-2'] },
+      { enabled: false, ids: ['ws-1', 'ws-2'] },
+    ])
   })
 
   it('filters the card list by server name', async () => {
@@ -888,7 +901,7 @@ describe('McpScopeSection render', () => {
     expect(empty.text()).toContain(en['runtime.unavailable'])
   })
 
-  it('collapses workspace rows to exceptions, summarizes all-on and never writes on expansion', async () => {
+  it('collapses workspace rows to enabled exceptions, summarizes the default-off state and never writes on expansion', async () => {
     const writes: string[] = []
     const mounted = mountSection(
       { servers: [stdioServer('a')], overrides: overridesOf({ 'ws-1': ['a'] }) },
@@ -914,16 +927,17 @@ describe('McpScopeSection render', () => {
       },
     )
     await flush()
-    // Default: the OFF exception only; the on-by-default row is collapsed away.
+    // Default: the ENABLED row only; the default-off row is collapsed away.
     expect(mounted.text()).toContain('one')
     expect(mounted.text()).not.toContain('two')
-    expect(mounted.text()).not.toContain(en['server.defaultOn'])
+    expect(mounted.text()).not.toContain(en['server.defaultOff'])
     buttonByText(mounted.host, t('row.manage', { count: 1 }))!.click()
     await flush()
-    // Expanded: ALL rows + the bulk switches + the one default-on sentence.
+    // Expanded: ALL rows + the bulk switches + the default-off hint.
     expect(mounted.text()).toContain('two')
-    expect(mounted.text()).toContain(en['server.defaultOn'])
+    expect(mounted.text()).toContain(en['server.defaultOff'])
     expect(mounted.text()).toContain(en['row.on'])
+    expect(mounted.text()).toContain(en['row.off'])
     expect(buttonByText(mounted.host, en['row.allOn'])).toBeDefined()
     expect(buttonByText(mounted.host, en['row.allOff'])).toBeDefined()
     expect(writes).toEqual([]) // expansion is local UI state, not a settings write
@@ -933,8 +947,8 @@ describe('McpScopeSection render', () => {
     expect(writes).toEqual([])
     mounted.unmount()
 
-    // Zero exceptions: exactly ONE summary line and no rows at all.
-    const allOn = mountSection(
+    // Zero enabled workspaces: exactly ONE default-off summary line, no rows.
+    const none = mountSection(
       { servers: [stdioServer('a')], overrides: {} },
       {},
       {
@@ -945,11 +959,11 @@ describe('McpScopeSection render', () => {
       },
     )
     await flush()
-    const summary = t(countKey('row.allOnDefault', 2), { count: 2 })
-    expect(allOn.text().split(summary).length - 1).toBe(1)
-    expect(allOn.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(0)
-    expect(allOn.text()).not.toContain('one')
-    expect(allOn.text()).not.toContain('two')
+    const summary = t(countKey('row.allOffDefault', 2), { count: 2 })
+    expect(none.text().split(summary).length - 1).toBe(1)
+    expect(none.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(0)
+    expect(none.text()).not.toContain('one')
+    expect(none.text()).not.toContain('two')
   })
 
   it('orders the card actions edit-then-remove and outlines the remove button', async () => {
@@ -977,19 +991,20 @@ describe('McpScopeSection render', () => {
   })
 
   it('keeps the workspace exception control reachable with a SINGLE workspace', async () => {
-    const writes: { workspaceId: string; off: boolean }[] = []
+    const writes: { workspaceId: string; enabled: boolean }[] = []
     const mounted = mountSection(
       { servers: [stdioServer('alpha')], overrides: {} },
       {
-        toggleWorkspace: async (workspaceId, _serverName, off) => {
-          writes.push({ workspaceId, off })
+        toggleWorkspace: async (workspaceId, _serverName, enabled) => {
+          writes.push({ workspaceId, enabled })
           return { ok: true }
         },
       },
       { wsItems: [{ workspaceId: 'ws-1', title: 'only-one' }] },
     )
     await flush()
-    // Collapsed: the single ON workspace is summarized, not listed.
+    // Collapsed: the only workspace is default-off, so the summary line renders
+    // instead of a row; the manage control must still be reachable.
     expect(mounted.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(0)
     const toggle = buttonByText(mounted.host, t('row.manage', { count: 0 }))
     expect(toggle).toBeDefined()
@@ -1002,7 +1017,7 @@ describe('McpScopeSection render', () => {
     expect(input).not.toBeNull()
     input?.click()
     await flush()
-    expect(writes).toEqual([{ workspaceId: 'ws-1', off: true }])
+    expect(writes).toEqual([{ workspaceId: 'ws-1', enabled: true }])
   })
 
   it('serializes workspace toggles: every row is inert while one save is in flight', async () => {

@@ -160,9 +160,13 @@ step('wait for supervisor connect + sync (boot-log evidence)')
 await new Promise((r) => setTimeout(r, 4000))
 
 // ── phase: workspace gate ────────────────────────────────────────────────────
-step('override ws-b OFF for server fixture')
+step('enable fixture for ws-a only (MCP is off by default)')
 await inst.rpc('settings/mutate', {
-  ns: 'mcp-scope', ops: [{ op: 'set', path: ['overrides', WB, 'fixture'], value: true }],
+  ns: 'mcp-scope',
+  ops: [
+    { op: 'set', path: ['overrides', WA, 'fixture'], value: true },
+    { op: 'unset', path: ['overrides', WB, 'fixture'] },
+  ],
 })
 say('done')
 
@@ -175,10 +179,10 @@ const sb = await inst.rpc('session/create', { request: { workspaceId: WB } })
 say(`session-b ${sb.sessionId}`)
 
 step('flip ws-b ON (expected: apply push to live session-b agent)')
-await inst.rpc('settings/mutate', { ns: 'mcp-scope', ops: [{ op: 'unset', path: ['overrides', WB, 'fixture'] }] })
+await inst.rpc('settings/mutate', { ns: 'mcp-scope', ops: [{ op: 'set', path: ['overrides', WB, 'fixture'], value: true }] })
 
 step('flip ws-b OFF again (expected: revoke)')
-await inst.rpc('settings/mutate', { ns: 'mcp-scope', ops: [{ op: 'set', path: ['overrides', WB, 'fixture'], value: true }] })
+await inst.rpc('settings/mutate', { ns: 'mcp-scope', ops: [{ op: 'unset', path: ['overrides', WB, 'fixture'] }] })
 await new Promise((r) => setTimeout(r, 3000))
 
 step('sessions/wait evidence; stop instance')

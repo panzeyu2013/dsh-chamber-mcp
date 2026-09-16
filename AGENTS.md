@@ -2,7 +2,9 @@
 
 `dsh-chamber-mcp` is a standalone third-party dsh plugin: MCP servers managed
 from the dsh Settings UI, with tools injected into the tool scopes of the
-enabled workspaces only. Internal settings namespace / loader row id:
+workspaces that explicitly enable them — **MCP is OFF by default**, so a new
+server, a new workspace and a fresh session register no tools until the user
+turns the pair on. Internal settings namespace / loader row id:
 `mcp-scope`.
 
 Releases are GitHub Releases carrying the packed tgz + `.sha256` (npm publishing
@@ -69,10 +71,10 @@ chamber's current anchor CLI, read at run time. Migration recipe:
   the persisted envelope's `ignorable?: true` marker is the only admission a
   reader honors for an unknown type, this generation has no write path that can
   set it, and `validateStoredEvents` then refuses the WHOLE log — including for
-  the harness that wrote it. The injected-tools notice is derived client-side
-  from the harness's own `request/header` events (`src/client/injection.ts`);
-  anything that needs session visibility rides known event types read back in
-  the browser half.
+  the harness that wrote it. The registered-tools notice is derived client-side
+  from the harness's own session events — the request tool array and the
+  rendered system prompt — (`src/client/injection.ts`); anything that needs
+  session visibility rides known event types read back in the browser half.
 - Locale discipline: every user-visible string lives in
   `src/client/locales.ts` (en/zh parity is compile-enforced + tested).
 - Secrets never ride the settings document or any API response; credential

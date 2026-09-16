@@ -106,11 +106,23 @@ export const styles = {
   cardActions: 'mcpScope_cardActions',
   cardRefresh: 'mcpScope_cardRefresh',
   cardRefreshBusy: 'mcpScope_cardRefreshBusy',
-  injectionRow: 'mcpScope_injectionRow',
-  injectionIcon: 'mcpScope_injectionIcon',
+  // registered-tools notice (conversation lane, registered through
+  // `conversation.chat.node`) — the shipped disclosure-row chrome
+  injectionRoot: 'mcpScope_injectionRoot',
+  injectionHead: 'mcpScope_injectionHead',
+  injectionLeading: 'mcpScope_injectionLeading',
+  injectionGlyphIdle: 'mcpScope_injectionGlyphIdle',
+  injectionGlyphHover: 'mcpScope_injectionGlyphHover',
+  injectionGlyphOpen: 'mcpScope_injectionGlyphOpen',
   injectionTitle: 'mcpScope_injectionTitle',
+  injectionSep: 'mcpScope_injectionSep',
   injectionDetail: 'mcpScope_injectionDetail',
   injectionTotal: 'mcpScope_injectionTotal',
+  injectionBody: 'mcpScope_injectionBody',
+  injectionServer: 'mcpScope_injectionServer',
+  injectionServerName: 'mcpScope_injectionServerName',
+  injectionToolName: 'mcpScope_injectionToolName',
+  injectionOmitted: 'mcpScope_injectionOmitted',
   tag: 'mcpScope_tag',
   code: 'mcpScope_code',
   badges: 'mcpScope_badges',
@@ -509,41 +521,159 @@ export const css = `
   }
 }
 
-/* ---- injected-tools notice (one line in the conversation lane) ---- */
+/* ---- registered-tools notice (one disclosure row in the conversation lane) ----
+   Chrome follows the shipped conversation rows rule for rule — the same 24px
+   head with a 16px leading box (14px glyphs) and a 6px gap, the same 13px
+   secondary title, the shipped 2x2 caption separator, and the same 141px
+   code-block body the system-prompt and injected-context rows expand into.
+   Only the glyph is this plugin's own mark: dsh ships no MCP icon. */
 
-.mcpScope_injectionRow {
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  max-width: 100%;
-  padding: 6px 10px;
-  border: 0.5px solid var(--dsw-alias-border-l3);
-  border-radius: 12px;
-  background: var(--dsw-alias-bg-layer-2);
-  font-size: 12px;
-  line-height: 18px;
+.mcpScope_injectionRoot {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
 }
 
-.mcpScope_injectionIcon {
-  display: inline-flex;
+.mcpScope_injectionRoot[data-open] {
+  padding-bottom: 4px;
+}
+
+.mcpScope_injectionHead {
+  position: relative;
+  overflow: hidden;
+  display: flex;
   align-items: center;
+  /* Every shipped row scales with the content-font setting; the shipped rows
+     add the same delta and defer to the same secondary size. */
+  height: calc(24px + var(--dsh-content-font-delta, 0px));
+  min-width: 0;
+  cursor: pointer;
+}
+
+.mcpScope_injectionHead:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.mcpScope_injectionLeading {
+  position: relative;
   flex: none;
-  color: var(--dsw-alias-state-business-primary);
+  width: calc(16px + var(--dsh-content-font-delta, 0px));
+  height: calc(16px + var(--dsh-content-font-delta, 0px));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  color: var(--dsw-alias-label-tertiary);
 }
 
-.mcpScope_injectionTitle {
-  color: var(--dsw-alias-label-primary);
-  font-weight: 500;
+.mcpScope_injectionLeading svg {
+  width: calc(14px + var(--dsh-content-font-delta, 0px));
+  height: calc(14px + var(--dsh-content-font-delta, 0px));
 }
 
-.mcpScope_injectionDetail {
+/* The open row shows the chevron in the shipped open-state colour (the hover
+   swap and the closed glyph keep the tertiary leading colour). */
+.mcpScope_injectionGlyphOpen {
+  display: inline-flex;
   color: var(--dsw-alias-label-secondary);
 }
 
-.mcpScope_injectionTotal {
+/* Hover swap of the shipped rows: the glyph yields to the chevron; the open
+   row shows the chevron outright (rendered by the component, not by CSS). */
+.mcpScope_injectionGlyphIdle {
+  display: inline-flex;
+  transition: opacity 100ms ease;
+}
+
+.mcpScope_injectionGlyphHover {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 100ms ease;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.mcpScope_injectionHead:hover .mcpScope_injectionGlyphIdle {
+  opacity: 0;
+}
+
+.mcpScope_injectionHead:hover .mcpScope_injectionGlyphHover {
+  opacity: 1;
+}
+
+.mcpScope_injectionTitle {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+}
+
+.mcpScope_injectionSep {
+  background: var(--dsw-alias-label-caption);
+  border-radius: 1px;
+  flex: none;
+  width: 2px;
+  height: 2px;
+  margin: 0 8px;
+}
+
+.mcpScope_injectionDetail {
+  min-width: 0;
+  flex: none;
+  overflow: hidden;
   color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcpScope_injectionTotal {
+  min-width: 0;
+  flex: auto;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The shipped expanded-body chrome: one 141px scrollport of 11/16 monospace on
+   the markdown code-block fill, indented to the title column. */
+.mcpScope_injectionBody {
+  box-sizing: border-box;
+  width: calc(100% - 22px - var(--dsh-content-font-delta, 0px));
+  max-height: 141px;
+  margin: 4px 0 0 calc(22px + var(--dsh-content-font-delta, 0px));
+  padding: 10px 16px 12px 12px;
+  border-radius: 8px;
+  background: var(--dsw-alias-markdown-code-block);
+  color: var(--dsw-alias-label-tertiary);
+  font: 400 11px/16px var(--ds-font-family-code);
+  overflow: auto;
+}
+
+.mcpScope_injectionServer + .mcpScope_injectionServer {
+  margin-top: 8px;
+}
+
+.mcpScope_injectionServerName {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.mcpScope_injectionToolName {
+  overflow-wrap: anywhere;
+}
+
+.mcpScope_injectionOmitted {
+  color: var(--dsw-alias-label-caption);
 }
 
 /* ---- transport tag (ui-primitives Tag, tone="outline") ---- */

@@ -10,6 +10,8 @@ import {
   docsEqual,
   failureKey,
   normalizeDoc,
+  overrideDoc,
+  pruneEmptyOverrideRows,
   renameOverrideKey,
   serverDefEqual,
   toggleOp,
@@ -124,7 +126,7 @@ describe('buildSaveOps', () => {
     const prev = doc([stdioServer('a'), stdioServer('b')], {
       ws1: { a: true },
       ws2: { a: true, b: true },
-      ws3: { b: true }, // only b off → untouched by removing a
+      ws3: { b: true }, // only b enabled → untouched by removing a
     })
     const next = doc(prev.servers.filter((s) => s.serverName !== 'a'), removeServerOverrides(prev.overrides, 'a'))
     const plan = buildSaveOps(prev, next)
@@ -132,7 +134,7 @@ describe('buildSaveOps', () => {
       { op: 'set', path: ['servers'], value: next.servers },
       { op: 'unset', path: ['overrides', 'ws1', 'a'] },
       { op: 'unset', path: ['overrides', 'ws1'] }, // row emptied by the removal
-      { op: 'unset', path: ['overrides', 'ws2', 'a'] }, // ws2 keeps b off
+      { op: 'unset', path: ['overrides', 'ws2', 'a'] }, // ws2 keeps b enabled
     ])
   })
 
@@ -165,18 +167,18 @@ describe('buildSaveOps', () => {
 describe('toggleOp', () => {
   it('returns no ops when the requested state already holds', () => {
     const d = doc([stdioServer('a')], { ws1: { a: true } })
-    expect(toggleOp(d, 'ws1', 'a', true)).toEqual([]) // already off
-    expect(toggleOp(d, 'ws2', 'a', false)).toEqual([]) // default on
+    expect(toggleOp(d, 'ws1', 'a', true)).toEqual([]) // already enabled
+    expect(toggleOp(d, 'ws2', 'a', false)).toEqual([]) // absent = default off
   })
 
-  it('turning off sets one presence op', () => {
+  it('enabling sets one presence op', () => {
     const d = doc([stdioServer('a')])
     expect(toggleOp(d, 'ws1', 'a', true)).toEqual([
       { op: 'set', path: ['overrides', 'ws1', 'a'], value: true },
     ])
   })
 
-  it('turning on unsets the record and prunes the emptied row', () => {
+  it('disabling unsets the enable record and prunes the emptied row', () => {
     const d = doc([stdioServer('a')], { ws1: { a: true } })
     expect(toggleOp(d, 'ws1', 'a', false)).toEqual([
       { op: 'unset', path: ['overrides', 'ws1', 'a'] },
@@ -184,9 +186,25 @@ describe('toggleOp', () => {
     ])
   })
 
-  it('turning on keeps the row when other servers stay off in it', () => {
+  it('disabling keeps the row when other servers stay enabled in it', () => {
     const d = doc([stdioServer('a'), stdioServer('b')], { ws1: { a: true, b: true } })
     expect(toggleOp(d, 'ws1', 'a', false)).toEqual([{ op: 'unset', path: ['overrides', 'ws1', 'a'] }])
+  })
+
+  it('enables a workspace literally named __proto__ as an OWN record', () => {
+    // A plain `overrides[workspaceId] = …` assignment for such a workspace sets
+    // the prototype and the write silently disappears; the row must land as an
+    // own key and read back through isEnabled.
+    const row = (...names: string[]): Record<string, true> =>
+      Object.fromEntries(names.map((name) => [name, true as const])) as Record<string, true>
+    const d = doc([stdioServer('a')])
+    const next = overrideDoc(d, '__proto__', 'a', true)
+    expect(Object.hasOwn(next.overrides, '__proto__')).toBe(true)
+    expect(isEnabled(next.overrides, '__proto__', 'a')).toBe(true)
+    // The canonicalizing passes must not drop it again.
+    expect(Object.hasOwn(normalizeDoc(next).overrides, '__proto__')).toBe(true)
+    expect(Object.hasOwn(renameOverrideKey(next.overrides, 'a', 'b'), '__proto__')).toBe(true)
+    expect(Object.hasOwn(pruneEmptyOverrideRows({ ...next.overrides, '__proto__': row('a') }), '__proto__')).toBe(true)
   })
 })
 
@@ -194,6 +212,18 @@ describe('docsEqual (landed-write comparison)', () => {
   it('compares whole documents over normalized shape', () => {
     expect(docsEqual(doc([stdioServer('a')], { ws1: { a: true } }), doc([stdioServer('a')], { ws1: { a: true } }))).toBe(true)
     expect(docsEqual(doc([stdioServer('a')]), doc([stdioServer('a')], { ws1: { a: true } }))).toBe(false)
+  })
+
+  it('detects a same-count row swap of prototype-member names', () => {
+    // `name in row` reads inherited members: both rows have one entry and both
+    // "contain" toString, yet they are different documents.
+    // Built through fromEntries: a literal `{ toString: true }` widens to boolean
+    // in an index-signature position and does not typecheck.
+    const row = (...names: string[]): Record<string, true> =>
+      Object.fromEntries(names.map((name) => [name, true as const])) as Record<string, true>
+    expect(
+      docsEqual(doc([stdioServer('a')], { ws1: row('toString') }), doc([stdioServer('a')], { ws1: row('valueOf') })),
+    ).toBe(false)
   })
 
   it('prunes empty override rows before comparing', () => {
@@ -226,7 +256,7 @@ describe('docsEqual (landed-write comparison)', () => {
 })
 
 describe('renameOverrideKey', () => {
-  it('renames the off-switch keys of one server across rows, preserving presence', () => {
+  it('renames the enable keys of one server across rows, preserving presence', () => {
     const overrides: WorkspaceOverrides = { ws1: { a: true }, ws2: { a: true, b: true }, ws3: { b: true } }
     expect(renameOverrideKey(overrides, 'a', 'a2')).toEqual({
       ws1: { a2: true },
@@ -253,8 +283,9 @@ describe('shared semantics alignment', () => {
 
   it('normalizeDoc keeps semantics of isEnabled', () => {
     const d = normalizeDoc(doc([stdioServer('a')], { ws1: { a: true }, ws2: {} }))
-    expect(isEnabled(d.overrides, 'ws1', 'a')).toBe(false)
-    expect(isEnabled(d.overrides, 'ws2', 'a')).toBe(true)
+    // Presence is an ENABLE record; the pruned empty row stays default-off.
+    expect(isEnabled(d.overrides, 'ws1', 'a')).toBe(true)
+    expect(isEnabled(d.overrides, 'ws2', 'a')).toBe(false)
     expect(d.overrides).toEqual({ ws1: { a: true } })
   })
 })
@@ -611,16 +642,18 @@ describe('McpScopeController save pipeline (FE-4)', () => {
     const { scope, controller, stop } = makePipeline(doc([stdioServer('toString')]))
     try {
       await flush()
-      // Turning OFF writes an OWN row and flips the read.
-      const off = await controller.toggleWorkspace('ws1', 'toString', true)
-      expect(off).toEqual({ ok: true })
-      expect(scope.mirror.overrides.ws1).toEqual({ toString: true })
-      // Turning ON again removes the own row (no phantom inherited reads).
-      const on = await controller.toggleWorkspace('ws1', 'toString', false)
+      // Enabling writes an OWN record and flips the read (absence is the
+      // default-off state, so the record is what makes it enabled).
+      const on = await controller.toggleWorkspace('ws1', 'toString', true)
       expect(on).toEqual({ ok: true })
+      expect(scope.mirror.overrides.ws1).toEqual({ toString: true })
+      expect(isEnabled(scope.mirror.overrides, 'ws1', 'toString')).toBe(true)
+      // Disabling removes the own record again (no phantom inherited reads).
+      const off = await controller.toggleWorkspace('ws1', 'toString', false)
+      expect(off).toEqual({ ok: true })
       expect(scope.mirror.overrides.ws1).toBeUndefined()
       // isEnabled agrees with the mirror at both ends.
-      expect(isEnabled(scope.mirror.overrides, 'ws1', 'toString')).toBe(true)
+      expect(isEnabled(scope.mirror.overrides, 'ws1', 'toString')).toBe(false)
     } finally {
       stop()
     }
@@ -701,7 +734,7 @@ describe('McpScopeController save pipeline (FE-4)', () => {
     }
   })
 
-  it('replaceServer with a rename migrates per-workspace off-switch rows', async () => {
+  it('replaceServer with a rename migrates per-workspace enable rows', async () => {
     const { scope, controller, stop } = makePipeline(
       doc([stdioServer('old'), stdioServer('keep')], { ws1: { old: true }, ws2: { old: true, keep: true } }),
     )

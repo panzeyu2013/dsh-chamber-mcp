@@ -8,7 +8,7 @@
  *
  * Runtime-write layout (shared with `src/shared/model.ts`):
  *   servers:   ServerDef[]            — whole-array replace is ONE atomic op
- *   overrides: { [workspaceId]: { [serverName]: true } }  — presence = OFF
+ *   overrides: { [workspaceId]: { [serverName]: true } }  — presence = ENABLED
  *   disabled:  { [serverName]: true }                     — presence = globally OFF
  *                (flat sparse map so one switch is one atomic path op)
  *
@@ -45,18 +45,22 @@ import type { SettingsKey } from './locales.js'
 export { MCP_SCOPE_NAMESPACE }
 export type { CredentialInfo }
 
-/** Rows whose last explicit off-switch was toggled back on are dropped. */
+/** Rows whose last explicit enable was toggled back off are dropped. */
 export function pruneEmptyOverrideRows(overrides: WorkspaceOverrides): WorkspaceOverrides {
-  const next: WorkspaceOverrides = {}
+  // Rows land through `Object.fromEntries`: assigning a workspace literally named
+  // `__proto__` would set the prototype and silently drop the row. (The upstream
+  // schema resolver has the same shape, so such a workspace also needs a
+  // framework UUID in practice; this keeps the plugin's own paths honest.)
+  const rows = new Map<string, Record<string, true>>()
   for (const [workspaceId, row] of Object.entries(overrides)) {
     if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
     const rest: Record<string, true> = {}
-    for (const [name, off] of Object.entries(row)) {
-      if (off === true) rest[name] = true
+    for (const [name, value] of Object.entries(row)) {
+      if (value === true) rest[name] = true
     }
-    if (Object.keys(rest).length > 0) next[workspaceId] = rest
+    if (Object.keys(rest).length > 0) rows.set(workspaceId, rest)
   }
-  return next
+  return Object.fromEntries(rows) as WorkspaceOverrides
 }
 
 /**
@@ -79,7 +83,7 @@ export function decodeDoc(raw: unknown): McpScopeDoc {
   return { servers, overrides, disabled }
 }
 
-/** Copy a doc into canonical shape (empty override rows and non-true off-switches pruned). */
+/** Copy a doc into canonical shape (empty enable rows and non-true entries pruned). */
 export function normalizeDoc(doc: McpScopeDoc): McpScopeDoc {
   return {
     servers: doc.servers,
@@ -152,7 +156,7 @@ export function docsEqual(left: McpScopeDoc, right: McpScopeDoc): boolean {
       if (aRow === undefined || bRow === undefined) return false
       const aNames = Object.keys(aRow)
       const bNames = Object.keys(bRow)
-      return aNames.length === bNames.length && aNames.every((name) => name in bRow)
+      return aNames.length === bNames.length && aNames.every((name) => Object.hasOwn(bRow, name))
     })
   ) {
     return false
@@ -179,24 +183,33 @@ export function credentialRefsOfDoc(doc: McpScopeDoc): string[] {
   return refs
 }
 
-/** Set `off` for one (workspace, server); undefined vs {name:true} presence. */
+/**
+ * Set one (workspace, server) ENABLE record; absence is the default (off), so
+ * `enabled: true` writes the record and `enabled: false` removes it and prunes
+ * a row that becomes empty.
+ */
 export function overrideDoc(
   doc: McpScopeDoc,
   workspaceId: string,
   serverName: string,
-  off: boolean,
+  enabled: boolean,
 ): McpScopeDoc {
-  const overrides: WorkspaceOverrides = {}
-  for (const [ws, row] of Object.entries(doc.overrides)) {
-    overrides[ws] = { ...row }
+  // Rows live in a Map and land through `Object.fromEntries`: a plain
+  // `overrides[workspaceId] = …` assignment for a workspace literally named
+  // `__proto__` would set the prototype instead of an own key and the write
+  // would silently do nothing.
+  const rows = new Map<string, Record<string, true>>()
+  for (const [ws, row] of Object.entries(doc.overrides)) rows.set(ws, { ...row })
+  const row = rows.get(workspaceId) ?? {}
+  if (enabled) {
+    rows.set(workspaceId, { ...row, [serverName]: true })
+  } else if (Object.hasOwn(row, serverName)) {
+    const next = { ...row }
+    delete next[serverName]
+    if (Object.keys(next).length === 0) rows.delete(workspaceId)
+    else rows.set(workspaceId, next)
   }
-  const row = overrides[workspaceId]
-  if (off) {
-    overrides[workspaceId] = { ...(row ?? {}), [serverName]: true }
-  } else if (row !== undefined && row !== null && Object.hasOwn(row, serverName)) {
-    delete row[serverName]
-    if (Object.keys(row).length === 0) delete overrides[workspaceId]
-  }
+  const overrides = Object.fromEntries(rows) as WorkspaceOverrides
   // Carry every other document section through untouched (disabled included):
   // dropping it here made the landed-write check misjudge and, worse, emitted
   // unset ops that silently cleared global off-switches.
@@ -204,9 +217,9 @@ export function overrideDoc(
 }
 
 /**
- * Rename the off-switch keys of one server across every workspace row
+ * Rename the ENABLE keys of one server across every workspace row
  * (edit-with-rename). Presence semantics are preserved per workspace; rows
- * that did not switch the old name off are returned untouched.
+ * that did not enable the old name are returned untouched.
  */
 export function renameOverrideKey(
   overrides: WorkspaceOverrides,
@@ -214,7 +227,7 @@ export function renameOverrideKey(
   to: string,
 ): WorkspaceOverrides {
   if (from === to) return overrides
-  const next: WorkspaceOverrides = {}
+  const rows = new Map<string, Record<string, true>>()
   let changed = false
   for (const [workspaceId, row] of Object.entries(overrides)) {
     const rest: Record<string, true> = {}
@@ -226,9 +239,9 @@ export function renameOverrideKey(
         rest[name] = true
       }
     }
-    if (Object.keys(rest).length > 0) next[workspaceId] = rest
+    if (Object.keys(rest).length > 0) rows.set(workspaceId, rest)
   }
-  return changed ? next : overrides
+  return changed ? (Object.fromEntries(rows) as WorkspaceOverrides) : overrides
 }
 
 /** Path ops turning `prev`'s overrides into `next`'s (both canonical). */
@@ -241,7 +254,7 @@ function diffOverrides(prev: McpScopeDoc, next: McpScopeDoc): SettingsPathOpView
     const names = new Set([...Object.keys(prevRow), ...Object.keys(nextRow)])
     for (const name of names) {
       // Own-property semantics (F1): `in` would read Object.prototype
-      // members as phantom off-switches for names like `toString`.
+      // members as phantom enable records for names like `toString`.
       const had = Object.hasOwn(prevRow, name)
       const want = Object.hasOwn(nextRow, name)
       if (had === want) continue
@@ -312,15 +325,15 @@ export function buildSaveOps(
   return { ops, unsetRefs: orphanedRefs(from, to) }
 }
 
-/** Pure plan for one workspace switch. Empty when nothing would change. */
+/** Pure plan for one workspace enable switch. Empty when nothing would change. */
 export function toggleOp(
   prev: McpScopeDoc,
   workspaceId: string,
   serverName: string,
-  off: boolean,
+  enabled: boolean,
 ): SettingsPathOpView[] {
   const from = normalizeDoc(prev)
-  const to = overrideDoc(from, workspaceId, serverName, off)
+  const to = overrideDoc(from, workspaceId, serverName, enabled)
   return diffOverrides(from, to)
 }
 
@@ -462,7 +475,7 @@ export interface McpStoreSource {
 export interface ServerSaveInput {
   server: ServerDef
   secrets: readonly SecretWrite[]
-  /** Global enabled flag staged by the form; absent = enabled (default on). */
+  /** Global allowed flag staged by the form; absent = allowed (the workspace enables still decide). */
   enabled?: boolean
 }
 
@@ -638,7 +651,7 @@ export class McpScopeController {
   /**
    * Replace one server in place (edit flow). The staged definition replaces
    * the original at its index through the same whole-array save pipeline;
-   * per-workspace off-switches follow a rename (overrides are keyed by
+   * per-workspace enable records follow a rename (overrides are keyed by
    * serverName). A missing original means the list moved on — surface that
    * as a conflict instead of silently appending.
    */
@@ -656,7 +669,8 @@ export class McpScopeController {
       ? renameOverrideKey(base.doc.overrides, oldServerName, input.server.serverName)
       : base.doc.overrides
     // A rename carries the global off-switch to the new name; the form's
-    // enable flag is then applied on top (excluding the default-on no-op).
+    // allowed flag is then applied on top (a no-op when it already matches the
+    // default, which is allowed).
     const carried = renamed
       ? renameDisabledKey(base.doc.disabled, oldServerName, input.server.serverName)
       : base.doc.disabled
@@ -671,24 +685,25 @@ export class McpScopeController {
     if (!target) return { ok: true }
     const next: McpScopeDoc = {
       servers: base.doc.servers.filter((server) => server.serverName !== serverName),
-      // Prune the removed server from every workspace's off-switch rows so a
-      // later re-add cannot resurrect as OFF through an orphaned row.
+      // Prune the removed server from every workspace's enable rows so a later
+      // re-add cannot resurrect as ENABLED through an orphaned row.
       overrides: removeServerOverrides(base.doc.overrides, serverName),
-      // Same for the global off-switch: re-adding starts enabled.
+      // Same for the global off-switch: re-adding starts allowed (and still off
+      // in every workspace until one enables it).
       disabled: removeServerDisabled(base.doc.disabled, serverName),
     }
     return this.submitPlan(base, next, [])
   }
 
-  /** Toggle one workspace switch (atomic single-purpose mutation). */
-  async toggleWorkspace(workspaceId: string, serverName: string, off: boolean): Promise<SaveOutcome> {
+  /** Turn one server on or off for one workspace (atomic single-purpose mutation). */
+  async toggleWorkspace(workspaceId: string, serverName: string, enabled: boolean): Promise<SaveOutcome> {
     const base = this.snapshot
     if (base.status === 'loading' || base.status === 'unavailable') {
       return { ok: false, reason: 'save-failed' }
     }
-    const ops = toggleOp(base.doc, workspaceId, serverName, off)
+    const ops = toggleOp(base.doc, workspaceId, serverName, enabled)
     if (ops.length === 0) return { ok: true }
-    const next = overrideDoc(base.doc, workspaceId, serverName, off)
+    const next = overrideDoc(base.doc, workspaceId, serverName, enabled)
     return this.applyOps(ops, base.revision, next)
   }
 
@@ -709,10 +724,10 @@ export class McpScopeController {
     return this.submitPlan(base, next, [])
   }
 
-  /** Batch per-workspace switch (one mutation; one path op per workspace). */
+  /** Batch per-workspace enable switch (one mutation; one path op per workspace). */
   async toggleWorkspaces(
     serverName: string,
-    off: boolean,
+    enabled: boolean,
     workspaceIds: readonly string[],
   ): Promise<SaveOutcome> {
     const base = this.snapshot
@@ -723,7 +738,7 @@ export class McpScopeController {
       return { ok: false, reason: 'conflict' }
     }
     let next = base.doc
-    for (const workspaceId of workspaceIds) next = overrideDoc(next, workspaceId, serverName, off)
+    for (const workspaceId of workspaceIds) next = overrideDoc(next, workspaceId, serverName, enabled)
     const plan = buildSaveOps(base.doc, next)
     if (plan.ops.length === 0) return { ok: true }
     return this.applyOps(plan.ops, base.revision, next)

@@ -1,11 +1,13 @@
 /**
- * Conversation lane row: "MCP tools injected".
+ * Conversation lane row: "MCP tools registered".
  *
- * The host writes NOTHING into a session for this notice (a private required
- * session event would make the whole log unreadable — see
- * `src/client/injection.ts`). The row is derived from the harness's own
- * `request/header` events instead, through the official conversation extension
- * points — the same two seams the shipped lanes use:
+ * A UI hint only: it tells the reader which MCP tools the plugin registered for
+ * the session that a request belongs to — it is not part of the prompt, the
+ * request, or the conversation. The host writes NOTHING into a session for it
+ * (a private required session event would make the whole log unreadable — see
+ * `src/client/injection.ts`). The row is derived from the harness's own session
+ * events instead, through the official conversation extension points — the same
+ * two seams the shipped lanes use:
  *
  *   - `ctx.uiConversation.events.register(definition)` maps a session event to
  *     a view node (the Chat lane's `request-prompt` definition uses exactly this
@@ -25,16 +27,33 @@
  * service keeps working (nothing registers, nothing throws), and a malformed
  * payload renders nothing instead of an error.
  *
+ * The row's form follows the shipped conversation rows rule for rule (the
+ * system-prompt card and the injected-context rows): one 24px disclosure line —
+ * leading box, 13px secondary title, the marked-up server summary and total, a
+ * hover/open chevron — that a click (or Enter/Space) expands into the shipped
+ * 141px code-block scrollport. That body lists each owning server and the
+ * public names it contributed; the collapsed line already carries the counts,
+ * so the expansion answers "which tools", not "how many". No shipped component
+ * is imported (the built client bundle may require nothing but react): the
+ * geometry is reproduced here against the same `--dsw-*` tokens.
+ *
+ * The row is positioned as a header for the model-facing input that follows
+ * it: a hair BEFORE the system-prompt card that opens the request's step. The
+ * card, the user message and every auto-injected context row all follow; the
+ * header event that names the tools is the LAST event of that assembly, so
+ * anchoring on it put the notice under all of them (see {@link anchorSeqOf}).
+ *
  * @module
  */
 
-import type { ReactElement } from 'react'
-import { McpPlugIcon } from './tool-card/icon.js'
+import { useState, type KeyboardEvent, type ReactElement } from 'react'
+import { McpChevronIcon, McpPlugIcon } from './tool-card/icon.js'
 import { styles } from './styles.js'
 import type { ServerDef } from '../shared/model.js'
 import {
   MCP_INJECTION_NODE_KIND,
-  injectionServersOfHeader,
+  injectionOmittedOf,
+  injectionServersOfRequest,
   injectionSignature,
   readInjectionPayload,
   type InjectionPayload,
@@ -52,21 +71,84 @@ export interface InjectionNodeProps {
   t: InjectionTranslate
 }
 
-/** One line: [plug] MCP tools injected · zotero (43) · email (18) */
+/**
+ * One disclosure line: [plug] MCP tools registered · zotero (43) · email (18) ·
+ * 61 tools registered. Click (or Enter/Space) expands the per-server tool names
+ * into the shipped code-block scrollport; the same click collapses it again.
+ */
 export function McpInjectionRow({ node, t }: InjectionNodeProps): ReactElement | null {
+  const [open, setOpen] = useState(false)
   const payload = readInjectionPayload(node?.data)
   if (payload === undefined) return null
   const details = payload.servers
     .map((server) => t('injection.entry', { name: server.name, count: server.toolCount }))
     .join(' · ')
+  const toggle = (): void => setOpen((current) => !current)
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    toggle()
+  }
   return (
-    <div className={styles.injectionRow} data-mcp-injection="">
-      <span className={styles.injectionIcon} aria-hidden="true">
-        <McpPlugIcon />
-      </span>
-      <span className={styles.injectionTitle}>{t('injection.title')}</span>
-      <span className={styles.injectionDetail}>{details}</span>
-      <span className={styles.injectionTotal}>{t('injection.total', { count: payload.total })}</span>
+    <div className={styles.injectionRoot} data-open={open || undefined} data-mcp-injection="">
+      <div
+        className={styles.injectionHead}
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={toggle}
+        onKeyDown={onKeyDown}
+      >
+        <span className={styles.injectionLeading}>
+          {open ? (
+            <span className={styles.injectionGlyphOpen}>
+              <McpChevronIcon />
+            </span>
+          ) : (
+            <>
+              <span className={styles.injectionGlyphIdle}>
+                <McpPlugIcon />
+              </span>
+              <span className={styles.injectionGlyphHover}>
+                <McpChevronIcon />
+              </span>
+            </>
+          )}
+        </span>
+        <span className={styles.injectionTitle}>{t('injection.title')}</span>
+        {details !== '' && <span className={styles.injectionSep} aria-hidden="true" />}
+        <span className={styles.injectionDetail}>{details}</span>
+        <span className={styles.injectionSep} aria-hidden="true" />
+        <span className={styles.injectionTotal}>{t('injection.total', { count: payload.total })}</span>
+      </div>
+      {open && (
+        <div className={styles.injectionBody} data-injection-body="">
+          {payload.servers.map((server) => {
+            const serverOmitted = injectionOmittedOf(server)
+            return (
+              <div key={server.name} className={styles.injectionServer} data-injection-server={server.name}>
+                <div className={styles.injectionServerName}>
+                  {t('injection.entry', { name: server.name, count: server.toolCount })}
+                </div>
+                {server.tools.map((name, index) => (
+                  // A repeated name is legal in a hostile header: index-qualify
+                  // the key so React never sees a duplicate.
+                  <div
+                    key={name + '#' + String(index)}
+                    className={styles.injectionToolName}
+                    data-injection-tool={name}
+                  >
+                    {name}
+                  </div>
+                ))}
+                {serverOmitted > 0 && (
+                  <div className={styles.injectionOmitted}>{t('injection.omitted', { count: serverOmitted })}</div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -83,7 +165,7 @@ export interface InjectionEventLike {
 export interface InjectionLocationLike {
   kind?: unknown
   turn?: { turn?: unknown; start?: { seq?: unknown } }
-  step?: { start?: { seq?: unknown } }
+  step?: { step?: unknown; start?: { seq?: unknown } }
 }
 
 /** Accepted match handed back to `start`. */
@@ -116,25 +198,122 @@ export interface InjectionNodeContextLike<State> {
 export interface InjectionRowState extends InjectionPayload {
   /** Change key of this set; equal to the predecessor's ⇒ no row. */
   signature: string
-  /** Render position (the header's own seq neighborhood). */
+  /** Render position (a hair before the request's system-prompt card). */
   anchorSeq: number
   /** Whether the nearest earlier header offered the same set. */
   unchanged: boolean
 }
 
 /**
- * Render position of one header's row: just before the header event's own row
- * (`processControl` neighborhood), so the notice lands inside the step whose
- * request carried the tools.
+ * Render position of one header's row: a hair BEFORE the system-prompt card
+ * that opens the request's step, so the notice reads as a header for the
+ * model-facing input that follows it.
+ *
+ * The Chat lane's own `request-prompt` definition anchors that card on the
+ * turn start for the first step of a turn and on the step start afterwards, so
+ * the row mirrors that anchor and subtracts a hair. Everything the request
+ * carries — the user message, the auto-injected context rows (workspace
+ * instructions, runtime snapshot) — follows the card in seq order, and the
+ * header event itself is the LAST event of the assembly; anchoring on the
+ * header therefore rendered the notice under all of them (and anchoring after
+ * the card put it between the card and the user's message). Before the card is
+ * where a row about what the request carries belongs: it is not part of the
+ * prompt, the request, or the conversation.
  */
-const INJECTION_ANCHOR_OFFSET = -0.1
+const INJECTION_CARD_OFFSET = -0.1
+
+/** Fallback for a window with no resolved step location: just before the header. */
+const INJECTION_HEADER_OFFSET = -0.1
+
+/** Sequence of one structurally narrowed location field, or undefined. */
+function locationSeq(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+/** Anchor facts one earlier `request-prompt` Context publishes. */
+interface PromptAnchorLike {
+  turn?: unknown
+  step?: unknown
+}
+
+/**
+ * Render position of one header's row: immediately before the system-prompt
+ * card, by mirroring the official `requestPromptAnchor` rule for rule and
+ * subtracting a hair.
+ *
+ * The official rule is what the Chat lane uses to place the card, so copying it
+ * — rather than only its common branch — keeps the row on the card's left in
+ * every window shape: an unresolved location, a series that started before the
+ * loaded window (no predecessor, and not an `initial` reason), and a header
+ * that repeats the turn/step of its predecessor all anchor the card on the
+ * header event itself, and the row follows at `header.seq - 0.1`.
+ *
+ * @param match - the accepted match (event plus resolved location).
+ * @param previous - state of the nearest earlier `request-prompt` Context.
+ * @param isInitial - whether the header's own reason is `initial`.
+ * @returns the row's render position.
+ */
+function anchorSeqOf(match: InjectionMatchLike, previous: PromptAnchorLike | undefined, isInitial: boolean): number {
+  const location = match.location
+  if (location?.kind !== 'step') return seqOf(match.event) + INJECTION_HEADER_OFFSET
+  if (previous === undefined && !isInitial) return seqOf(match.event) + INJECTION_HEADER_OFFSET
+  if (previous?.turn === location.turn?.turn && previous?.step === location.step?.step) {
+    return seqOf(match.event) + INJECTION_HEADER_OFFSET
+  }
+  const turnStart = locationSeq(location.turn?.start?.seq)
+  const stepStart = locationSeq(location.step?.start?.seq)
+  const firstStep = location.step?.step === 1
+  const cardAnchor = firstStep
+    ? (turnStart ?? stepStart ?? seqOf(match.event))
+    : (stepStart ?? seqOf(match.event))
+  return cardAnchor + INJECTION_CARD_OFFSET
+}
+
+/**
+ * State of the nearest strictly-earlier Context of one kind, or undefined.
+ *
+ * Every read this lane performs goes through here: a composition without the
+ * Chat lane, a window whose page left the bounded window, an unknown kind and a
+ * hostile reader that throws all collapse to "absent", so `start()` can never
+ * throw into a session.
+ *
+ * @param reader - the strict-backward Context reader, when the engine passes one.
+ * @param kind - Definition kind whose predecessor state is wanted.
+ * @returns the state, or undefined.
+ */
+function previousStateOf<State>(reader: InjectionContextReaderLike | undefined, kind: string): Readonly<State> | undefined {
+  try {
+    return reader?.previous<State>(kind)?.state
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Effective rendered system prompt of the loaded window, read through the Chat
+ * lane's own `system-message` Context — the same lookup its `request-prompt`
+ * definition performs. Absent for the same reasons as {@link previousStateOf}:
+ * the row then falls back to the header's tool array.
+ *
+ * @param reader - the strict-backward Context reader, when the engine passes one.
+ * @returns the prompt text, or undefined.
+ */
+function effectivePromptOf(reader?: InjectionContextReaderLike): string | undefined {
+  const state = previousStateOf<{ effective?: { text?: unknown } }>(reader, 'system-message')
+  const text = state?.effective?.text
+  return typeof text === 'string' && text !== '' ? text : undefined
+}
 
 /** Construction options of the notice definition. */
 export interface InjectionRowOptions {
   /**
-   * Live configured servers (read per match, never cached). Absent in a test or
-   * a composition without the settings document: the row then falls back to the
-   * first `__` boundary of a public name for ownership.
+   * Live configured servers (read per match, never cached). Ownership is STRICT:
+   * a name no configured server owns is not a registration and is dropped, so an
+   * unloaded or unavailable settings document (the store reports an empty list
+   * while loading) yields an empty set and that header's Context renders no row.
+   * The next request assembles a new Context with the loaded list and emits the
+   * row, so the gap lasts at most one request; a server removed from the
+   * settings drops out of later rows the same way.
    */
   servers?: () => readonly ServerDef[]
   /**
@@ -155,10 +334,33 @@ export interface InjectionNodeDefinition {
   buildViewNode(context: InjectionNodeContextLike<InjectionRowState>): Record<string, unknown> | null
 }
 
-/** Best currently loaded location, mirroring the Chat lane's own helper. */
-function locationOf(context: InjectionNodeContextLike<InjectionRowState>): unknown {
-  return context.start?.location ?? context.matches?.[0]?.location ?? { kind: 'unresolved' }
-}
+/**
+ * Location this row declares on its node.
+ *
+ * Deliberately NOT the request's own step location, even though the Context has
+ * one. The Chat lane orders visible nodes by `anchorSeq` and then applies TWO
+ * turn-process rules to every node whose location is a turn or a step
+ * (`@deepseek-ai/dsh-client-ui-chat`):
+ *
+ *  - `presentationPosition` re-anchors a node that sits BEFORE the turn's
+ *    opening human input onto that input at rank 2 — i.e. renders it after the
+ *    user message and after the collapsed process control, exactly where this
+ *    hint must not go;
+ *  - `ChatNodeSeat` folds a PROCESS WINDOW member away in the compact view, and
+ *    membership is decided from `kind` plus `anchorSeq` alone (`processStartSeq`
+ *    is the turn start) — a row anchored before its step would fall inside that
+ *    window for every step but the first.
+ *
+ * A session-level location opts out of both. The first rule short-circuits on
+ * `location.kind !== 'turn' && !== 'step'`, and the second never sees a
+ * presentation at all: `ChatTurnProcessProjector.get(node)` resolves it through
+ * `nodeTurn(node)`, which is `undefined` for this location, so
+ * `useChatNodeProcess` yields nothing and `processWindowReady` is false. The
+ * harness gives the same shape to events that carry no turn, and the row is
+ * session-scoped by nature — it summarizes what the plugin registered, not
+ * something the step produced.
+ */
+const INJECTION_NODE_LOCATION = { kind: 'session' } as const
 
 /** Sequence of one structurally narrowed event, or 0 when it is unusable. */
 function seqOf(event: InjectionEventLike): number {
@@ -188,14 +390,19 @@ export function createInjectionNodeDefinition(options: InjectionRowOptions = {})
       return { id: String(seqOf(event)), role: 'start' }
     },
     start(_context, match: InjectionMatchLike, reader?: InjectionContextReaderLike): InjectionRowState {
-      const servers: InjectionServer[] = injectionServersOfHeader(match.event.data, serversOf())
+      const servers: InjectionServer[] = injectionServersOfRequest(
+        { header: match.event.data, prompt: effectivePromptOf(reader) },
+        serversOf(),
+      )
       const signature = injectionSignature(servers)
-      const previous = reader?.previous<InjectionRowState>(MCP_INJECTION_NODE_KIND)?.state
+      const previous = previousStateOf<InjectionRowState>(reader, MCP_INJECTION_NODE_KIND)
+      const promptAnchor = previousStateOf<PromptAnchorLike>(reader, 'request-prompt')
+      const reason = (match.event.data as { reason?: unknown } | undefined)?.reason
       return {
         servers,
         total: servers.reduce((sum, server) => sum + server.toolCount, 0),
         signature,
-        anchorSeq: seqOf(match.event) + INJECTION_ANCHOR_OFFSET,
+        anchorSeq: anchorSeqOf(match, promptAnchor, reason === 'initial'),
         unchanged: previous !== undefined && previous.signature === signature,
       }
     },
@@ -216,15 +423,22 @@ export function createInjectionNodeDefinition(options: InjectionRowOptions = {})
       // rule the shipped `request-prompt` definition follows), so a context that
       // already materialized its row re-emits the same Key HIDDEN instead of
       // returning null.
-      const materialized = (context.current?.get('chat') ?? null) !== null
+      const current = context.current?.get('chat') as { anchorSeq?: unknown } | null | undefined
+      const materialized = (current ?? null) !== null
       if (!visible && !materialized) return null
+      // Keep the anchor the row was FIRST materialized with: the engine replays a
+      // prepended history page through `start()` again, and without this a row
+      // anchored at header - 0.1 could jump to card - 0.1 once its predecessor
+      // page arrives (the official card stabilizes the same way, through
+      // `stableRequestPromptAnchor`).
+      const anchorSeq = typeof current?.anchorSeq === 'number' ? current.anchorSeq : state.anchorSeq
       return {
         key: context.key,
         kind: MCP_INJECTION_NODE_KIND,
         id: context.id,
         target: 'chat',
-        anchorSeq: state.anchorSeq,
-        location: locationOf(context),
+        anchorSeq,
+        location: INJECTION_NODE_LOCATION,
         visibility: visible ? 'visible' : 'hidden',
         data: { servers: state.servers, total: state.total },
       }
@@ -285,7 +499,7 @@ export function registerInjectionRow(ctx: InjectionRegistrationHost, options: In
           return () => {
             if (typeof disposeDefinition === 'function') disposeDefinition()
           }
-        }, 'mcp-scope: injected-tools row')
+        }, 'mcp-scope: registered-tools row')
       } catch (error) {
         report(error)
       }

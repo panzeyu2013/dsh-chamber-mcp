@@ -150,7 +150,7 @@ const ctx = {
   },
   /**
    * Optional-service seam. The tool lane registers through
-   * `slots.inject('tool.call.toolview', …)`; the injected-tools notice lane
+   * `slots.inject('tool.call.toolview', …)`; the registered-tools notice lane
    * registers through `inject(['uiConversation'], …)`. Both are exercised here
    * so a DROPPED or failed notice registration fails this gate instead of
    * passing silently.
@@ -209,8 +209,8 @@ check(
     .every((entry) => entry.spec.priority === 1),
 )
 
-// The injected-tools notice is DERIVED from request/header events by the packed
-// bundle: its definition and keyed view must both be registered (the lane
+// The registered-tools notice is DERIVED from the session's own events by the
+// packed bundle: its definition and keyed view must both be registered (the lane
 // contains its own failures, so a silent drop would otherwise pass the gate).
 check('the notice definition is registered on the conversation service', noticeDefinitions.length === 1)
 const notice = noticeDefinitions[0]
@@ -333,18 +333,60 @@ check('the expanded body carries the token-styled blocks', expanded.includes('mc
 check('the expanded body shows the raw arguments', expanded.includes('name') && expanded.includes('world'))
 check('the expanded body shows the result', expanded.includes('hello world'))
 
-// The notice row itself, rendered from the packed bundle.
+// The notice row itself, rendered from the packed bundle: a shipped-chrome
+// disclosure line that stays collapsed until it is clicked, then lists the
+// public names each server contributed.
 const noticeView = registrations.find((entry) => entry.spec.key === 'mcp-scope-injected')?.component
 if (noticeView === undefined) fail('the packed bundle registered no notice view')
+
+// The definition's dual source: under a PTC presentation the header carries
+// only `run_code` and the generated SDK section declares the tools in the
+// system prompt, so the packed bundle must read the `system-message` Context
+// state the Chat lane's own request-prompt definition reads.
+const systemMessageState = { effective: { text: 'interface ToolArgsMap {\n  mcp__fixture__greet: unknown;\n}' } }
+const ptcState = notice.start(
+  undefined,
+  { event: { type: 'request/header', seq: 13, time: 1, data: { header: { config: {}, tools: [{ name: 'run_code' }] }, reason: 'initial' } }, location: { kind: 'step', turn: { turn: 1, start: { seq: 6 } }, step: { step: 1, start: { seq: 8 } } } },
+  { previous: (kind) => (kind === 'system-message' ? { state: systemMessageState } : undefined) },
+)
+check(
+  'the notice definition reads a PTC request from the system prompt',
+  JSON.stringify(ptcState.servers) === JSON.stringify([{ name: 'fixture', toolCount: 1, tools: ['mcp__fixture__greet'] }]),
+)
+check('the notice row anchors just before the prompt card', ptcState.anchorSeq === 5.9)
+const ptcNode = notice.buildViewNode({ key: 'k', id: 'i', state: ptcState })
+check('the notice node opts out of the turn-process re-anchoring', ptcNode?.location?.kind === 'session')
+const noticeTools = ['mcp__fixture__greet', 'mcp__fixture__late']
 await act(async () => {
   reactRoot.render(
-    React.createElement(noticeView, { t, node: { data: { servers: [{ name: 'fixture', toolCount: 2 }] } } }),
+    React.createElement(noticeView, {
+      t,
+      node: { data: { servers: [{ name: 'fixture', toolCount: 2, tools: noticeTools }] } },
+    }),
   )
 })
 const noticeMarkup = host.innerHTML
 check('the notice row renders from the packed bundle', noticeMarkup.includes('data-mcp-injection'))
 check('the notice row shows the server and its tool count', noticeMarkup.includes('fixture (2)'))
-check('the notice row shows the tool total', noticeMarkup.includes('2 tools in context'))
+check('the notice row shows the tool total', noticeMarkup.includes('2 tools registered'))
+check(
+  'the notice row starts collapsed',
+  noticeMarkup.includes('aria-expanded="false"') && !noticeMarkup.includes('data-injection-body'),
+)
+const noticeHead = host.querySelector('[data-mcp-injection] [role="button"]')
+if (noticeHead === null) fail('the notice row renders no role="button" head')
+await act(async () => {
+  noticeHead.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+})
+const noticeExpanded = host.innerHTML
+check(
+  'a click expands the notice into its tool list',
+  noticeHead.getAttribute('aria-expanded') === 'true' && noticeExpanded.includes('data-injection-body'),
+)
+check(
+  'the expanded notice names the injected tools',
+  noticeExpanded.includes('mcp__fixture__greet') && noticeExpanded.includes('mcp__fixture__late'),
+)
 
 await act(async () => {
   reactRoot.unmount()

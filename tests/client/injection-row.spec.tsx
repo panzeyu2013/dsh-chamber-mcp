@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 /**
- * The injected-tools row: one line in the conversation lane, DERIVED from the
- * harness's own `request/header` events (the plugin writes no session event).
+ * The registered-tools row: one disclosure line in the conversation lane, DERIVED
+ * from the harness's own session events — the union of the request's tool array
+ * and the names its rendered system prompt DECLARES (the plugin writes nothing
+ * into a session) — plus the render/registration contract around it.
  */
 import { afterEach, describe, expect, it } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
@@ -10,16 +12,26 @@ import {
   createInjectionNodeDefinition,
   registerInjectionRow,
   type InjectionContextReaderLike,
+  type InjectionMatchLike,
   type InjectionRowState,
 } from '../../src/client/injection-row.tsx'
-import { MCP_INJECTION_NODE_KIND } from '../../src/client/injection.ts'
+import { INJECTION_NAME_LIMIT, MCP_INJECTION_NODE_KIND } from '../../src/client/injection.ts'
 import { en, type SettingsKey } from '../../src/client/locales.ts'
 import type { ServerDef } from '../../src/shared/model.ts'
 
 const t = (key: SettingsKey, params?: Record<string, string | number>): string =>
   en[key].replace(/\{(\w+)\}/g, (_, name: string) => String(params?.[name] ?? ''))
 
-const definition = createInjectionNodeDefinition()
+/**
+ * Server identities the spec's public names belong to. The notice only reports
+ * names a CONFIGURED server owns (an unowned name is prose or a stale header),
+ * so the default definition is given the live list the plugin would pass it.
+ */
+const SERVER_NAMES = ['a', 'a__b', 'email', 'fixture', 'my-server', 'my_server', 'sharelatex', 'zotero']
+
+const definition = createInjectionNodeDefinition({
+  servers: () => SERVER_NAMES.map((serverName) => ({ serverName, transport: 'stdio', command: 'run' })),
+})
 
 /** One `request/header` event carrying the given model-facing tool names. */
 const header = (seq: number, reason: string, names: string[]): { type: string; seq: number; time: number; data: unknown } => ({
@@ -29,16 +41,44 @@ const header = (seq: number, reason: string, names: string[]): { type: string; s
   data: { header: { config: {}, tools: names.map((name) => ({ name })) }, reason },
 })
 
-const zotero = ['mcp__zotero__search', 'mcp__zotero__item']
+/** Two zotero tools, in the order the projection reports them (sorted). */
+const zotero = ['mcp__zotero__item', 'mcp__zotero__search']
 
-/** Reader whose nearest predecessor state is the given one. */
-const readerWith = (state: InjectionRowState | undefined): InjectionContextReaderLike => ({
-  previous: <State,>(kind: string) =>
-    kind === MCP_INJECTION_NODE_KIND && state !== undefined ? { state: state as unknown as Readonly<State> } : undefined,
+/**
+ * Reader whose nearest predecessor state is the given one, and whose
+ * `system-message` Context carries the given effective prompt text (the
+ * official shape the Chat lane's own `request-prompt` definition reads).
+ */
+const readerWith = (
+  state: InjectionRowState | undefined,
+  prompt?: string,
+  promptAnchor?: { turn?: number; step?: number },
+): InjectionContextReaderLike => ({
+  previous: <State,>(kind: string) => {
+    if (kind === MCP_INJECTION_NODE_KIND && state !== undefined) return { state: state as unknown as Readonly<State> }
+    if (kind === 'system-message' && prompt !== undefined) {
+      return { state: { effective: { text: prompt } } as unknown as Readonly<State> }
+    }
+    if (kind === 'request-prompt' && promptAnchor !== undefined) {
+      return { state: promptAnchor as unknown as Readonly<State> }
+    }
+    return undefined
+  },
 })
 
-const stateOf = (event: ReturnType<typeof header>, previous?: InjectionRowState): InjectionRowState =>
-  definition.start(undefined, { event }, readerWith(previous))
+/** Engine-resolved location of a first-step request (turn start 6, step start 8). */
+const stepLocation = { kind: 'step', turn: { turn: 1, start: { seq: 6 } }, step: { step: 1, start: { seq: 8 } } }
+
+const stateOf = (
+  event: ReturnType<typeof header>,
+  previous?: InjectionRowState,
+  location?: InjectionMatchLike['location'],
+  prompt?: string,
+  promptAnchor?: { turn?: number; step?: number },
+): InjectionRowState => {
+  const match: InjectionMatchLike = location === undefined ? { event } : { event, location }
+  return definition.start(undefined, match, readerWith(previous, prompt, promptAnchor))
+}
 
 const nodeOf = (state: InjectionRowState): Record<string, unknown> | null =>
   definition.buildViewNode({ key: 'k', id: 'i', state })
@@ -46,14 +86,23 @@ const nodeOf = (state: InjectionRowState): Record<string, unknown> | null =>
 let root: Root | undefined
 let host: HTMLElement | undefined
 
+/** React commits concurrently: wait one tick before asserting on the DOM. */
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
 async function render(data: unknown): Promise<HTMLElement> {
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
   root.render(<McpInjectionRow node={{ data }} t={t} />)
-  // React commits concurrently: wait one tick before asserting on the DOM.
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await flush()
   return host
+}
+
+/** The disclosure head of the rendered notice (the row IS the control). */
+function headOf(node: HTMLElement): HTMLElement {
+  const head = node.querySelector<HTMLElement>('[data-mcp-injection] [role="button"]')
+  if (head === null) throw new Error('the notice row is not a control')
+  return head
 }
 
 afterEach(() => {
@@ -64,16 +113,89 @@ afterEach(() => {
 })
 
 describe('MCP injection row view', () => {
-  it('renders one line with the plug glyph, every server and the tool total', async () => {
-    const node = await render({ servers: [{ name: 'zotero', toolCount: 43 }, { name: 'email', toolCount: 18 }] })
+  it('renders one disclosure line with the plug glyph, every server and the tool total', async () => {
+    const node = await render({
+      servers: [
+        { name: 'zotero', toolCount: 43, tools: ['mcp__zotero__search'] },
+        { name: 'email', toolCount: 18, tools: ['mcp__email__send'] },
+      ],
+    })
     const row = node.querySelector('[data-mcp-injection]')
     expect(row).not.toBeNull()
     expect(node.textContent).toContain(en['injection.title'])
     expect(node.textContent).toContain('zotero (43)')
     expect(node.textContent).toContain('email (18)')
-    expect(node.textContent).toContain('61 tools in context')
+    expect(node.textContent).toContain('61 tools registered')
     // the shipped icon, not a literal
     expect(row?.querySelector('svg')).not.toBeNull()
+    // collapsed like the shipped rows: a control with no body yet
+    const head = headOf(node)
+    expect(head.getAttribute('aria-expanded')).toBe('false')
+    expect(head.getAttribute('tabindex')).toBe('0')
+    expect(node.querySelector('[data-injection-body]')).toBeNull()
+    expect(node.textContent).not.toContain('mcp__zotero__search')
+  })
+
+  it('expands on click into the per-server tool names and collapses again', async () => {
+    const node = await render({
+      servers: [{ name: 'zotero', toolCount: 43, tools: ['mcp__zotero__search', 'mcp__zotero__fetch'] }],
+    })
+    const head = headOf(node)
+    head.click()
+    await flush()
+    expect(head.getAttribute('aria-expanded')).toBe('true')
+    const body = node.querySelector('[data-injection-body]')
+    expect(body?.textContent).toContain('zotero (43)')
+    expect(body?.textContent).toContain('mcp__zotero__search')
+    expect(body?.textContent).toContain('mcp__zotero__fetch')
+    // A list that fits omits nothing: the count IS the number of names.
+    expect(body?.textContent).not.toContain('not listed')
+    expect(node.querySelector('[data-mcp-injection]')?.hasAttribute('data-open')).toBe(true)
+    head.click()
+    await flush()
+    expect(head.getAttribute('aria-expanded')).toBe('false')
+    expect(node.querySelector('[data-injection-body]')).toBeNull()
+  })
+
+  it('expands from the keyboard like the shipped rows', async () => {
+    const node = await render({ servers: [{ name: 'a', toolCount: 1, tools: ['mcp__a__x'] }] })
+    const head = headOf(node)
+    head.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await flush()
+    expect(head.getAttribute('aria-expanded')).toBe('true')
+    expect(node.querySelector('[data-injection-tool]')?.textContent).toBe('mcp__a__x')
+    head.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    await flush()
+    expect(head.getAttribute('aria-expanded')).toBe('false')
+    // Any other key leaves the row alone…
+    head.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }))
+    await flush()
+    expect(head.getAttribute('aria-expanded')).toBe('false')
+    // …and Enter/Space swallow the default (a Space would otherwise scroll).
+    const space = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true })
+    expect(head.dispatchEvent(space)).toBe(false)
+    await flush()
+    expect(head.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('lists a server with no carried names without an omission line', async () => {
+    // The packed-bundle artifact check renders exactly this shape.
+    const node = await render({ servers: [{ name: 'fixture', toolCount: 2 }] })
+    headOf(node).click()
+    await flush()
+    const body = node.querySelector('[data-injection-body]')
+    expect(body?.textContent).toContain('fixture (2)')
+    expect(body?.textContent).not.toContain('not listed')
+  })
+
+  it('reports the names the cap left out instead of dropping them', async () => {
+    const carried = Array.from({ length: INJECTION_NAME_LIMIT }, (_, index) => `mcp__big__t${String(index)}`)
+    const node = await render({ servers: [{ name: 'big', toolCount: INJECTION_NAME_LIMIT + 41, tools: carried }] })
+    headOf(node).click()
+    await flush()
+    const body = node.querySelector('[data-injection-body]')
+    expect(body?.querySelectorAll('[data-injection-tool]')).toHaveLength(INJECTION_NAME_LIMIT)
+    expect(body?.textContent).toContain(t('injection.omitted', { count: 41 }))
   })
 
   it('renders nothing when the payload is unusable', async () => {
@@ -95,9 +217,93 @@ describe('MCP injection node definition', () => {
     expect(definition.match({})).toBeNull()
   })
 
-  it('derives the injected set from the header and anchors just before it', () => {
-    const state = stateOf(header(12, 'initial', zotero))
-    expect(state.servers).toEqual([{ name: 'zotero', toolCount: 2 }])
+  it('anchors immediately BEFORE the system-prompt card of a first step', () => {
+    // Real assembly order of one turn: turn/start (6), step/start (8), the
+    // system/message prompt card (anchored on the turn start by the Chat
+    // lane's own request-prompt definition), the user message (10), the
+    // auto-injected context rows (11, 12) and the header (13) last. The notice
+    // belongs above the card: it is a hint about the request, not a row of it.
+    const state = stateOf(header(13, 'initial', zotero), undefined, stepLocation)
+    expect(state.anchorSeq).toBe(5.9)
+    expect(nodeOf(state)).toMatchObject({ anchorSeq: 5.9, visibility: 'visible' })
+  })
+
+  it('declares a session-level location so the chat lane cannot re-anchor the row', () => {
+    // The Chat lane re-anchors any turn/step-located node that sits before the
+    // turn's opening human input onto that input (rank 2, i.e. after the user
+    // message and the collapsed process control) and folds process-window
+    // members away in the compact view. A session location opts out of both, so
+    // the row keeps the anchor computed above.
+    const node = nodeOf(stateOf(header(13, 'initial', zotero), undefined, stepLocation))
+    expect(node?.location).toEqual({ kind: 'session' })
+  })
+
+  it('anchors before the step card of a later step in the same turn', () => {
+    // Steps after the first are opened by a card anchored on their OWN step
+    // start, so the row mirrors that anchor instead of the turn start.
+    const later = { kind: 'step', turn: { turn: 1, start: { seq: 6 } }, step: { step: 2, start: { seq: 20 } } }
+    const state = stateOf(header(25, 'series', zotero), undefined, later, undefined, { turn: 1, step: 1 })
+    expect(state.anchorSeq).toBe(19.9)
+  })
+
+  it('mirrors the official anchor for a header that repeats its predecessor step', () => {
+    // The official requestPromptAnchor keeps the card on the header event when
+    // the preceding request was the same turn/step, so a second changed set in
+    // one step must not jump to the turn start.
+    const state = stateOf(header(40, 'series', zotero), undefined, stepLocation, undefined, { turn: 1, step: 1 })
+    expect(state.anchorSeq).toBe(39.9)
+  })
+
+  it('mirrors the official anchor for a series that started before the window', () => {
+    // A resumed window has no predecessor Context and a non-initial reason: the
+    // official rule anchors the card on the header itself, and the row follows.
+    const later = { kind: 'step', turn: { turn: 1, start: { seq: 20 } }, step: { step: 2, start: { seq: 24 } } }
+    expect(stateOf(header(200, 'resume', zotero), undefined, later).anchorSeq).toBe(199.9)
+    expect(stateOf(header(200, 'change', zotero), undefined, later).anchorSeq).toBe(199.9)
+    // …while an `initial` header of the same window still follows the card
+    // (step 2 anchors on its own step start, 24).
+    expect(stateOf(header(200, 'initial', zotero), undefined, later).anchorSeq).toBe(23.9)
+  })
+
+  it('keeps the anchor a materialized row already rendered with', () => {
+    // The engine replays a prepended history page through start() again; without
+    // stabilization a row first anchored at header - 0.1 could jump to
+    // card - 0.1 once its predecessor page arrives.
+    const state = stateOf(header(13, 'initial', zotero), undefined, stepLocation)
+    expect(nodeOf(state)).toMatchObject({ anchorSeq: 5.9 })
+    const materialized = new Map<string, unknown>([['chat', { key: 'k', anchorSeq: 3.9 }]])
+    expect(definition.buildViewNode({ key: 'k', id: 'i', state, current: materialized })).toMatchObject({ anchorSeq: 3.9 })
+  })
+
+  it('anchors at the step start when the window reports no step number', () => {
+    // An older window shape cannot tell a first step from a later one: the row
+    // then uses the step start (the one degraded case, just after the card).
+    const noStepNumber = { kind: 'step', turn: { turn: 1, start: { seq: 6 } }, step: { start: { seq: 8 } } }
+    expect(stateOf(header(13, 'initial', zotero), undefined, noStepNumber).anchorSeq).toBe(7.9)
+  })
+
+  it('reads a PTC request: run_code in the header, the tools in the system prompt', () => {
+    // Under a ptc agent preset the header carries only run_code and the
+    // generated SDK section declares every registered tool in the prompt; the
+    // row must still report the registered set.
+    const prompt = 'interface ToolArgsMap {\n  mcp__zotero__fetch: unknown;\n  mcp__zotero__search: unknown;\n}'
+    const state = stateOf(header(13, 'initial', ['run_code']), undefined, stepLocation, prompt)
+    expect(state.servers).toEqual([
+      { name: 'zotero', toolCount: 2, tools: ['mcp__zotero__fetch', 'mcp__zotero__search'] },
+    ])
+    expect(state.total).toBe(2)
+    expect(nodeOf(state)).toMatchObject({ visibility: 'visible', data: { total: 2 } })
+  })
+
+  it('unions both sources without double counting', () => {
+    const prompt = 'mcp__zotero__item mcp__zotero__search'
+    const state = stateOf(header(13, 'initial', zotero), undefined, stepLocation, prompt)
+    expect(state.servers).toEqual([{ name: 'zotero', toolCount: 2, tools: zotero }])
+  })
+
+  it('falls back to just before the header when the window resolves no step', () => {
+    const state = stateOf(header(12, 'initial', zotero), undefined, { kind: 'unresolved' })
+    expect(state.servers).toEqual([{ name: 'zotero', toolCount: 2, tools: zotero }])
     expect(state.total).toBe(2)
     expect(state.unchanged).toBe(false)
     const node = nodeOf(state)
@@ -108,7 +314,7 @@ describe('MCP injection node definition', () => {
       target: 'chat',
       visibility: 'visible',
       anchorSeq: 11.9,
-      data: { servers: [{ name: 'zotero', toolCount: 2 }], total: 2 },
+      data: { servers: [{ name: 'zotero', toolCount: 2, tools: zotero }], total: 2 },
     })
   })
 
@@ -125,7 +331,13 @@ describe('MCP injection node definition', () => {
     expect(state.unchanged).toBe(false)
     expect(nodeOf(state)).toMatchObject({
       anchorSeq: 39.9,
-      data: { servers: [{ name: 'email', toolCount: 1 }, { name: 'zotero', toolCount: 2 }], total: 3 },
+      data: {
+        servers: [
+          { name: 'email', toolCount: 1, tools: ['mcp__email__send'] },
+          { name: 'zotero', toolCount: 2, tools: zotero },
+        ],
+        total: 3,
+      },
     })
   })
 
@@ -169,7 +381,7 @@ describe('MCP injection node definition', () => {
     const servers = (): ServerDef[] => [{ serverName: 'my_server', transport: 'stdio', command: 'run' }]
     const scoped = createInjectionNodeDefinition({ servers })
     const state = scoped.start(undefined, { event: header(3, 'initial', ['mcp__my_server__tool']) })
-    expect(state.servers).toEqual([{ name: 'my_server', toolCount: 1 }])
+    expect(state.servers).toEqual([{ name: 'my_server', toolCount: 1, tools: ['mcp__my_server__tool'] }])
   })
 })
 
@@ -252,6 +464,6 @@ describe('MCP injection node definition (ownership)', () => {
     const servers = (): ServerDef[] => [{ serverName: 'my_server', transport: 'stdio', command: 'run' }]
     const scoped = createInjectionNodeDefinition({ servers })
     const state = scoped.start(undefined, { event: header(3, 'initial', ['mcp__my_server__tool']) })
-    expect(state.servers).toEqual([{ name: 'my_server', toolCount: 1 }])
+    expect(state.servers).toEqual([{ name: 'my_server', toolCount: 1, tools: ['mcp__my_server__tool'] }])
   })
 })
