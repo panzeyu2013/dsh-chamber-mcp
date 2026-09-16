@@ -4,16 +4,18 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
 
 ## Release state
 
-- **Published release: `v0.0.3`** — tag `v0.0.3` on `main` (`bf344ef`), GitHub
-  Release published 2026-09-15 with `dsh-chamber-mcp-0.0.3.tgz` + `.sha256`;
-  notes composed from the dated CHANGELOG section. `v0.0.2` and `v0.0.1` are
-  the previous releases.
-- **Working line: `v0.1.0`, prepared on `main` but NOT tagged.** The changeset
-  sits on top of the `v0.0.3` commit (`bf344ef`) with a dated
-  `## [0.1.0] - 2026-09-16` CHANGELOG section and the version bumped in
-  `package.json` + `package-lock.json`; the pre-tag checklist is green (see
-  "Verification state"), but no tag exists — **do not describe it as released**.
-  Headline change: **MCP off by default** — a
+- **Published release: `v0.1.0`** — tag `v0.1.0` on `main`
+  (`4413b0e`), GitHub Release published 2026-09-16 with
+  `dsh-chamber-mcp-0.1.0.tgz` (157,283 bytes, sha256
+  `cb88df50eb002cace2bef685837a058bf7868d5c69fa4d3be731acfc43505ed9`) + its
+  `.sha256` sidecar; notes composed from the dated CHANGELOG section. The tag
+  push ran `CI` and `Release` green (the Release job re-ran the full gate, then
+  published; the downloaded asset is byte-identical to the locally verified
+  tarball). `v0.0.3` (2026-09-15), `v0.0.2` and `v0.0.1` are the previous
+  releases.
+- **Working line: none yet** — `main` equals the `v0.1.0` tag (`4413b0e`); new
+  entries accumulate under `## [Unreleased]` in `CHANGELOG.md`.
+- **What `v0.1.0` carries.** Headline change: **MCP off by default** — a
   configured server reaches no agent until a workspace explicitly enables it, the
   per-workspace switch now records an enable and the global switch stays a hard
   kill (see `docs/design.md` §3 and the `0.1.0` CHANGELOG entry); the
@@ -27,7 +29,7 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
   expands into the per-server tool names and renders immediately before the
   system-prompt card); the host/gate fixes below; and the
   wireframe/design-document re-alignment with the official
-  `IconChevronDownOutline14` geometry in the tool row. No version bump yet.
+  `IconChevronDownOutline14` geometry in the tool row.
 - Releases ship the packed tgz as a GitHub Release asset; **npm publishing is
   temporarily disabled**. Flow and rollback: `docs/RELEASE.md`. Confirm what is
   actually published with `git ls-remote --tags origin` / `gh release view`.
@@ -69,8 +71,8 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
   carries `mcp__fixture__echo` / `mcp__fixture__env_report`, the disabled
   workspace's turn carries none (transcript evidence — the driver reports the
   verdict but does not fail on it).
-- **0.1.0 line (prepared on `main` — NOT tagged):** the pre-tag checklist ran on
-  the release commit. `npm run check` PASS — `tsc` ×2, **514 tests / 27 files**,
+- **0.1.0 (published):** the pre-tag checklist ran on the release commit
+  (`4413b0e`, tagged `v0.1.0`). `npm run check` PASS — `tsc` ×2, **514 tests / 27 files**,
   build, `verify:package` (45 packed entries; consumer d.ts; react-only
   client-bundle purity; the packed-bundle artifact check, which also drives the
   registered-tools notice lane; lockfile-vs-manifest surface and integrity
