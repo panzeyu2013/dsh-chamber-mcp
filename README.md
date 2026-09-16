@@ -287,9 +287,11 @@ through its own settings namespace and per-agent tool scopes (`docs/design.md`).
 - **Remote input is bounded.** `tools/list` aggregation is capped by the
   client itself (`listMaxPages`, 64 — the non-converging-cursor defence), the
   plugin caps the TOTAL listed tools at `MAX_SYNC_TOOLS` = 2000 per server, and
-  invalid results fail closed to the previous tool generation. Input schemas pass through unchanged; an advertised output schema
-  is only honoured when it passes the dsh tool-registry's JSON-schema check,
-  and otherwise falls back to an unconstrained result.
+  invalid results fail closed to the previous tool generation. Input schemas pass
+  through unchanged. An advertised output schema is compiled by the MCP client
+  (`@modelcontextprotocol/client@2.0.0`) and enforced on the result, so a server
+  whose schema rejects its own payload fails the call instead of degrading to an
+  unconstrained result.
 - **A failed connection stops being dangerous.** After 10 consecutive failed
   reconnect attempts the supervisor gives up and **unregisters the server's
   tools** rather than leaving half-dead entries; reconnect resumes on plugin
@@ -313,7 +315,7 @@ through its own settings namespace and per-agent tool scopes (`docs/design.md`).
 ```sh
 npm install            # dev deps (all @deepseek-ai/* pinned to one dsh generation)
 npm run typecheck      # src + tests
-npm test               # vitest suite (497 tests, 25 files)
+npm test               # vitest suite (498 tests, 25 files)
 npm run check          # full gate: typecheck + tests + build + package verify
 npm run verify:package # pack → contents whitelist → consumer d.ts → built host entry import → bundle purity → MCP-row artifact check → determinism
 npm run verify:client-artifact # drive the BUILT client bundle in jsdom (MCP row + registered-tools notice registration/render/expand, incl. the PTC prompt-only source)

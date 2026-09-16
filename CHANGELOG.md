@@ -67,6 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the barrier and stopped reconnection for good with `failed generation did not
   close within 5000ms`.
 
+### Removed
+
+- The `@modelcontextprotocol/sdk` (1.x) client dependency (replaced by
+  `@modelcontextprotocol/client@2.0.0`), and the `0.1.2` generation from the
+  claimed support window: this line re-verifies `0.1.5-rc.2` and
+  `0.1.6-alpha.1` only.
+
 ### Fixed
 
 - **Giving up now retracts the published instructions, not just the tools.** The
@@ -86,14 +93,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against `package.json`, and refuses a lock whose entries carry a `resolved`
   URL without an `integrity` pin.
 
-### Removed
-
-- The `@modelcontextprotocol/sdk` (1.x) client dependency (replaced by
-  `@modelcontextprotocol/client@2.0.0`), and the `0.1.2` generation from the
-  claimed support window: this line re-verifies `0.1.5-rc.2` and
-  `0.1.6-alpha.1` only.
-
-### Fixed
 
 - **The injected-tools notice poisoned the session log.** The applier appended a
   private `mcp-scope/injected` / `mcp-scope/injected-updated` session event

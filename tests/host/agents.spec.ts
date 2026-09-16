@@ -18,10 +18,10 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { type ToolDefinition } from '@deepseek-ai/dsh-tools'
-import { createScope, type Scope } from '@deepseek-ai/dsh-scope'
+import { createScope, scopeOf, type Scope } from '@deepseek-ai/dsh-scope'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createAgentApplier, type AgentApplier } from '../../src/agents.js'
 import type { WorkspaceLike } from '../../src/workspace.js'
@@ -668,6 +668,83 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       } finally {
         second.dispose()
       }
+    } finally {
+      h.cleanup()
+    }
+  })
+})
+/**
+ * Records every `mcpResources.register` the applier routes through an agent
+ * scope. A host-level registration would call this exactly once per server,
+ * whatever the agents say; per-agent registration calls it only for the agents
+ * whose workspace enabled the pair.
+ */
+class RecordingResources extends Service {
+  readonly registered: { server: string; scope: unknown }[] = []
+  readonly unloaded: string[] = []
+
+  constructor(host: Context) {
+    super(host, 'mcpResources')
+  }
+
+  register(server: string, _provider?: unknown): () => void {
+    // `this` is bound to the CONSUMING fiber, exactly like the upstream
+    // service: a registration made through a host ctx has NO scope
+    // (`scopeOf` undefined) and the consumer then installs its three shared
+    // tools in the GLOBAL layer.
+    this.registered.push({ server, scope: scopeOf(this.ctx) })
+    return this.ctx.effect(() => () => {
+      this.unloaded.push(server)
+    }, 'fake.mcpResources.register')
+  }
+}
+
+/** Cordis activates an inject fiber off the current tick; let it land. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 10; i += 1) await Promise.resolve()
+}
+
+describe('server context publication (per enabled agent)', () => {
+  it('registers the context through the agent scope, never host-level', async () => {
+    const h = await mount()
+    try {
+      const resources = new RecordingResources(h.ctx)
+      const wsA = await h.addWorkspace('a')
+      const wsB = await h.addWorkspace('b')
+
+      // Only workspace B has a live agent, and it has NO enable record.
+      const agentB = h.spawnAgent('agent-b', wsB.path)
+      h.createAgent(agentB)
+
+      const defs = new Map<string, ToolDefinition>([[TOOL_A, def(TOOL_A)]])
+      h.applier.pushServerState(SERVER, {
+        epoch: 1,
+        syncId: 1,
+        defs,
+        context: {
+          instructions: () => '### use add first',
+          resources: { request: async () => ({}) } as never,
+        },
+      })
+      await settle()
+      // Default off: a host-level registration would have published the three
+      // shared resource tools to this agent (and to the global layer) here.
+      expect(resources.registered).toEqual([])
+
+      // Workspace A enables the pair -> exactly its agent gets the context.
+      h.overrides = { [wsA.id]: { files: true } }
+      const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.createAgent(agentA)
+      h.applier.reconcile()
+      await settle()
+      expect(resources.registered).toEqual([{ server: SERVER, scope: expect.anything() }])
+      expect(resources.registered[0]?.scope).toBeDefined()
+
+      // Disabling the pair unloads that agent's copy again.
+      h.overrides = {}
+      h.applier.reconcile()
+      await settle()
+      expect(resources.unloaded).toEqual([SERVER])
     } finally {
       h.cleanup()
     }

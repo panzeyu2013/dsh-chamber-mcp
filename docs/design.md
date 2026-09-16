@@ -183,10 +183,10 @@ comments, anchors and formatting survive on untouched nodes.
 | `src/server-context.ts` | per-server publication of the `mcp:<serverName>` instructions section and the `mcpResources` provider (the official `registerServerContext` shape) |
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture on the 2.0 server packages (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe; publishes instructions, oversized under `FIXTURE_HUGE_INSTRUCTIONS=1`) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (10 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`; repo total 497 tests / 25 files) |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (10 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`; repo total 498 tests / 25 files) |
 
 Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (497 tests / 25 files).
+`node node_modules/vitest/vitest.mjs run` — both fully green (498 tests / 25 files).
 
 ### (a) API signatures and runtime assumptions
 

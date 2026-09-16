@@ -44,6 +44,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { registerServerContext, type ServerContext } from './server-context.js'
 import { isEnabled, type WorkspaceOverrides } from './shared/model.js'
 import { workspaceIdOf, type WorkspaceLike } from './workspace.js'
 // Side-effect type imports: declaration-merge ctx.tools / ctx.agents / events.
@@ -82,6 +83,15 @@ export interface ServerPushState {
   syncId: number
   /** Committed master defs (empty map = server currently has no tools). */
   defs: ReadonlyMap<string, ToolDefinition>
+  /**
+   * Connection-owned context that server publishes to the agents which ENABLE
+   * it (its literal instructions section and its resource operations). It is
+   * registered through each ENABLED agent's own ctx: the consumers scope their
+   * entries by the registering fiber, so a host-level registration would put
+   * the shared resource tools in the GLOBAL layer and hand them to agents whose
+   * workspace never enabled MCP.
+   */
+  context?: ServerContext
 }
 
 /** One agent's applied registrations for one server. */
@@ -91,6 +101,8 @@ interface AppliedServer {
   syncId: number
   /** publicName → exact register disposer. */
   disposers: Map<string, () => void>
+  /** Unloads this agent's copy of the server context (section + provider). */
+  disposeContext?: () => void
 }
 
 /** Per-agent bookkeeping; dropped (never disposed) on agent/disposed. */
@@ -216,6 +228,14 @@ const fmtError = (error: unknown): string =>
         logger.warn(`${label}: disposer for ${serverName} on ${entry.agent.id} threw: ${fmtError(error)}`)
       }
     }
+    try {
+      // Same rule for the context publication: unloading the three shared
+      // resource tools happens inside the consumer once the last provider of
+      // this scope leaves.
+      applied.disposeContext?.()
+    } catch (error) {
+      logger.warn(`${label}: context disposer for ${serverName} on ${entry.agent.id} threw: ${fmtError(error)}`)
+    }
     logger.info(`${label}: revoked server "${serverName}" from agent ${entry.agent.id} (${reason})`)
   }
 
@@ -279,7 +299,23 @@ const fmtError = (error: unknown): string =>
       logger.error(`${label}: tool registration failed for agent ${entry.agent.id} server "${serverName}", no tools registered: ${fmtError(error)}`)
       return
     }
-    entry.applied.set(serverName, { epoch: state.epoch, syncId: state.syncId, disposers })
+    // Publish the server's context LAST, through THIS agent's ctx, so the
+    // consumer's own registration is owned by the same fiber as the tools: an
+    // agent whose workspace never enables the pair registers nothing, and a
+    // revocation unloads the section and the shared resource tools with it.
+    let disposeContext: (() => void) | undefined
+    if (state.context !== undefined) {
+      try {
+        disposeContext = registerServerContext(entry.agent.ctx, serverName, state.context, logger)
+      } catch (error) {
+        for (const dispose of disposers.values()) {
+          try { dispose() } catch { /* partial rollback best effort */ }
+        }
+        logger.error(`${label}: context registration failed for agent ${entry.agent.id} server "${serverName}", no tools registered: ${fmtError(error)}`)
+        return
+      }
+    }
+    entry.applied.set(serverName, { epoch: state.epoch, syncId: state.syncId, disposers, disposeContext })
     logger.info(`${label}: applied ${disposers.size} tool${disposers.size === 1 ? '' : 's'} of server "${serverName}" to agent ${entry.agent.id} (sync ${state.syncId})`)
   }
 

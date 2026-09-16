@@ -25,7 +25,6 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { Workspace } from '@deepseek-ai/dsh-workspace'
 import { createAgentApplier, type AgentApplier, type ApplierLogger } from './agents.js'
-import { registerServerContext } from './server-context.js'
 import { createTransport } from './transport.js'
 import {
   probeServer,
@@ -55,12 +54,6 @@ interface TrackedServer {
   handle: ServerHandle
   /** Serialized definition the handle was started with (change detection). */
   defFingerprint: string
-  /**
-   * Unloads this server's prompt/resource contributions (system-prompt section
-   * + `mcpResources` provider). Owned here, disposed before the handle so no
-   * consumer can call into a generation that is already going away.
-   */
-  disposeContext: () => Promise<void>
 }
 
 /** Manager construction options. */
@@ -316,17 +309,17 @@ export function createManager(options: ManagerOptions): ManagerHandle {
         // misread as a connection failure (closing a healthy child every cycle).
         // The generation is already committed, so contain it and keep serving.
         try {
-          applier.pushServerState(name, { epoch, syncId, defs })
+          // The connection-owned context rides every push: the applier
+          // publishes it into the agents that enable this server, through their
+          // own ctx (a host-level registration would create a GLOBAL resource
+          // provider and leak the shared resource tools to every agent).
+          applier.pushServerState(name, { epoch, syncId, defs, context: handle.context })
         } catch (error) {
           logger.error(`mcp-scope(${name}): could not push the committed tool generation to live agents: ${safeErrorText(error)}`)
         }
       },
     })
-    // Publish the server's connection-owned context to the optional consumers
-    // (system-prompt section, shared resource tools). Registration is
-    // effect-scoped to the plugin fiber and owned per handle.
-    const disposeContext = registerServerContext(ctx, serverName, handle.context, logger)
-    tracked.set(serverName, { handle, defFingerprint: fingerprint(server), disposeContext })
+    tracked.set(serverName, { handle, defFingerprint: fingerprint(server) })
     logger.info(`mcp-scope(${serverName}): server started (${server.transport === 'stdio' ? 'stdio' : 'streamable-http'})`)
   }
 
@@ -337,7 +330,8 @@ export function createManager(options: ManagerOptions): ManagerHandle {
     tracked.delete(serverName)
     if (revokeFirst) applier.revokeServer(serverName)
     try {
-      await current.disposeContext()
+      // The per-agent context publications (prompt section + resource provider)
+      // are disposed by the applier with the agent's tool registrations.
       await current.handle.dispose()
     } finally {
       logger.info(`mcp-scope(${serverName}): server stopped`)
