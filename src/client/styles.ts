@@ -728,12 +728,20 @@ export const css = `
 }
 
 .mcpScope_statusText {
+  /* The card is a 8px-gap flex column: a paragraph that keeps its UA margin
+     doubles the rhythm around its own line (hint / empty / noticeOk reset it
+     for the same reason). */
+  margin: 0;
   font-size: 12px;
   line-height: 18px;
   color: var(--dsw-alias-label-secondary);
 }
 
 .mcpScope_statusErrorText {
+  /* The give-up / timeout / probe-failure line sits between two card rows: with
+     the UA margin it opened ~20px above and below instead of the card's 8px
+     gap, which read as an empty line. The gap owns the rhythm. */
+  margin: 0;
   font-size: 12px;
   line-height: 18px;
   color: var(--dsw-alias-state-error-primary);

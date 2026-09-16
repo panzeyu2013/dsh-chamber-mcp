@@ -181,6 +181,26 @@ describe('mcp-scope stylesheet', () => {
     )
   })
 
+  it('lets the card gap own the vertical rhythm: every card paragraph resets its margin', () => {
+    // The card is a `gap: 8px` flex column; a paragraph that keeps the UA margin
+    // doubles the space around its own line (the reported give-up line opened
+    // ~20px instead of 8px). Every paragraph class the card renders must reset it.
+    for (const selector of [
+      '.mcpScope_statusText',
+      '.mcpScope_statusErrorText',
+      '.mcpScope_hint',
+      '.mcpScope_noticeOk',
+      '.mcpScope_confirmText',
+      '.mcpScope_empty',
+    ]) {
+      const rule = rules(css).find((candidate) => candidate.selector === selector)
+      expect(rule, `no rule for ${selector}`).toBeDefined()
+      expect(rule!.body, `${selector} keeps a UA margin inside the 8px-gap card`).toMatch(
+        /(?:^|[;{\s])margin:\s*0\s*;/,
+      )
+    }
+  })
+
   it('paints the official panel card recipe: r14 + elevation stroke + 12/14 inset, no border', () => {
     const card = rules(css).find((rule) => rule.selector === '.mcpScope_card')
     expect(card, 'no rule for .mcpScope_card').toBeDefined()
