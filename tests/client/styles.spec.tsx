@@ -320,6 +320,8 @@ describe('mcp-scope stylesheet', () => {
     // toggles; the name itself carries the truncation.
     expect(ruleOf('.mcpScope_wsLabel')).toMatch(/display:\s*flex/)
     expect(ruleOf('.mcpScope_wsLabel')).toMatch(/cursor:\s*pointer/)
+    // The label fills the row's full 28px band: no dead strip beside the switch.
+    expect(ruleOf('.mcpScope_wsLabel')).toMatch(/align-self:\s*stretch/)
     expect(ruleOf('.mcpScope_wsName')).toMatch(/text-overflow:\s*ellipsis/)
     // The card-local filter keeps the field geometry but not the official field
     // fill: bg-layer-1 reads as a white slab against the card's bg-layer-3.
@@ -337,6 +339,11 @@ describe('mcp-scope stylesheet', () => {
     expect(ruleOf('.mcpScope_switchBox')).toMatch(/margin:\s*-4px/)
     expect(ruleOf('.mcpScope_switch')).toMatch(/width:\s*36px/)
     expect(ruleOf('.mcpScope_switch')).toMatch(/height:\s*20px/)
+    // The row holds the whole 28px hit box (4 + 20 + 4): anything shorter lets
+    // two rows' hit boxes overlap, and the lower input wins that band.
+    expect(ruleOf('.mcpScope_wsRow')).toMatch(/min-height:\s*28px/)
+    // The keyboard ring draws the hit box, not the bare track.
+    expect(ruleOf('.mcpScope_switchInput:focus-visible + .mcpScope_switch')).toMatch(/outline-offset:\s*4px/)
     expect(ruleOf('.mcpScope_rowInput')).toMatch(/min-width:\s*0/)
     expect(ruleOf('.mcpScope_cardHead')).toMatch(/flex-wrap:\s*wrap/)
   })

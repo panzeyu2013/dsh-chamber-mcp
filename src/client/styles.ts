@@ -922,11 +922,17 @@ export const css = `
   gap: 2px 16px;
 }
 
+/* The row is 28px tall on purpose: the switch's hit box is 4+20+4 = 28px, so
+   the slop stays INSIDE this row. At the previous 20px the hit boxes of two
+   neighbouring rows overlapped by 6px, and because the absolutely positioned
+   inputs paint in DOM order the LOWER row won that band — the bottom ~2px of a
+   switch toggled the row below it. */
 .mcpScope_wsRow {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
+  min-height: 28px;
 }
 
 /* Only the row whose write is running shows a busy state: the card no longer
@@ -942,6 +948,9 @@ export const css = `
   min-width: 0;
   display: flex;
   align-items: center;
+  /* Stretch to the row's 28px: otherwise the text run is 20px tall and the row
+     keeps a 4px dead strip above and below it, right next to a live switch. */
+  align-self: stretch;
   gap: 8px;
   font-size: 13px;
   line-height: 20px;
@@ -1003,7 +1012,9 @@ export const css = `
 
 .mcpScope_switchInput:focus-visible + .mcpScope_switch {
   outline: 2px solid var(--dsw-alias-state-business-primary);
-  outline-offset: 2px;
+  /* 4px = the hit slop: the ring draws exactly the clickable box (36+4+4 by
+     20+4+4), so what the keyboard shows is what the pointer hits. */
+  outline-offset: 4px;
 }
 
 .mcpScope_switchInput:disabled + .mcpScope_switch {

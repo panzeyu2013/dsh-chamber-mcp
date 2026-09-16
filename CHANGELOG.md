@@ -98,6 +98,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A switch's hit box no longer spills into the next row.** The 4px slop that
+  grew the target to 44×28 was centred in a 20px row, so two neighbouring rows'
+  boxes overlapped by 6px — and because the absolutely positioned inputs paint in
+  DOM order, the LOWER row won that band: the bottom ~2px of a switch toggled the
+  row below, which is exactly what "the bounding box feels off" was. The row is
+  now 28px (4+20+4), so the target stays inside its own row; the label stretches to
+  the same band (no dead strip beside a live switch), and the keyboard ring draws
+  the hit box itself (`outline-offset: 4px` instead of 2px).
 - **A workspace switch no longer dims the whole card.** Flipping one workspace
   made every row inert for the duration of the write (the controller judges a
   save against the document it read, so overlapping writes would report a
