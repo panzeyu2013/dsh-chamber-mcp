@@ -80,8 +80,11 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
   section (31.6 KB); `npm run verify:workflows` PASS;
   `npm run verify:low-generation` PASS (the BUILT half resolved against the low
   generation's real packages: fallback selection, image admission, refusal).
-  Local artifact `dsh-chamber-mcp-0.1.0.tgz` (157,215 bytes) with its
-  `.sha256` sidecar. Live smoke `npm run test:smoke` (`M1` + `M0`) exits 0 on
+  Local artifact `dsh-chamber-mcp-0.1.0.tgz` (157,283 bytes, sha256
+  `cb88df50eb002cace2bef685837a058bf7868d5c69fa4d3be731acfc43505ed9`) with its
+  `.sha256` sidecar — packed from the FINAL tree (README is a shipped entry, so
+  a doc edit there moves the hash; `lib/` is byte-identical to the build the
+  earlier smoke installed). Live smoke `npm run test:smoke` (`M1` + `M0`) exits 0 on
   **BOTH** generations, each installing that tarball:
   - `dsh@0.1.5-rc.2` — **the chamber app's own anchor** (`vendor/dsh`): `M1`
     records **`R3-live-capture: PASS`** — the enabled workspace's model-facing turn
