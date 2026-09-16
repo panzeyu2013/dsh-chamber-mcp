@@ -15,6 +15,10 @@
  * and title are the settings-panel vocabulary, the header action is the
  * official `settings.action` outline capsule, and the servers are the panel's
  * card list.
+ *
+ * The header carries no global refresh control: the runtime snapshot is
+ * re-read once per document revision, polled every 5 s while the panel is
+ * visible, refreshed per card, and re-run in full by the stale-banner retry.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
@@ -203,15 +207,6 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
       <header className={styles.head}>
         <h2 className={styles.title}>{t('nav')}</h2>
         <span className={styles.spacer} />
-        {doc.servers.length > 0 && (
-          <button
-            type="button"
-            className={cx(styles.button, styles.buttonOutline)}
-            onClick={refreshAllQuietly}
-          >
-            {t('runtime.refresh')}
-          </button>
-        )}
         {writable && (
           <button
             type="button"

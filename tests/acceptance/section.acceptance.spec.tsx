@@ -113,6 +113,21 @@ function requireButton(button: HTMLButtonElement | undefined, what: string): HTM
   return button
 }
 
+/** Visible prefix of the frozen stale-banner sentence (contract, not copy). */
+function stalePrefix(): string {
+  return templateOf(keyOf(/状态可能过期/, 'stale-banner sentence')).split('{')[0]!.trim()
+}
+
+/** The Retry button inside the section's stale banner. */
+function staleRetryButton(mounted: Harness): HTMLButtonElement {
+  const banner = smallestWithButton(mounted.host, stalePrefix())
+  expect(banner, 'stale banner owning its retry action').toBeDefined()
+  return requireButton(
+    buttonsOf(banner!).find((button) => /retry|refresh|重试|刷新/i.test(accessibleName(button))),
+    'retry action inside the stale banner',
+  )
+}
+
 /** Placeholder names of one dictionary template, sorted (contract, not copy). */
 function placeholdersOf(text: string): string[] {
   return Array.from(text.matchAll(/\{(\w+)\}/g), (match) => String(match[1])).sort()
@@ -226,35 +241,43 @@ describe('C4 completeness: one test per user-visible capability', () => {
     expect(mounted.calls.connect).toEqual([SERVER])
   })
 
-  it('[completeness] capability: the global refresh is still present', async () => {
+  it('[completeness] capability: the header carries only Add/Cancel; refresh is per card and from the stale banner', async () => {
+    const names = ['alpha', 'beta']
     const mounted = mountSection({
-      doc: { servers: [stdioServer(SERVER)], overrides: {} },
-      runtime: runtimeWith([SERVER]),
+      doc: { servers: names.map((name) => stdioServer(name)), overrides: {} },
+      runtime: { ...runtimeWith(names), phase: 'error', error: 'boom' },
     })
     await flush()
     const header = mounted.host.querySelector('header')
     expect(header).not.toBeNull()
-    const globalRefresh = buttonsOf(header!).find((button) => (button.textContent ?? '').includes(en['runtime.refresh']))
-    requireButton(globalRefresh, 'global refresh in the section header').click()
+    // Contract: the section header offers no global refresh control any more;
+    // its only action is the staged-form Add/Cancel capsule.
+    const headerLabels = buttonsOf(header!).map((button) => accessibleName(button))
+    expect(headerLabels.some((label) => label.includes(en['runtime.refresh']))).toBe(false)
+    expect(headerLabels).toHaveLength(1)
+    expect(headerLabels[0]).toContain(en['add.add'])
+    // The refresh affordances that remain: one per card ...
+    for (const name of names) {
+      expect(perCardRefreshButton(visibleCard(mounted, name), dictOf('en')), name).toBeDefined()
+    }
+    // ... plus the stale banner's Retry, which re-runs the FULL refresh.
+    const before = mounted.calls.refresh.length
+    staleRetryButton(mounted).click()
     await flush()
-    const last = mounted.calls.refresh[mounted.calls.refresh.length - 1]
-    expect(last?.server).toBeUndefined()
+    const added = mounted.calls.refresh.slice(before)
+    expect(added).toHaveLength(1)
+    expect(added[0]?.server).toBeUndefined()
   })
 
   it('[completeness] capability: the stale banner appears when the phase is error and data exists', async () => {
-    const stalePrefix = templateOf(keyOf(/状态可能过期/, 'stale-banner sentence')).split('{')[0]!.trim()
     const mounted = mountSection({
       doc: { servers: [stdioServer(SERVER)], overrides: {} },
       runtime: { phase: 'error', servers: { [SERVER]: viewOf(SERVER) }, error: 'boom' },
     })
     await flush()
-    expect(mounted.text()).toContain(stalePrefix)
-    const banner = smallestWithButton(mounted.host, stalePrefix)
-    expect(banner, 'stale banner owning its retry action').toBeDefined()
-    const retry = buttonsOf(banner!).find((button) => /retry|refresh|重试|刷新/i.test(accessibleName(button)))
-    requireButton(retry, 'retry action inside the stale banner')
+    expect(mounted.text()).toContain(stalePrefix())
     const before = mounted.calls.refresh.length
-    retry!.click()
+    staleRetryButton(mounted).click()
     await flush()
     const added = mounted.calls.refresh.slice(before)
     expect(added).toHaveLength(1)
@@ -262,23 +285,21 @@ describe('C4 completeness: one test per user-visible capability', () => {
   })
 
   it('[completeness] capability: the stale banner appears when the phase is unavailable and data exists', async () => {
-    const stalePrefix = templateOf(keyOf(/状态可能过期/, 'stale-banner sentence')).split('{')[0]!.trim()
     const mounted = mountSection({
       doc: { servers: [stdioServer(SERVER)], overrides: {} },
       runtime: { phase: 'unavailable', servers: { [SERVER]: viewOf(SERVER) }, error: 'offline' },
     })
     await flush()
-    expect(mounted.text()).toContain(stalePrefix)
+    expect(mounted.text()).toContain(stalePrefix())
   })
 
   it('[completeness] capability: without runtime data the stale banner stays away and the degraded message remains', async () => {
-    const stalePrefix = templateOf(keyOf(/状态可能过期/, 'stale-banner sentence')).split('{')[0]!.trim()
     const mounted = mountSection({
       doc: { servers: [stdioServer(SERVER)], overrides: {} },
       runtime: { phase: 'error', servers: {}, error: 'boom' },
     })
     await flush()
-    expect(mounted.text()).not.toContain(stalePrefix)
+    expect(mounted.text()).not.toContain(stalePrefix())
     expect(mounted.text()).toContain(en['runtime.error'])
   })
 
@@ -442,23 +463,21 @@ describe('C4 optimality: request counts, timers and node counts', () => {
     expect(added.some((call) => call.server === undefined)).toBe(false)
   })
 
-  it('[optimality] the global refresh issues exactly one store call', async () => {
+  it('[optimality] the stale-banner Retry issues exactly one full-refresh store call', async () => {
     const mounted = mountSection({
       doc: { servers: [stdioServer(SERVER)], overrides: {} },
-      runtime: runtimeWith([SERVER]),
+      runtime: { phase: 'error', servers: { [SERVER]: viewOf(SERVER) }, error: 'boom' },
     })
     await flush()
-    const header = mounted.host.querySelector('header')
-    const globalRefresh = requireButton(
-      buttonsOf(header!).find((button) => (button.textContent ?? '').includes(en['runtime.refresh'])),
-      'global refresh',
-    )
+    // The mount pass is the only full refresh so far; the manual one is the banner.
+    expect(mounted.calls.refresh.filter((call) => call.server === undefined)).toHaveLength(1)
     const before = mounted.calls.refresh.length
-    globalRefresh.click()
+    staleRetryButton(mounted).click()
     await flush()
     const added = mounted.calls.refresh.slice(before)
     expect(added).toHaveLength(1)
     expect(added[0]?.server).toBeUndefined()
+    expect(added.some((call) => call.server !== undefined)).toBe(false)
   })
 
   it('[optimality] an ordinary re-render issues no extra store call', async () => {

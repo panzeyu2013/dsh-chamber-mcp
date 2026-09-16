@@ -806,6 +806,49 @@ describe('McpScopeSection render', () => {
     expect(reconnecting.text()).toContain(t('status.retry', { attempt: 2, max: 5 }))
   })
 
+  it('shows the attempt counter during a connecting retry and renders no global header refresh', async () => {
+    const doc: McpScopeDoc = { servers: [stdioServer('a'), stdioServer('b')], overrides: {} }
+    const connecting: ServerRuntimeView = {
+      name: 'a',
+      state: 'connecting',
+      attempts: 2,
+      maxAttempts: 5,
+      toolCount: 0,
+    }
+    const mounted = mountSection(doc, {}, { runtime: { phase: 'ready', servers: { a: connecting } } })
+    await flush()
+    // The section header no longer offers a global refresh: Add is its only action.
+    const sectionHeader = mounted.host.querySelector('header')
+    expect(sectionHeader).not.toBeNull()
+    expect(
+      Array.from(sectionHeader!.querySelectorAll('button')).some((button) =>
+        (button.textContent ?? '').includes(en['runtime.refresh']),
+      ),
+    ).toBe(false)
+    // An ATTEMPT reports 'connecting', not 'reconnecting' — the counter still names it.
+    expect(mounted.text()).toContain(en['status.connecting'])
+    expect(mounted.text()).toContain(t('status.retry', { attempt: 2, max: 5 }))
+
+    // The counter belongs to retries, not to a healthy generation.
+    mounted.live.runtime = { phase: 'ready', servers: { a: { ...connecting, state: 'connected' } } }
+    mounted.rerender()
+    await flush()
+    expect(mounted.text()).toContain(en['status.connected'])
+    expect(mounted.text()).not.toContain(t('status.retry', { attempt: 2, max: 5 }))
+
+    // Nor to a given-up card: the host counts the attempt that exhausted the
+    // budget, so a counter here would read "attempt 6/5" next to the give-up
+    // line that already names the exhausted budget.
+    mounted.live.runtime = {
+      phase: 'ready',
+      servers: { a: { ...connecting, state: 'failed', attempts: 5, maxAttempts: 5 } },
+    }
+    mounted.rerender()
+    await flush()
+    expect(mounted.text()).toContain(en['status.failed'])
+    expect(mounted.text()).not.toContain(t('status.retry', { attempt: 5, max: 5 }))
+  })
+
   it('keeps the stale views behind one banner and retries the full refresh from it', async () => {
     const calls: ({ silent?: boolean; server?: string } | undefined)[] = []
     const doc: McpScopeDoc = { servers: [stdioServer('a')], overrides: {} }

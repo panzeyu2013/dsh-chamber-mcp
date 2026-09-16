@@ -855,7 +855,7 @@ slots, never replacing the shell.
 ┌──────────────────────── dsh Web GUI / chamber desktop ────────────────────────┐
 │ ┌──────────┐ ┌──────────────────── Settings ────────────────────────────────┐ │
 │ │ sidebar  │ │ ┌───────────┐ ┌──────────── MCP 服务器 ──────────────────┐ │ │
-│ │          │ │ │ settings  │ │  标题      [刷新状态]  [+ 添加服务器]      │ │ │
+│ │          │ │ │ settings  │ │  标题                  [+ 添加服务器]      │ │ │
 │ │ …        │ │ │ nav       │ │  ── 卡片列表（见下）─────────────────────  │ │ │
 │ │ 设置 ◀   │ │ │ 通用      │ │                                           │ │ │
 │ │          │ │ │ 模型      │ │                                           │ │ │
@@ -894,9 +894,14 @@ cancelled.
 
 ### Interactions worth knowing
 
-- **刷新状态** refreshes the whole table against the three host routes; a failed
-  refresh keeps the last good view (stale-while-revalidate) and names the HTTP
-  status instead of blanking the panel.
+- There is no global **刷新状态** control in the section header. The runtime
+  snapshot refreshes by itself: once per settings-document revision, then on a
+  5 s interval while the panel is visible, and per card through that card's own
+  **刷新状态** button (only that server re-reads). A failed full refresh keeps
+  the last good views (stale-while-revalidate), stores the failure (HTTP status
+  included) on the snapshot, and shows the stale banner instead of blanking the
+  panel; the stale banner's **重试** button is the only whole-table manual
+  refresh left.
 - **Connect / Disconnect** are real stop/start actions (a manual stop latches
   until the definition changes or Connect is pressed); **Test** probes on a
   throwaway connection unless the live generation is already connected.
@@ -919,6 +924,7 @@ so the figure is read for shape, not detail.
 | Card radius r14 and padding `12px 14px` (`.mcpScope_card` in `styles.ts`; §9.3's r14 is the Button capsule, not the card) versus the figure's drawn max r12 — and the figure's own metric caption names r16 / `12 16 14`. | Keep the code; the figure is indicative. |
 | The tool panel in the figure carries a "first 2 of 120" label (`共 120 个工具，显示前 2 个。`), which reads as always-on. | The label is illustrative: the code renders exactly the host's list and adds the same hint (`tools.truncated`) only when the HOST truncates — `manager.ts` caps the list at 200 (`capToolList`), and `server-card.tsx` renders the hint. Keep the code. |
 | The figure draws the import dialog in a side panel beside the staged form (annotated `role=dialog`). | Keep the code — the import opens inline inside the staged form, between the import button and the fields; the panel is a side rail in the figure only for legibility. |
+| The figure draws a global **刷新状态** button in both of its section-header views; the code removed it — each card refreshes its own server, the section re-reads the runtime snapshot per document revision and polls every 5 s while visible, and a failed full refresh surfaces the stale banner whose **重试** re-runs it. | Keep the code. |
 
 The two session lanes (the MCP tool-call transcript and the injected-tools
 notice) are not part of that wireframe; their contract lives in §5(f) and §6.

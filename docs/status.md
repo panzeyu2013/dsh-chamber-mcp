@@ -40,7 +40,7 @@ Current release, compatibility and verification state. Refreshed 2026-09-15.
   workspace's turn carries none (transcript evidence — the driver reports the
   verdict but does not fail on it).
 - **0.0.4 line (working tree):** `npm run check` PASS — `tsc` ×2,
-  **412 tests / 24 files**, build, `verify:package` (42 packed entries; consumer
+  **416 tests / 24 files**, build, `verify:package` (42 packed entries; consumer
   d.ts; react-only client-bundle purity; the packed-bundle artifact check, which
   also drives the injected-tools notice lane; determinism over the whole built
   tree), plus `npm run verify:workflows` PASS. Live smoke `npm run test:smoke`
@@ -48,7 +48,10 @@ Current release, compatibility and verification state. Refreshed 2026-09-15.
   `dsh@0.1.5-rc.2` under `/Applications/dsh-chamber.app/.../vendor/dsh/`),
   installing this working tree's freshly packed tarball; the M1 capture records
   R3: the enabled workspace's model-facing turn carries `mcp__fixture__echo` /
-  `mcp__fixture__env_report`, the disabled workspace's turn carries none.
+  `mcp__fixture__env_report`, the disabled workspace's turn carries none. The
+  newest line — the connect handshake bounded by the server's own `timeoutMs`,
+  the failure reason retained across retry attempts, and the section header's
+  global refresh button removed — is covered by that count.
 - Transcripts are written under `.smoke/logs/` (gitignored) and are not
   committed.
 

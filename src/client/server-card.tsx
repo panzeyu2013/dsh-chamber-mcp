@@ -580,7 +580,16 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
         {runtime?.state === 'connected' && runtime.toolCount > 0 && (
           <span className={styles.statusText}>{t('status.tools', { count: runtime.toolCount })}</span>
         )}
-        {runtime?.state === 'reconnecting' && runtime.attempts > 0 && (
+        {/* A start that keeps failing reports the attempt count, and during a
+            bounded attempt the phase is 'connecting' (the host arms
+            'reconnecting' only while the backoff timer waits), so the counter
+            follows the retry phases rather than the backoff phase alone. It
+            stays off a given-up card: the host counts the failing attempt, so
+            the counter would read "attempt max+1/max" while the give-up copy
+            line already carries the exhausted budget. */}
+        {runtime !== undefined &&
+          runtime.attempts > 0 &&
+          (runtimeState === 'connecting' || runtimeState === 'reconnecting') && (
           <span className={styles.statusText}>
             {t('status.retry', { attempt: runtime.attempts, max: runtime.maxAttempts })}
           </span>

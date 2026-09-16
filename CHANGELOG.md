@@ -130,6 +130,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   origin-level 404 that carries no plugin wire envelope triggers the fallback,
   so a POST is never delivered twice and a business failure is never retried.
   Runtime failures now name the HTTP status in the diagnostic text.
+- **A failing connection no longer reads as a bare "connecting…".** The MCP
+  handshake ran on the SDK's silent 60 s default, and every retry erased the
+  failure reason at its start, so a server that spawned (or accepted HTTP) but
+  never answered `initialize` left the card saying only that word for minutes.
+  The handshake — and the Test probe — is now bounded by that server's own
+  `timeoutMs`, and the reason is retired only once a generation is actually
+  established: a retrying card shows "connecting… / attempt N of M" together
+  with the localized reason (timed out, connection failed, spawn failed, …),
+  and the counter stays off a given-up card whose copy line already names the
+  exhausted budget. Regression: `tests/host/server.spec.ts` drives a transport
+  that never answers the handshake (bounded failure, reason kept into the next
+  attempt, reason dropped once a later attempt connects);
+  `tests/client/section-render.spec.tsx` pins the counter's phases.
 
 ### Added
 
@@ -206,6 +219,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lane derives. The glyph comment no longer claims the shipped set is authored
   on a 24-unit canvas (its marks are mostly 14/16-unit filled paths) or that the
   chevron already followed the shipped rows.
+- **The section header no longer carries a global refresh button.** The runtime
+  snapshot already re-reads once per settings-document revision, polls every 5 s
+  while the panel is visible, and each card refreshes its own server; a failed
+  full refresh surfaces the stale banner, whose Retry is now the only
+  whole-table manual refresh. The wireframe keeps drawing the baseline button
+  and `docs/design.md` records the removal as a deliberate gap. The acceptance
+  suite pins the new header contract (Add/Cancel only), the per-card refresh and
+  the banner's single full refresh.
 
 ## [0.0.3] - 2026-09-15
 
