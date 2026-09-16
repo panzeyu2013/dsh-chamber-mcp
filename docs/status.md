@@ -8,13 +8,20 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
   Release published 2026-09-15 with `dsh-chamber-mcp-0.0.3.tgz` + `.sha256`;
   notes composed from the dated CHANGELOG section. `v0.0.2` and `v0.0.1` are
   the previous releases.
-- **Working line: the unreleased 0.0.4 line.** `main` carries the next-version
-  changeset on top of the `v0.0.3` commit (`bf344ef`): **MCP off by default** — a
+- **Working line: `v0.1.0`, prepared on `main` but NOT tagged.** The changeset
+  sits on top of the `v0.0.3` commit (`bf344ef`) with a dated
+  `## [0.1.0] - 2026-09-16` CHANGELOG section and the version bumped in
+  `package.json` + `package-lock.json`; the pre-tag checklist is green (see
+  "Verification state"), but no tag exists — **do not describe it as released**.
+  Headline change: **MCP off by default** — a
   configured server reaches no agent until a workspace explicitly enables it, the
   per-workspace switch now records an enable and the global switch stays a hard
   kill (see `docs/design.md` §3 and the Unreleased CHANGELOG entry); the
   workspace switching panel; per-server runtime refresh; `ptc` tool-row
   discovery; import-parser hardening; the registered-tools conversation notice
+  (the UI review round that followed — no per-row state word, no default-off copy
+  anywhere on the card, a card-local filter, hit boxes contained in their row and
+  row writes queued instead of dimming the card — is part of this section)
   (derived client-side from the request's tool array and the rendered system
   prompt, never written into a session — a shipped-chrome disclosure row that
   expands into the per-server tool names and renders immediately before the
@@ -62,30 +69,36 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
   carries `mcp__fixture__echo` / `mcp__fixture__env_report`, the disabled
   workspace's turn carries none (transcript evidence — the driver reports the
   verdict but does not fail on it).
-- **0.0.4 line (working tree):** `npm run check` PASS — `tsc` ×2,
-  **514 tests / 26 files**, build, `verify:package` (45 packed entries; consumer
-  d.ts; react-only client-bundle purity; the packed-bundle artifact check, which
-  also drives the registered-tools notice lane; lockfile-vs-manifest surface and
-  integrity coverage; determinism over the whole built tree), plus
-  `npm run verify:workflows` PASS. Live smoke runs on **BOTH** generations, each
-  installing this working tree's packed tarball:
-  - `dsh@0.1.6-alpha.1` (installed separately, pointed at through
-    `DSH_ANCHOR_CLI`): `npm run test:smoke` (`M1` + `M0`) exit 0 — the plugin
-    row activates (`fiberPhase: active`), the settings namespace describes and
-    mutates, credentials never ride the wire, the fixture child receives the
-    resolved env key, `/api/mcp-scope.tools` reports the listed tools (so the
-    connect + `tools/list` + commit path is asserted, not inferred), and
-    workspace override flips land on live sessions. `M1` records
-    `R3-live-capture: not-captured` — a headless instance does not start a turn,
-    so the model-facing tools array is not re-verified live (the driver reports
-    that verdict without failing on it).
-  - `dsh@0.1.5-rc.2` — **the chamber app's own anchor** (`vendor/dsh`): `M0`
-    exits 0 with the same lifecycle evidence (including the `/api/mcp-scope.tools`
-    listing assertion), which is the two-generation claim actually exercised: the
+- **0.1.0 line (prepared on `main` — NOT tagged):** the pre-tag checklist ran on
+  the release commit. `npm run check` PASS — `tsc` ×2, **514 tests / 27 files**,
+  build, `verify:package` (45 packed entries; consumer d.ts; react-only
+  client-bundle purity; the packed-bundle artifact check, which also drives the
+  registered-tools notice lane; lockfile-vs-manifest surface and integrity
+  coverage; determinism over the whole built tree, 41 files);
+  `npm ci --dry-run` clean (lockfile matches the manifest);
+  `node scripts/release-notes.mjs 0.1.0` composes the release body from the dated
+  section (31.6 KB); `npm run verify:workflows` PASS;
+  `npm run verify:low-generation` PASS (the BUILT half resolved against the low
+  generation's real packages: fallback selection, image admission, refusal).
+  Local artifact `dsh-chamber-mcp-0.1.0.tgz` (157,215 bytes) with its
+  `.sha256` sidecar. Live smoke `npm run test:smoke` (`M1` + `M0`) exits 0 on
+  **BOTH** generations, each installing that tarball:
+  - `dsh@0.1.5-rc.2` — **the chamber app's own anchor** (`vendor/dsh`): `M1`
+    records **`R3-live-capture: PASS`** — the enabled workspace's model-facing turn
+    carries `mcp__fixture__echo` / `mcp__fixture__env_report` (29 tools) and the
+    disabled workspace's turn carries none — with the same lifecycle evidence
+    (settings describe + mutate, the stale-revision write refused, the
+    `/api/mcp-scope.tools` listing assertion, the fixture child receiving the
+    resolved env key). This is the two-generation claim actually exercised: the
     namespace lookup misses `createMcpToolDefinition` and the plugin runs on its
     local text projection. Before the fallback landed this same run failed with
     `plugin tree failed to load ... does not provide an export named
     'createMcpToolDefinition'` and the instance exited 1.
+  - `dsh@0.1.6-alpha.1` (installed separately under `.smoke/anchor-016`, pointed
+    at through `DSH_ANCHOR_CLI`): `M1` records `R3-live-capture: not-captured` —
+    a headless instance starts no turn, so the model-facing tools array is not
+    re-verified live (the driver reports that verdict without failing on it) —
+    and `M0` exits 0 with the full lifecycle evidence.
   - The newest line — the connect handshake bounded by the server's own
     `timeoutMs` (the aggregated `tools/list` keeps that deadline), the failure
     reason retained across retry attempts, the attached/unattached close
@@ -99,19 +112,22 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
     refresh button removed — is covered by that count. The low-generation path
     itself has its own executable check, `npm run verify:low-generation` (see
     below), because the vitest suite is pinned to the newer generation.
-- **The recorded live smoke predates the merge of this line's two halves.** The
-  two-anchor run above was captured on the generation-migration tree; the merged
-  tree additionally carries the registered-tools notice (client-only) and
-  **MCP off by default** (host-visible — M1's R3 verdict is exactly about
-  enablement), and the merged drivers encode the new polarity (presence IS the
-  enable). Re-run `npm run test:smoke` on both anchors before tagging; the line
-  to read is `R3-live-capture: PASS` (`onHasMcp && !offHasMcp`).
+- **The live smoke for this release ran on the MERGED tree.** Both halves are in
+  the 0.1.0 tarball the drivers install, including the registered-tools notice
+  (client-only) and **MCP off by default** (host-visible — M1's R3 verdict is
+  exactly about enablement); the drivers encode the new polarity (presence IS the
+  enable), and the chamber anchor's run reads `R3-live-capture: PASS`
+  (`onHasMcp && !offHasMcp`). The earlier generation-migration capture is kept for
+  history; this is the run that gates the tag.
 - Transcripts are written under `.smoke/logs/` (gitignored) and are not
-  committed. `M0-raw.log`/`M1-raw.log` hold the last run; the two-anchor evidence
-  is kept side by side as `M0-anchor-0.1.5-raw.log`, `M0-anchor-0.1.6-raw.log`
-  and `M1-anchor-0.1.6-raw.log` — each records the anchor CLI and its version, the
-  plugin row's `fiberPhase`, and the `/api/mcp-scope.tools` listing
-  (`listed 2 tools: mcp__fixture__echo, mcp__fixture__env_report`).
+  committed. `M0-raw.log`/`M1-raw.log` hold the last driver run of each kind; the
+  two-anchor evidence for this release is kept side by side as
+  `anchor-0.1.5-run.log` and `anchor-0.1.6-run.log` — the full `test:smoke`
+  transcripts (M1 then M0) for each anchor. Each records the anchor CLI with its
+  version, the installed `dsh-chamber-mcp@0.1.0`, the plugin row's `fiberPhase`,
+  the live-capture verdict (`R3-live-capture: PASS` on the chamber anchor,
+  `not-captured` on the headless 0.1.6 anchor) and the `/api/mcp-scope.tools`
+  listing (`listed 2 tools: mcp__fixture__echo, mcp__fixture__env_report`).
 
 ## Known limitations
 
@@ -163,7 +179,7 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
 
 ```sh
 npm run check                                    # typecheck + tests + build + pack surface
-node scripts/release-notes.mjs 0.0.4             # the dated CHANGELOG section (before tagging)
+node scripts/release-notes.mjs 0.1.0             # the dated CHANGELOG section (before tagging)
 npm run verify:workflows                         # action pins + release structure
 npm run verify:low-generation                    # resolve the BUILT half against the LOW generation's real packages
 npm run test:smoke                               # live M1 + M0 on the chamber anchor

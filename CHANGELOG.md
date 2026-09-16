@@ -13,6 +13,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > only and ignores this one — an entry left here ships in the tree but never
 > appears in the release notes.
 
+## [0.1.0] - 2026-09-16
+
+### Added
+
+- **Workspace switching panel (browser half).** A card lists only the
+  workspaces whose state differs from the default — under the default-OFF
+  contract below that is the ENABLED set, and nothing stands in for it when there
+  are none — and a **Manage workspaces (N on)** toggle reveals every row plus
+  **All on / All off** (once more than one workspace exists). The block renders no
+  default-off copy at all: the switches are the state. The toggle is local UI
+  state and never writes the settings document, and a single-workspace dsh
+  reaches its only row through it instead of having it hidden.
+- **Per-server runtime refresh.** `GET /api/mcp-scope.status?server=NAME`
+  projects a single server (an invalid name keeps the existing `400`
+  `bad-request` envelope, an unknown name answers `ok:true` with an empty list,
+  and omitting the parameter keeps the full view), and the browser store's
+  `refresh({ server })` merges that one entry and rejects on failure without
+  touching the snapshot. A failed full refresh now retains the last good views
+  (stale-while-revalidate) instead of blanking the panel.
+
+- **MCP tool rows under a `ptc` agent preset (client half).** The transcript
+  lane discovered MCP names from `request/header` tools and `tool/call` names
+  only. Under a `ptc` agent preset both carry just `run_code` — the model
+  sees the MCP tools as programmatic bindings, and an MCP call is dispatched
+  from inside the program — so the plugin's row was never registered and every
+  MCP call rendered with the generic row. The window scan now also reads the
+  inner names of `tool/ptc-dispatch-start` / `tool/ptc-dispatch` events, which
+  is where those names actually appear. (The model context itself was never
+  missing them: the session's system message carries all `mcp__…` bindings.)
+
+- **Registered-tools notice in the conversation (one row per changed set).** A
+  session now shows which MCP tools were registered without the user having to
+  call one first — the collapsed row reads `MCP registered` with the shipped plug
+  glyph, expanding it leads with ONE line of every source and its count and then
+  gives each source its own disclosure (the names appear only once a source is
+  opened). The row is DERIVED client-side (see
+  the Changed entry below for the two sources it unions: the request's tool array
+  and the names the rendered system prompt declares), so it reports what the
+  request exposed, survives a reload and writes nothing into the session.
+  `src/client/injection-row.tsx` rides the official seams the shipped lanes
+  use — `ctx.uiConversation.events.register` (the seam the Chat lane's own
+  `request-prompt` definition uses for the same event type) and the keyed
+  `conversation.chat.node` seat — with one Context per header, so an unchanged
+  set renders no row and a real change adds one line where it took effect. Both
+  are optional and additive: a deployment without the conversation service
+  keeps working and simply shows no row (a malformed payload renders nothing).
+
 ### Changed
 
 - **The workspace block scales: a responsive grid, a name filter, a frozen
@@ -28,15 +75,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inline filter drops the official field fill — `bg-layer-1` read as a white slab
   against the card's `bg-layer-3`, so it takes a transparent fill with the same
   `border-l3` hairline the outline buttons use.
-- **The workspace card's bulk pair leads the list, and the default-off line now
-  names its session scope.** `All on`/`All off` sat after the rows, so a long
-  workspace list pushed them past the fold; they now sit directly under the
-  manage control, and the manage control now keeps the on-count while the list
-  is open (`Hide workspaces (N on)`) — with a long list that is exactly when the
-  count would otherwise disappear. `server.defaultOff` also says what the
-  per-workspace switch covers: that workspace's existing and new sessions alike
-  (the host applies the pair per agent, and a live flip pushes to the agents
-  already running).
+- **The workspace card's bulk pair leads the list.** `All on`/`All off` sat
+  after the rows, so a long workspace list pushed them past the fold; they now sit
+  directly under the manage control, and the manage control keeps the on-count
+  while the list is open (`Hide workspaces (N on)`) — with a long list that is
+  exactly when the count would otherwise disappear. What the per-workspace switch
+  covers is unchanged: that workspace's existing and new sessions alike (the host
+  applies the pair per agent, and a live flip pushes to the agents already
+  running), which the switch now states without a sentence beside it.
 - **The client layer moved to the v2 model: `@modelcontextprotocol/client@2.0.0`
   — the same dependency on every supported host generation.** The 1.x SDK is gone
   from the tree, and the code that existed only to compensate for it was DELETED
@@ -88,6 +134,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retries on the normal budget. Previously a plain "command not found" burned
   the barrier and stopped reconnection for good with `failed generation did not
   close within 5000ms`.
+
+
+- **MCP is now OFF by default in every session.** Enablement used to be
+  default-ON: every workspace had every configured server until it was switched
+  off there. The contract is inverted — `overrides[workspaceId][serverName]`
+  now records an explicit ENABLE (presence = on, absence = off) — so a new
+  server, a new workspace and a fresh session register no tools until the user
+  turns the pair on. The global switch stays a hard kill
+  (`disabled[serverName]`, unoverridable by any workspace enable), the per-card
+  bulk actions stay one mutation for all workspaces, and the browser half
+  follows: the collapsed card lists the ENABLED workspaces and says "not on in
+  any workspace" when there are none, the manage toggle is **Manage
+  workspaces (N on)**, and the note under the rows is **off by default — enable
+  it in the workspaces you want**.
+- **BREAKING: a pre-0.1.0 document's records change meaning — deliberately,
+  with no migration.** Under the released contract `overrides[w][s] = true`
+  meant "off in w"; it now means "on in w", and absence (previously on) is the
+  new off. Compatibility is explicitly NOT preserved: the maintainer accepts the
+  one-time inversion, so no marker, decoder migration or one-time write ships.
+  Consequence for anyone upgrading: pairs that were explicitly switched OFF in
+  v0.0.1–v0.0.3 are now ENABLED, and everything else goes off — re-check every
+  workspace switch after upgrading. A document with no `overrides` rows, or an
+  empty one, needs nothing (everything simply starts off).
+- **The injected-tools notice is now a registered-tools row above the system
+  prompt.** The conversation-lane notice reported "tools in context" from the
+  request header alone, so it said nothing under a `ptc` agent preset (whose
+  header carries only `run_code`) and rendered as a standalone r12 pill that
+  read as a foreign element next to the system-prompt card. It now reports what
+  the request REGISTERED, from both model-facing shapes the harness emits: the
+  request tool array (`header.tools`) and the names the rendered system prompt
+  declares (the generated SDK section a `ptc` presentation writes them into,
+  read through the Chat lane's own `system-message` Context). Extraction uses
+  the `mcp__` contract's own `[A-Za-z0-9_-]` alphabet — `-` included, since a
+  server or tool name may carry one — and treats the two sources as a set. Only
+  DECLARATION positions in the prompt count (the TypeScript `name:` member and
+  the Python `async def name(` / `# tools["name"](…)` forms), so a tool
+  description that mentions a name is not read as a registration, and a name is
+  reported only when a CONFIGURED server owns it. The
+  row itself follows the shipped conversation rows rule for rule: one 24px
+  disclosure line with the plugin's plug glyph, a hover/open chevron swap, the
+  13px secondary title, the server summary and the tool total, expanding by
+  click or Enter/Space into the shipped 141px code-block scrollport, which
+  lists each owning server's public `mcp__…` names (bounded per server by
+  `INJECTION_NAME_LIMIT`, 256, with the remainder reported). Its change
+  signature keys on the names, so a same-count tool swap is a real change. It
+  is anchored a hair BEFORE the system-prompt card that opens the request's
+  step — mirroring the official `requestPromptAnchor` rule for rule, its four
+  guards included, so a resumed window or a repeated step cannot send the row to
+  the top of the window — so it reads as a
+  header for the model-facing input that follows, and the previous
+  `header.seq - 0.1` position survives only as the fallback for a window that
+  resolves no step. The row's node carries a session-level location on purpose:
+  the Chat lane re-anchors any turn/step-located node sitting before the turn's
+  opening human input onto that input (which would land it after the user
+  message) and folds process-window members away in the compact view, while a
+  location that is neither turn nor step short-circuits both rules. Still nothing is written into a session: the row is derived
+  client-side, no shipped component is imported (the built client bundle still
+  requires only react/react/jsx-runtime), and `verify-client-artifact` drives
+  the collapsed row, the click expansion, the named tool list and the PTC
+  prompt-only derivation in the packed bundle.
+
+- **Verification hardening (release gates).** `verify:package` now builds
+  explicitly before packing (some pack paths skip the `prepack` hook, which
+  shipped whatever `lib/` happened to hold and made the determinism check
+  compare a stale build against a fresh one), compares the WHOLE built tree
+  across two builds instead of two bundles, fails on packed artifacts that have
+  no current `src/` counterpart, and enforces package.json ↔ package-lock root
+  version identity. `verify:workflows` now requires the refuse-republish step's
+  real body (`gh release view` / `gh release delete` / `exit 1`), the
+  dry-run skip on both release-mutation steps, a `# vX.Y.Z` comment on every
+  SHA pin, and both step names for the gate-before-mutation ordering.
+  `verify-client-artifact` drives the registered-tools notice lane in the packed
+  bundle (definition, match rule, keyed view and a rendered row), so a dropped
+  registration fails the release gate instead of passing silently.
+
+- **The MCP tool row's expand chevron is now the shipped icon geometry.** The
+  hover/open affordance was a private 24-unit stroke path whose ink weight did
+  not match the official rows; it now inlines `IconChevronDownOutline14` from
+  the pinned `ui-primitives` set byte-for-byte (a filled 14-unit path), so the
+  row swaps in the same mark the shipped disclosure rows use. No test or packed
+  artifact assertion referenced the old geometry (`verify-client-artifact` pins
+  the plug path only), and the built bundle carries the new path unchanged.
+- **The wireframe and `docs/design.md` are re-aligned.** The figure title now
+  carries its version note (0.0.3 baseline; the 0.1.0 increments are not drawn),
+  `docs/design.md` gains *Differences from the wireframe* — the seven decided
+  figure-vs-code gaps, each resolved in the code's favour — and *The two lanes
+  at a glance*, the tool-row and registered-tools-notice anatomy with the rules the
+  lane derives. The glyph comment no longer claims the shipped set is authored
+  on a 24-unit canvas (its marks are mostly 14/16-unit filled paths) or that the
+  chevron already followed the shipped rows.
+- **The section header no longer carries a global refresh button.** The runtime
+  snapshot already re-reads once per settings-document revision, polls every 5 s
+  while the panel is visible, and each card refreshes its own server; a failed
+  full refresh surfaces the stale banner, whose Retry is now the only
+  whole-table manual refresh. The wireframe keeps drawing the baseline button
+  and `docs/design.md` records the removal as a deliberate gap. The acceptance
+  suite pins the new header contract (Add/Cancel only), the per-card refresh and
+  the banner's single full refresh.
+- **The settings sidebar shows the plugin's own plug mark.** The settings shell
+  picks a section's nav glyph from a hardcoded map by id and falls back to its
+  settings gear for ours — both supported generations do, and the
+  `settings.section` registration carries no icon option — so the browser half
+  paints the repo's plug glyph into its own nav row: the row is matched by the
+  localized `nav` label and accepted only in the shell's own shape, the shell
+  glyph's class rides along so sizing and colour stay shell-owned, and a
+  re-render or a locale flip repaints. Anywhere the DOM shape differs the patch
+  is a no-op and the shipped gear stays.
+- **The card's four actions are one capsule again — one frame, and only the
+  destructive one is red.** Edit, Remove, Disconnect and Test share the official
+  `.sm` outline recipe (h28 / r14 / `0 10px` / 12-18, transparent fill, the
+  neutral 0.5px hairline frame, one hover tint); the destructive action differs
+  by its LABEL colour alone (`state-error-primary`), so the group reads as one
+  control group instead of mixed border weights. The plain danger treatment
+  inside the confirm dialog and the staged form is unchanged.
 
 ### Removed
 
@@ -295,166 +455,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that never answers the handshake (bounded failure, reason kept into the next
   attempt, reason dropped once a later attempt connects);
   `tests/client/section-render.spec.tsx` pins the counter's phases.
-
-### Added
-
-- **Workspace switching panel (browser half).** A card lists only the
-  workspaces whose state differs from the default — under the default-OFF
-  contract below that is the ENABLED set, or one "all N workspaces are off by
-  default" line when there are none — and a **Manage workspaces (N on)** toggle
-  reveals every row plus **All on / All off** (once more than one workspace
-  exists) and the default-off note. The toggle is local UI state and never writes
-  the settings document, and a single-workspace dsh reaches its only row through
-  it instead of having it hidden.
-- **Per-server runtime refresh.** `GET /api/mcp-scope.status?server=NAME`
-  projects a single server (an invalid name keeps the existing `400`
-  `bad-request` envelope, an unknown name answers `ok:true` with an empty list,
-  and omitting the parameter keeps the full view), and the browser store's
-  `refresh({ server })` merges that one entry and rejects on failure without
-  touching the snapshot. A failed full refresh now retains the last good views
-  (stale-while-revalidate) instead of blanking the panel.
-
-- **MCP tool rows under a `ptc` agent preset (client half).** The transcript
-  lane discovered MCP names from `request/header` tools and `tool/call` names
-  only. Under a `ptc` agent preset both carry just `run_code` — the model
-  sees the MCP tools as programmatic bindings, and an MCP call is dispatched
-  from inside the program — so the plugin's row was never registered and every
-  MCP call rendered with the generic row. The window scan now also reads the
-  inner names of `tool/ptc-dispatch-start` / `tool/ptc-dispatch` events, which
-  is where those names actually appear. (The model context itself was never
-  missing them: the session's system message carries all `mcp__…` bindings.)
-
-- **Registered-tools notice in the conversation (one row per changed set).** A
-  session now shows which MCP tools were registered without the user having to
-  call one first — the collapsed row reads `MCP registered` with the shipped plug
-  glyph, expanding it leads with ONE line of every source and its count and then
-  gives each source its own disclosure (the names appear only once a source is
-  opened). The row is DERIVED client-side (see
-  the Changed entry below for the two sources it unions: the request's tool array
-  and the names the rendered system prompt declares), so it reports what the
-  request exposed, survives a reload and writes nothing into the session.
-  `src/client/injection-row.tsx` rides the official seams the shipped lanes
-  use — `ctx.uiConversation.events.register` (the seam the Chat lane's own
-  `request-prompt` definition uses for the same event type) and the keyed
-  `conversation.chat.node` seat — with one Context per header, so an unchanged
-  set renders no row and a real change adds one line where it took effect. Both
-  are optional and additive: a deployment without the conversation service
-  keeps working and simply shows no row (a malformed payload renders nothing).
-
-### Changed
-
-- **MCP is now OFF by default in every session.** Enablement used to be
-  default-ON: every workspace had every configured server until it was switched
-  off there. The contract is inverted — `overrides[workspaceId][serverName]`
-  now records an explicit ENABLE (presence = on, absence = off) — so a new
-  server, a new workspace and a fresh session register no tools until the user
-  turns the pair on. The global switch stays a hard kill
-  (`disabled[serverName]`, unoverridable by any workspace enable), the per-card
-  bulk actions stay one mutation for all workspaces, and the browser half
-  follows: the collapsed card lists the ENABLED workspaces and says "not on in
-  any workspace" when there are none, the manage toggle is **Manage
-  workspaces (N on)**, and the note under the rows is **off by default — enable
-  it in the workspaces you want**.
-- **BREAKING: a pre-0.0.4 document's records change meaning — deliberately,
-  with no migration.** Under the released contract `overrides[w][s] = true`
-  meant "off in w"; it now means "on in w", and absence (previously on) is the
-  new off. Compatibility is explicitly NOT preserved: the maintainer accepts the
-  one-time inversion, so no marker, decoder migration or one-time write ships.
-  Consequence for anyone upgrading: pairs that were explicitly switched OFF in
-  v0.0.1–v0.0.3 are now ENABLED, and everything else goes off — re-check every
-  workspace switch after upgrading. A document with no `overrides` rows, or an
-  empty one, needs nothing (everything simply starts off).
-- **The injected-tools notice is now a registered-tools row above the system
-  prompt.** The conversation-lane notice reported "tools in context" from the
-  request header alone, so it said nothing under a `ptc` agent preset (whose
-  header carries only `run_code`) and rendered as a standalone r12 pill that
-  read as a foreign element next to the system-prompt card. It now reports what
-  the request REGISTERED, from both model-facing shapes the harness emits: the
-  request tool array (`header.tools`) and the names the rendered system prompt
-  declares (the generated SDK section a `ptc` presentation writes them into,
-  read through the Chat lane's own `system-message` Context). Extraction uses
-  the `mcp__` contract's own `[A-Za-z0-9_-]` alphabet — `-` included, since a
-  server or tool name may carry one — and treats the two sources as a set. Only
-  DECLARATION positions in the prompt count (the TypeScript `name:` member and
-  the Python `async def name(` / `# tools["name"](…)` forms), so a tool
-  description that mentions a name is not read as a registration, and a name is
-  reported only when a CONFIGURED server owns it. The
-  row itself follows the shipped conversation rows rule for rule: one 24px
-  disclosure line with the plugin's plug glyph, a hover/open chevron swap, the
-  13px secondary title, the server summary and the tool total, expanding by
-  click or Enter/Space into the shipped 141px code-block scrollport, which
-  lists each owning server's public `mcp__…` names (bounded per server by
-  `INJECTION_NAME_LIMIT`, 256, with the remainder reported). Its change
-  signature keys on the names, so a same-count tool swap is a real change. It
-  is anchored a hair BEFORE the system-prompt card that opens the request's
-  step — mirroring the official `requestPromptAnchor` rule for rule, its four
-  guards included, so a resumed window or a repeated step cannot send the row to
-  the top of the window — so it reads as a
-  header for the model-facing input that follows, and the previous
-  `header.seq - 0.1` position survives only as the fallback for a window that
-  resolves no step. The row's node carries a session-level location on purpose:
-  the Chat lane re-anchors any turn/step-located node sitting before the turn's
-  opening human input onto that input (which would land it after the user
-  message) and folds process-window members away in the compact view, while a
-  location that is neither turn nor step short-circuits both rules. Still nothing is written into a session: the row is derived
-  client-side, no shipped component is imported (the built client bundle still
-  requires only react/react/jsx-runtime), and `verify-client-artifact` drives
-  the collapsed row, the click expansion, the named tool list and the PTC
-  prompt-only derivation in the packed bundle.
-
-- **Verification hardening (release gates).** `verify:package` now builds
-  explicitly before packing (some pack paths skip the `prepack` hook, which
-  shipped whatever `lib/` happened to hold and made the determinism check
-  compare a stale build against a fresh one), compares the WHOLE built tree
-  across two builds instead of two bundles, fails on packed artifacts that have
-  no current `src/` counterpart, and enforces package.json ↔ package-lock root
-  version identity. `verify:workflows` now requires the refuse-republish step's
-  real body (`gh release view` / `gh release delete` / `exit 1`), the
-  dry-run skip on both release-mutation steps, a `# vX.Y.Z` comment on every
-  SHA pin, and both step names for the gate-before-mutation ordering.
-  `verify-client-artifact` drives the registered-tools notice lane in the packed
-  bundle (definition, match rule, keyed view and a rendered row), so a dropped
-  registration fails the release gate instead of passing silently.
-
-- **The MCP tool row's expand chevron is now the shipped icon geometry.** The
-  hover/open affordance was a private 24-unit stroke path whose ink weight did
-  not match the official rows; it now inlines `IconChevronDownOutline14` from
-  the pinned `ui-primitives` set byte-for-byte (a filled 14-unit path), so the
-  row swaps in the same mark the shipped disclosure rows use. No test or packed
-  artifact assertion referenced the old geometry (`verify-client-artifact` pins
-  the plug path only), and the built bundle carries the new path unchanged.
-- **The wireframe and `docs/design.md` are re-aligned.** The figure title now
-  carries its version note (0.0.3 baseline; the 0.0.4 increments are not drawn),
-  `docs/design.md` gains *Differences from the wireframe* — the seven decided
-  figure-vs-code gaps, each resolved in the code's favour — and *The two lanes
-  at a glance*, the tool-row and registered-tools-notice anatomy with the rules the
-  lane derives. The glyph comment no longer claims the shipped set is authored
-  on a 24-unit canvas (its marks are mostly 14/16-unit filled paths) or that the
-  chevron already followed the shipped rows.
-- **The section header no longer carries a global refresh button.** The runtime
-  snapshot already re-reads once per settings-document revision, polls every 5 s
-  while the panel is visible, and each card refreshes its own server; a failed
-  full refresh surfaces the stale banner, whose Retry is now the only
-  whole-table manual refresh. The wireframe keeps drawing the baseline button
-  and `docs/design.md` records the removal as a deliberate gap. The acceptance
-  suite pins the new header contract (Add/Cancel only), the per-card refresh and
-  the banner's single full refresh.
-- **The settings sidebar shows the plugin's own plug mark.** The settings shell
-  picks a section's nav glyph from a hardcoded map by id and falls back to its
-  settings gear for ours — both supported generations do, and the
-  `settings.section` registration carries no icon option — so the browser half
-  paints the repo's plug glyph into its own nav row: the row is matched by the
-  localized `nav` label and accepted only in the shell's own shape, the shell
-  glyph's class rides along so sizing and colour stay shell-owned, and a
-  re-render or a locale flip repaints. Anywhere the DOM shape differs the patch
-  is a no-op and the shipped gear stays.
-- **The card's four actions are one capsule again — one frame, and only the
-  destructive one is red.** Edit, Remove, Disconnect and Test share the official
-  `.sm` outline recipe (h28 / r14 / `0 10px` / 12-18, transparent fill, the
-  neutral 0.5px hairline frame, one hover tint); the destructive action differs
-  by its LABEL colour alone (`state-error-primary`), so the group reads as one
-  control group instead of mixed border weights. The plain danger treatment
-  inside the confirm dialog and the staged form is unchanged.
 
 ## [0.0.3] - 2026-09-15
 
