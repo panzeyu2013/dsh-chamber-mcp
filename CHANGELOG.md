@@ -191,6 +191,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bundle (definition, match rule, keyed view and a rendered row), so a dropped
   registration fails the release gate instead of passing silently.
 
+- **The MCP tool row's expand chevron is now the shipped icon geometry.** The
+  hover/open affordance was a private 24-unit stroke path whose ink weight did
+  not match the official rows; it now inlines `IconChevronDownOutline14` from
+  the pinned `ui-primitives` set byte-for-byte (a filled 14-unit path), so the
+  row swaps in the same mark the shipped disclosure rows use. No test or packed
+  artifact assertion referenced the old geometry (`verify-client-artifact` pins
+  the plug path only), and the built bundle carries the new path unchanged.
+- **The wireframe and `docs/design.md` are re-aligned.** The figure title now
+  carries its version note (0.0.3 baseline; the 0.0.4 increments are not drawn),
+  `docs/design.md` gains *Differences from the wireframe* — the seven decided
+  figure-vs-code gaps, each resolved in the code's favour — and *The two lanes
+  at a glance*, the tool-row and injected-tools-notice anatomy with the rules the
+  lane derives. The glyph comment no longer claims the shipped set is authored
+  on a 24-unit canvas (its marks are mostly 14/16-unit filled paths) or that the
+  chevron already followed the shipped rows.
+
 ## [0.0.3] - 2026-09-15
 
 Runtime-visibility and configuration-completeness line. The original locked

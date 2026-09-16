@@ -9,11 +9,12 @@ Current release, compatibility and verification state. Refreshed 2026-09-15.
   notes composed from the dated CHANGELOG section. `v0.0.2` and `v0.0.1` are
   the previous releases.
 - **Working line: the unreleased 0.0.4 line.** `main` carries the next-version
-  changeset on top of the `v0.0.3` commit (`a952394`): workspace exception
+  changeset on top of the `v0.0.3` commit (`bf344ef`): workspace exception
   panel, per-server runtime refresh, `ptc` tool-row discovery, import-parser
   hardening, the injected-tools conversation notice (derived from
-  `request/header`, never written into a session) and the host/gate fixes below.
-  No version bump yet.
+  `request/header`, never written into a session), the host/gate fixes below,
+  and the wireframe/design-document re-alignment with the official
+  `IconChevronDownOutline14` geometry in the tool row. No version bump yet.
 - Releases ship the packed tgz as a GitHub Release asset; **npm publishing is
   temporarily disabled**. Flow and rollback: `docs/RELEASE.md`. Confirm what is
   actually published with `git ls-remote --tags origin` / `gh release view`.
@@ -42,8 +43,12 @@ Current release, compatibility and verification state. Refreshed 2026-09-15.
   **412 tests / 24 files**, build, `verify:package` (42 packed entries; consumer
   d.ts; react-only client-bundle purity; the packed-bundle artifact check, which
   also drives the injected-tools notice lane; determinism over the whole built
-  tree), plus `npm run verify:workflows` PASS. **Live smoke not re-run for this
-  line yet** — run it before tagging (`docs/RELEASE.md`).
+  tree), plus `npm run verify:workflows` PASS. Live smoke `npm run test:smoke`
+  (`M1` + `M0`) exit 0 against the chamber anchor CLI (read at run time:
+  `dsh@0.1.5-rc.2` under `/Applications/dsh-chamber.app/.../vendor/dsh/`),
+  installing this working tree's freshly packed tarball; the M1 capture records
+  R3: the enabled workspace's model-facing turn carries `mcp__fixture__echo` /
+  `mcp__fixture__env_report`, the disabled workspace's turn carries none.
 - Transcripts are written under `.smoke/logs/` (gitignored) and are not
   committed.
 
@@ -67,5 +72,16 @@ npm run check                                    # typecheck + tests + build + p
 node scripts/release-notes.mjs 0.0.4             # the dated CHANGELOG section (before tagging)
 npm run verify:workflows                         # action pins + release structure
 npm run test:smoke                               # live M1 + M0 on the chamber anchor
+# macOS: nvm's `pnpm` is a corepack shim and refuses while this repo pins
+# `packageManager: npm`. With node on PATH, build the gitignored .smoke/bin
+# scratch shim once (run the three lines, dropping the leading "#   "):
+#   mkdir -p .smoke/bin && ln -sf "$(command -v node)" .smoke/bin/node
+#   printf '#!/bin/sh\nexec node /Applications/dsh-chamber.app/Contents/Resources/pnpm/bin/pnpm.cjs "$@"\n' > .smoke/bin/pnpm
+#   chmod +x .smoke/bin/pnpm
+# then point the driver at it and at the chamber anchor:
+#   export DSH_SMOKE_NODE="$PWD/.smoke/bin/node"
+#   export DSH_SMOKE_NODE_BIN_DIR="$PWD/.smoke/bin"
+#   export DSH_ANCHOR_CLI=/Applications/dsh-chamber.app/Contents/Resources/vendor/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js
+#   npm run test:smoke
 git ls-remote --tags origin                      # what is actually released
 ```

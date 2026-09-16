@@ -559,6 +559,72 @@ notice closes that gap with the platform's own seams rather than a new channel:
 Also edited (build-gate fixes, see `docs/RELEASE.md`): `tsconfig.json` (added `DOM` lib),
 `tsconfig.tests.json` (override the inherited `tests` exclude).
 
+### The two lanes at a glance
+
+Two conversation-lane surfaces are easy to conflate: the per-call **MCP tool row**
+(registered per exact wire name through the keyed `tool.call.toolview` slot) and
+the **injected-tools notice** (§5(f), derived from the harness's own
+`request/header` events). The first renders one node per call, the second one
+line per non-empty change — an unchanged or emptied set adds none; neither
+writes anything into a session.
+
+One tool call — `src/client/tool-card/row.tsx`, styles in `styles.ts` (`toolHead`
+is a 24px row, `toolLeading` the 16px slot):
+
+```
+● | ⌄ | plug   github · search_issues   ·   acme   [Streamable HTTP]   412ms
+└── 16px ──┘   └── server · tool ──┘    sep   └ summary ┘   └ transport tag ┘   └ dur ┘
+  │ Input
+  │ {"owner": "acme"}
+  │ Output
+  │ {"total_count": 3, "items": [ … ]}
+```
+
+Exactly one leading mark is drawn — the terminal-state dot (`●`,
+`data-state='error'` red / `data-state='warning'` amber), the chevron once the
+row is open or, on an expandable row that has not reached a terminal state,
+while hovered (`⌄`), else the plug glyph; a terminal row therefore keeps its dot
+on hover. The title is
+`serverName · toolName`; the gap before the summary is the shipped 2×2
+caption-dot separator (`toolSep`, `aria-hidden`), not a punctuation character;
+the transport tag appears whenever the identity carries a transport — a running
+row shows it too — and only the duration waits for the call to settle. The
+expanded body is a left-ruled block (`toolBody`): the Input block appears when
+the call carried arguments, and the Output label is always present — a running
+call says Running…, a settled call with no text says No output.
+
+One notice line — `src/client/injection-row.tsx`, styles in `styles.ts`
+(`injectionRow`: one r12 pill on the layer-2 fill):
+
+```
+[plug]   MCP tools injected   zotero (43) · email (18)   61 tools in context
+```
+
+The strings are the en dictionary (`src/client/locales.ts`: `injection.title`,
+`injection.entry` = `{name} ({count})` joined with `·`, `injection.total` =
+`{count} tools in context`); the plug is the plugin's own `McpPlugIcon`. Rules
+lane derives, each traceable to source:
+
+- **One Context per `request/header`.** `match()` answers every `request/header`
+  with `{ id: String(seq), role: 'start' }` (`injection-row.tsx:185-189`), so a
+  bounded window can never produce a second `start` for one id and every header
+  keeps its own row position.
+- **An identical signature is not rendered again.** The signature is the
+  `name:count` key over the name-sorted server list (`injection.ts:102-104`,
+  `:114-116`); `start()` compares it against the nearest predecessor Context of
+  this kind and an unchanged set
+  renders no node (`injection-row.tsx`: `start()` at :190-201, the node built by
+  `buildViewNode()` at :206-231); an empty set has nothing to announce either.
+- **Position.** `anchorSeq = seq + INJECTION_ANCHOR_OFFSET`, and the offset is
+  `-0.1` (`injection-row.tsx:130`, `:198`) — the notice lands immediately before
+  the header event's own row, inside the step whose request carried the tools.
+- **Materialised rows are only hidden, never withdrawn.** A later evaluation can
+  flip a Context to unchanged or empty (a prepended history page supplies the
+  predecessor, or a live settings edit re-shapes server ownership); it then
+  re-emits the same key with `visibility: 'hidden'` instead of returning null,
+  because the engine rejects a definition that withdraws a materialized target
+  (`injection-row.tsx:206-231`).
+
 ## 7. Browser half — type and runtime contracts
 
 ### 7.1 `settings.section` registration & component typing (slots)
@@ -837,3 +903,22 @@ cancelled.
 - Save order: dirty credential values first (`credentials.set`), then ONE
   revision-fenced `mutate` of the settings document; a conflict re-reads and
   reports instead of retrying blindly.
+
+### Differences from the wireframe
+
+`docs/mcp-desktop-layout.svg` is a structural sketch, not a pixel contract.
+Where it and the code disagree, the code wins; the known gaps are recorded here
+so the figure is read for shape, not detail.
+
+| Difference | Resolution |
+|---|---|
+| Per-card refresh, the per-card refresh-failure row, the stale-while-revalidate banner and the collapsed workspace-exception block (the figure draws every workspace row; §6 collapses them to the exception set) are not drawn — all 0.0.4 additions. | The figure lags; the version note on the figure says so. The controls stay as shipped (§6). |
+| The figure gives `stopped`/`unknown` no runtime action, while the code renders **Connect** for every **enabled** server the host reports a runtime view for — the `stopped` and `unknown` phases included, and `unknown` is what a configured server with no live handle reports (`manager.ts:452-461`) — with the accent-filled primary reserved for `failed`. | Keep the code; the figure's `disabled` clause is the one that holds: a disabled server also reports a view (`manager.ts:434-441`), but `server-card.tsx:589-592` gates Connect/Disconnect (and `:619`, `:629` Test/Tools) on `!globallyDisabled`. A genuinely missing runtime view drops only those three runtime controls (`runtime !== undefined`); the card keeps its head switch, per-card refresh and Edit/Remove. |
+| The figure draws a dot inside the credential badge; the code uses a tone plus text. | Keep the code — the badge is a Tag pill, not a status row. |
+| The figure puts a check mark on the success notice; the code uses plain `role=status` text. | Keep the code. |
+| Card radius r14 and padding `12px 14px` (`.mcpScope_card` in `styles.ts`; §9.3's r14 is the Button capsule, not the card) versus the figure's drawn max r12 — and the figure's own metric caption names r16 / `12 16 14`. | Keep the code; the figure is indicative. |
+| The tool panel in the figure carries a "first 2 of 120" label (`共 120 个工具，显示前 2 个。`), which reads as always-on. | The label is illustrative: the code renders exactly the host's list and adds the same hint (`tools.truncated`) only when the HOST truncates — `manager.ts` caps the list at 200 (`capToolList`), and `server-card.tsx` renders the hint. Keep the code. |
+| The figure draws the import dialog in a side panel beside the staged form (annotated `role=dialog`). | Keep the code — the import opens inline inside the staged form, between the import button and the fields; the panel is a side rail in the figure only for legibility. |
+
+The two session lanes (the MCP tool-call transcript and the injected-tools
+notice) are not part of that wireframe; their contract lives in §5(f) and §6.
