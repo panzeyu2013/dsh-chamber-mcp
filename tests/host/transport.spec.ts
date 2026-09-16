@@ -7,9 +7,7 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js'
-import { z } from 'zod'
+import { Client } from '@modelcontextprotocol/client'
 import type { ServerDef } from '../../src/shared/model.js'
 import {
   buildChildEnv,
@@ -159,16 +157,15 @@ describe('createTransport', () => {
   it('builds a stdio transport whose resolved env reaches the real child', async () => {
     const def = stdioDef({ envKeys: ['PROBE_TOKEN'] })
     const transport = await createTransport(def, resolver({ PROBE_TOKEN: 'from-credentials' }))
-    const client = new Client({ name: 'transport-spec', version: '0.0.1' }, { capabilities: {} })
+    const client = new Client(
+      { name: 'transport-spec', version: '0.0.1' },
+      { capabilities: {}, versionNegotiation: { mode: 'auto' } },
+    )
     try {
       await client.connect(transport)
-      const list = await client.request({ method: 'tools/list' }, ListToolsResultSchema)
+      const list = await client.listTools(undefined, { cacheMode: 'refresh' })
       expect(list.tools.some((tool) => tool.name === 'env_probe')).toBe(true)
-      const RawCallResult = z.record(z.string(), z.unknown())
-      const call = await client.request(
-        { method: 'tools/call', params: { name: 'env_probe', arguments: {} } },
-        RawCallResult,
-      )
+      const call = await client.callTool({ name: 'env_probe', arguments: {} })
       const content = call.content as { type: string; text?: string }[]
       expect(content[0]).toMatchObject({ type: 'text', text: 'from-credentials' })
     } finally {

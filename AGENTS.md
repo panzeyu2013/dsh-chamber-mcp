@@ -22,8 +22,8 @@ chamber's current anchor CLI, read at run time. Migration recipe:
 
 ## Where things live
 
-- `src/` — host half (`index.ts` entry; `manager/server/tools/transport/
-  agents/workspace/schema/routes.ts`) and browser half (`src/client/`, incl. the
+- `src/` — host half (`index.ts` entry; `manager/server/server-context/tools/
+  transport/agents/workspace/schema/routes.ts`) and browser half (`src/client/`, incl. the
   `tool-card/` transcript lane: MCP tool identity, row, and keyed
   `tool.call.toolview` registration). Shared pure model:
   `src/shared/model.ts` (edit only with its tests).
@@ -85,5 +85,6 @@ chamber's current anchor CLI, read at run time. Migration recipe:
 
 `npm run check` (typecheck + tests + build + verify:package),
 `node scripts/release-notes.mjs <version>`, `node
-scripts/verify-workflow-action-pins.mjs`, then the live smoke
+scripts/verify-workflow-action-pins.mjs`, `npm run verify:low-generation`
+(built half against the low generation's real packages), then the live smoke
 (`npm run test:smoke`) on the smoke machine. Full runbook: `docs/RELEASE.md`.

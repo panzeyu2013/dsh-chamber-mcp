@@ -122,7 +122,9 @@ class Harness {
 
   /** Publish + announce an agent, mirroring the real registry's emits. */
   createAgent(agent: Agent): void {
-    this.ctx.emit('agent/created', { agent })
+    // 0.1.6 requires the lifecycle source on this event (a vetoing listener
+    // settles the announcement); 'startup' is the seeded-create case.
+    this.ctx.emit('agent/created', { agent, source: 'startup' })
   }
 
   disposeAgent(agent: Agent): void {

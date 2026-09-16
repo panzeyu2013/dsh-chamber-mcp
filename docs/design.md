@@ -113,14 +113,16 @@ comments, anchors and formatting survive on untouched nodes.
     revoke stale defs, register current defs for enabled servers only.
   - `agent/disposed` → entry dropped (ctx-scoped effects die with the agent ctx).
   - Bookkeeping map keyed by Agent; all listeners/disposers effect-wrapped (HMR-safe).
-- **Tool semantics mirror official mcp-client** (pinned contract, rc.5-style content
-  rendering: image/audio/resource payloads degrade to placeholders — the rc.1
-  attachments-based image bridge is a documented scope cut): public name
+- **Tool semantics are the OFFICIAL adapter's** (pinned contract): the definition —
+  canonical `{content, structuredContent?}` output schema, text projection,
+  `taskRequired` refusal, `isError` → throw and durable image admission — is
+  built by `createMcpToolDefinition`, the listing is capability-gated, and the
+  caller-owned call is the 2.0 `callTool`. Public name
   `mcp__<serverName>__<rawName>` ≤64 chars `[A-Za-z0-9_-]` + 12-hex sha256 suffix on lossy
   normalization; raw MCP inputSchema passthrough; `output {schema, render}` shape; executor
-  = raw SDK request `tools/call` + `RawCallToolResultSchema` with `{signal: exec.signal,
-  timeout: <per-server timeoutMs, default 60000>}`; `isError` → throw; generation swap on re-sync; registration conflict →
-  rollback whole generation.
+  = `client.callTool({name, arguments}, {signal: exec.signal, timeout:
+  <per-server timeoutMs, default 60000>, toolDefinition})`; generation swap on
+  re-sync; registration conflict → rollback whole generation.
 - Credentials events (`credentials/reference-updated` for a ref in use) → reconnect that
   server so new values take effect (a globally disabled or manually stopped
   server is skipped).
@@ -147,14 +149,20 @@ comments, anchors and formatting survive on untouched nodes.
   name answers `ok:true` with an empty list, and an omitted or empty parameter
   keeps the untouched full view), so one card can refresh itself without
   re-reading the whole table.
-- **`tools/list` pagination is bounded**: every followed continuation cursor is
-  recorded and a repeat rejects the sync as an invalid tool list, and one sync is capped
-  at `MAX_SYNC_PAGES` (= `MAX_SYNC_TOOLS` = 2000) requests. Either failure leaves the
-  previous generation registered, so a hostile server can neither spin the fetch loop nor
-  erase working tools.
+- **A tool listing is one bounded, capability-gated fetch**: the 2.0 client
+  aggregates the `tools/list` pages itself (`listMaxPages`, 64 by default) for
+  `listTools(undefined, { cacheMode: 'refresh', timeout: timeoutMs })`, and the bridge
+  refuses the sync above `MAX_SYNC_TOOLS` (= 2000) items or on a duplicated public
+  name. A refused sync leaves the previous generation registered, so a hostile server
+  can neither erase working tools nor inflate the scope; the operator's per-server
+  deadline still bounds the fetch. The 1.x page-by-page loop and its repeated-cursor
+  rejection are gone with that client.
 - **Context footprint**: registered definitions are ordinary request tool schemas, so the
-  host's context meter prices them under "Tool definitions" (the plugin injects no prose
-  into the system prompt). See README §"What the model sees".
+  host's context meter prices them under "Tool definitions". On 0.1.6+ the plugin also
+  publishes one literal `mcp:<serverName>` section per connected server (that server's
+  `initialize` instructions, attributed and capped at 32 KiB, `interpolate:false`); on
+  0.1.5 it publishes none, because that host renders every section through its
+  interpolator. See README §"What the model sees".
 
 ## 5. Host half — upstream contracts, mounting and deviations
 
@@ -162,7 +170,7 @@ comments, anchors and formatting survive on untouched nodes.
 
 | File | Role |
 |---|---|
-| `src/tools.ts` | public name + definition build + executor (official mirror, rc.5 flavor: no image bridge) |
+| `src/tools.ts` | public name + ONE capability-gated, client-aggregated tool listing; definitions built by the official `createMcpToolDefinition` adapter when the host provides it, else by a verbatim port of that adapter (projection, validation, image admission, `finalizeContent`; runtime selection in `selectDefinitionBuilder`, parity asserted case by case) |
 | `src/transport.ts` | async transport factory: env/headers resolved from credentials per attempt |
 | `src/workspace.ts` | canonical-cwd → workspace-id helper |
 | `src/server.ts` | per-server supervisor (official reconnect semantics, defs master state) |
@@ -170,12 +178,13 @@ comments, anchors and formatting survive on untouched nodes.
 | `src/manager.ts` | bridge orchestrator: handle lifecycle, credential events, applier ownership |
 | `src/schema.ts` | `DocumentSchema` (schemastery) — NEW module beyond the original list |
 | `src/routes.ts` | 0.0.3 runtime routes on the Connection carrier: `status` / `action` / `tools` (fixed host codes only; §(d)) |
+| `src/server-context.ts` | per-server publication of the `mcp:<serverName>` instructions section and the `mcpResources` provider (the official `registerServerContext` shape) |
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
-| `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,agents,settings,manager,index,routes}.spec.ts` | the 8 `tests/host/` suites plus `tests/tools.spec.ts`, all green (10 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`; repo total 412 tests / 24 files) |
+| `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture on the 2.0 server packages (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe; publishes instructions, oversized under `FIXTURE_HUGE_INSTRUCTIONS=1`) |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (10 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`; repo total 441 tests / 25 files) |
 
 Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (412 tests / 24 files).
+`node node_modules/vitest/vitest.mjs run` — both fully green (441 tests / 25 files).
 
 ### (a) API signatures and runtime assumptions
 
@@ -299,11 +308,19 @@ flags and the full config is green at the time of writing.
    bump `syncId`/`generation` + notify manager) is otherwise the official
    algorithm, including the 5 s failure-close discipline and the stability
    window reset (uptime ≥ `maxDelayMs`).
-3. **rc.1 image bridging skipped** (acceptable per spec): image/audio/
-   embedded-resource blocks degrade to placeholders in the text projection
-   (`[image: <mime>, content discarded]`, `[audio: …]`, `[resource: …]`);
-   `resource_link` renders as `Resource link: <name> (<uri>)` (rc.1 wording);
-   the canonical `{content, structuredContent?}` value keeps raw blocks.
+3. **Rich content takes the same path on both generations.** 0.1.6+ runs the
+   official adapter; 0.1.5 runs this plugin's verbatim port of it (the export does
+   not exist there, but every service that path needs does — an `attachments`
+   store, `llm.resolveModelInfo`, the execution's agent route, and the
+   `finalizeContent` hook the 0.1.5 runtime invokes).
+   A definition's text projection, canonical `{content, structuredContent?}`
+   validation, `taskRequired` refusal and `isError` → throw are identical on both
+   paths (asserted case by case in `tests/tools.spec.ts`). An image block becomes a
+   durable attachment when the composition provides an `attachments` store AND
+   the current model route declares image input; every other case projects the
+   diagnostic `[image unavailable: <mime>; <reason>; raw image data remains
+   available to programmatic callers]` while the canonical value keeps the raw
+   blocks — base64 never reaches model history.
 4. **Client identity** on the wire is `{name: 'dsh-chamber-mcp', version:
    <package.json version>}` — `src/server.ts` derives both from the package
    manifest (it reads `0.0.3` at HEAD); official sends `dsh-mcp-client`;
@@ -335,6 +352,75 @@ flags and the full config is green at the time of writing.
    fiber and die with it — verified by disposing the scope ctx in tests);
    disposers are only invoked while the agent is still live in the registry
    (`agents.get(id) === agent`).
+9. **Two host generations, selected at runtime.** The client layer is v2 on
+   every host (`@modelcontextprotocol/client@2.0.0` is this plugin's OWN
+   dependency, not a host surface), and the definition builder is chosen once per
+   process from what the host provides: 0.1.6+ → the official
+   `createMcpToolDefinition` (canonical validation, durable image admission),
+   0.1.5 → the local text projection this plugin always shipped. Peers are
+   `^0.1.5-rc.2 || ^0.1.6-alpha.1`.
+
+   The adapter MUST be read off a namespace import. At 0.1.5 the package exists
+   but exports only `{Config, apply, inject, name}`; a STATIC named import of a
+   missing export is an ESM link-time `SyntaxError` that fails the whole cordis
+   plugin tree — measured on the shipped 0.1.5-rc.2 anchor, where the dsh
+   instance exited 1 with `plugin tree failed to load ... does not provide an
+   export named 'createMcpToolDefinition'`. `@deepseek-ai/dsh-mcp-resources`
+   (absent before 0.1.6) is an optional peer: its absence only removes the shared
+   resource tools. The 2.0 client also deletes the hand-rolled `tools/list`
+   pagination, its repeated-cursor/page caps and the legacy `toolResult`
+   normalization — `listMaxPages` (default 64) is the non-converging-cursor
+   defence and a 2025-era frame cannot reach this path.
+
+   The two builders are INTERCHANGEABLE. The fallback is a verbatim port of the
+   official implementation: same projection strings, same empty-value semantics
+   (an entirely empty result reports `(<tool> returned no model-visible content)`
+   while a text block that is itself empty stays empty), same `CallToolResult`
+   validation and failure text, same `taskRequired` refusal and `isError` →
+   throw, same canonical `{content, structuredContent?}` value, and the same
+   durable image admission with its `finalizeContent` weak-map swap — 0.1.5's
+   runtime invokes that hook too (`dsh-tools` reads `finalizeContent` from the
+   definition). The two differ only in which module's code executes.
+   `tests/tools.spec.ts` drives both builders through the same case matrix and
+   asserts each against the other AND against literal strings, so neither the
+   fallback nor a future adapter can drift unnoticed.
+10. **One bound was kept, not deleted.** `MAX_SYNC_TOOLS` (2000) caps the TOTAL
+    listed tools per server, because `listMaxPages` bounds PAGES and not items:
+    64 pages × 1000 tools would otherwise drive unbounded per-agent registration
+    fan-out (SEC-05). It is this plugin's own control, not SDK duplication.
+11. **Attach-aware close discipline.** A failed attempt closes through its
+    transport and owes NO client close event when the client never bound it (a
+    spawn failure, or a negotiation probe that never attached); only an ATTACHED
+    generation additionally holds the 5 s close barrier. Demanding a close event
+    unconditionally turned a plain "command not found" into a permanent give-up
+    (`failed generation did not close within 5000ms`). Measured on the 2.0
+    client: `client.transport` is the attach signal (`Protocol` declares
+    `get transport(): Transport | undefined`, so this is the SDK's own surface),
+    an attached handshake failure lands its close event
+    after ~2 s, and an unattached one never does. Note the 2.0 `mode: 'auto'`
+    negotiation itself spawns a disposable SIBLING process per stdio connect to
+    probe the era (visible in the smoke transcript: every connect starts two
+    children); the SDK reaps that sibling before it starts the caller's transport,
+    so it never overlaps the next generation.
+12. **Two optional consumers, published per server.** Every supervised server
+    contributes a literal `mcp:<serverName>` system-prompt section at the
+    centrally allocated `MCP_SERVERS` order — but ONLY where the host allocates
+    that order and honours `interpolate:false`, i.e. 0.1.6+. 0.1.5 has neither
+    the key nor literal-section rendering: its renderer interpolates every
+    section, so a server instruction containing `{{...}}` would either abort
+    prompt assembly for the whole turn or be substituted with a host variable.
+    The allocation key is therefore the capability probe, and publishing nothing
+    there is exactly what 0.1.5 shipped. The section text is a LIVE read of the
+    connection's established-generation instruction snapshot.
+    Every server also contributes an `mcpResources` provider, so the
+    service-owned `list_mcp_resources` / `list_mcp_resource_templates` /
+    `read_mcp_resource` tools can reach it. Both ride `ctx.inject` and are
+    disposed with the server handle; a composition that mounts neither degrades
+    to no contribution. Instructions are published only by an ESTABLISHED
+    generation (connect + initial discovery), bounded by `MAX_INSTRUCTION_BYTES`
+    (32768) over the complete attributed value, and retracted on disposal AND on
+    give-up — revoking the tools while leaving the prose up would keep telling
+    the model to call `mcp__<server>__*` names that no longer exist.
 
 ### Remaining risks
 
@@ -432,9 +518,12 @@ the per-server merge folds correctly.
 
 ### (f) Injected-tools notice (conversation lane)
 
-The plugin deliberately injects no PROSE into the model context, so nothing in
-the conversation showed that MCP tools are part of a session's context. The
-notice closes that gap with the platform's own seams rather than a new channel:
+The plugin's model-facing contributions are indistinguishable from the
+platform's own — MCP definitions are ordinary tool schemas (priced under
+"Tool definitions") and a server's instructions are an ordinary prompt section —
+so nothing in the conversation said that MCP tools are part of a session's
+context. The notice closes that gap with the platform's own seams rather than a
+new channel:
 
 - **Why nothing is written**: a private session event is required-on-read. The
   persisted envelope's `ignorable?: true` marker is the only admission a reader
@@ -802,7 +891,7 @@ tag exist?" check has two failure modes that matter here:
   The last disposer removes the tag.
 
 Mirroring the primitive CSS rather than importing it also keeps the plugin
-working across the peer range (`^0.1.2-rc.1 || ^0.1.5-rc.1`) without a
+working across the peer range (`^0.1.5-rc.2 || ^0.1.6-alpha.1`) without a
 compile-time dependency on the primitives' JS API — the geometry is copied
 from the pinned generation, which §9.3 pins property by property.
 

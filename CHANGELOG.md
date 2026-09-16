@@ -13,6 +13,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > only and ignores this one — an entry left here ships in the tree but never
 > appears in the release notes.
 
+### Changed
+
+- **The client layer moved to the v2 model: `@modelcontextprotocol/client@2.0.0`
+  — the same dependency on every supported host generation.** The 1.x SDK is gone
+  from the tree, and the code that existed only to compensate for it was DELETED
+  rather than ported: hand-rolled `tools/list` pagination, its repeated-cursor
+  and page caps, and the legacy `toolResult` normalization. `MAX_SYNC_TOOLS`
+  (2000) stays — the client's `listMaxPages` bounds pages, not listed tools, and
+  per-agent registration fan-out still needs a total cap (SEC-05). The aggregated
+  listing carries the server's configured `timeoutMs`, so an operator deadline
+  still bounds a handshake-then-stall server instead of the SDK's 60 s default.
+- **Two host generations, one package.** Peers are
+  `^0.1.5-rc.2 || ^0.1.6-alpha.1`, and the definition builder is SELECTED at
+  runtime: on 0.1.6+ the official `createMcpToolDefinition` adapter (canonical
+  result validation plus durable image admission), on 0.1.5 a verbatim port of
+  that same adapter — same projection strings and empty-value semantics, same
+  `CallToolResult` validation, same image admission and `finalizeContent`
+  hook, held to the adapter's exact output by a parity suite — so an older host
+  behaves like the official plugin instead of failing to load. The adapter is read off a NAMESPACE
+  import precisely because a STATIC import of the 0.1.6-only export is an ESM
+  link-time error that takes the whole plugin tree (and the host) down.
+  `@deepseek-ai/dsh-mcp-client` and `@deepseek-ai/dsh-mcp-resources` are
+  OPTIONAL peers for the same reason: a host without the first still runs on the
+  fallback, and one without the second simply gets no shared resource tools.
+- **Tool definitions are built by the official `createMcpToolDefinition`
+  adapter wherever the host provides it.** On that path canonical result
+  validation, `taskRequired` refusal and durable image admission are upstream
+  behavior; the 0.1.5 fallback is a verbatim port of it rather than the
+  historical placeholder projection (see `docs/design.md` §5(c)). A host
+  that silently loses the adapter switches to the fallback ONCE, and the reason
+  is logged. The listing is capability-gated (`getServerCapabilities()?.tools`)
+  and aggregated by the client in one
+  `listTools(undefined, { cacheMode: 'refresh', timeout })` call; calls go
+  through `callTool({ name, arguments }, { signal, timeout, toolDefinition })`,
+  and the generation is negotiated with `versionNegotiation: { mode: 'auto' }`.
+- **Server instructions and MCP resources are published for the first time.**
+  Every established connection contributes a literal `mcp:<serverName>`
+  system-prompt section at the allocated `MCP_SERVERS` order (interpolation
+  off; bounded by `MAX_INSTRUCTION_BYTES` = 32768 over the complete attributed
+  value, and an oversized block fails that attempt) plus an `mcpResources`
+  provider, so the service-owned `list_mcp_resources` /
+  `list_mcp_resource_templates` / `read_mcp_resource` tools reach this
+  plugin's servers. Both contributions are optional by construction: a
+  composition that mounts neither degrades to no contribution. The prompt section
+  is 0.1.6+ ONLY — 0.1.5 has no literal-section rendering (its renderer
+  interpolates every section, so remote prose containing `{{...}}` could abort a
+  turn or be substituted with a host variable), and that host never published one.
+- **A failed attempt no longer has to prove a close event it never owed.**
+  Only an ATTACHED generation (the client actually bound its transport) holds
+  the 5 s close barrier; an unattached failure closes through its transport and
+  retries on the normal budget. Previously a plain "command not found" burned
+  the barrier and stopped reconnection for good with `failed generation did not
+  close within 5000ms`.
+
+### Fixed
+
+- **Giving up now retracts the published instructions, not just the tools.** The
+  reconnect budget's give-up pushed an empty tool list while the live
+  `mcp:<serverName>` section kept returning the last connected generation's
+  `initialize` instructions — the model was told to use `mcp__<server>__*`
+  names that no longer existed. The field is cleared on give-up and on
+  unregister, matching the official supervisor.
+- **A generation that disposal superseded mid-connect is now closed.** If
+  `dispose()` ran while the transport was still being built, the close was
+  confirmed against an unattached client and the attempt that landed afterwards
+  attached and returned without closing, leaving a live server process behind.
+  The post-connect ownership check closes it (official discipline) and reports if
+  the close cannot be confirmed.
+- **Lockfile and manifest can no longer drift silently.** `verify:package` now
+  compares the lock's root `dependencies`/`devDependencies`/peer surface
+  against `package.json`, and refuses a lock whose entries carry a `resolved`
+  URL without an `integrity` pin.
+
+### Removed
+
+- The `@modelcontextprotocol/sdk` (1.x) client dependency (replaced by
+  `@modelcontextprotocol/client@2.0.0`), and the `0.1.2` generation from the
+  claimed support window: this line re-verifies `0.1.5-rc.2` and
+  `0.1.6-alpha.1` only.
+
 ### Fixed
 
 - **The injected-tools notice poisoned the session log.** The applier appended a

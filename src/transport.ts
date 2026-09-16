@@ -17,9 +17,9 @@
  * @module
  */
 
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import type { Transport } from '@modelcontextprotocol/client'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
 import type { ServerDef } from './shared/model.js'
 
@@ -134,17 +134,16 @@ export async function createTransport(
         command: server.command,
         args: server.args ?? [],
         env: buildChildEnv(await resolveServerEnv(server, resolve, warn)),
-        cwd: server.cwd ?? '',
+        // An empty/absent cwd is OMITTED rather than forwarded as '' so the
+        // SDK inherits the host process's cwd by construction (async spawn
+        // happens to accept '', but not every spawn surface does). Deliberate
+        // divergence from the official transport, which forwards config.cwd.
+        ...server.cwd === undefined || server.cwd === '' ? {} : { cwd: server.cwd },
       })
-    case 'streamable-http': {
-      // The SDK's StreamableHTTPClientTransport has optional callback
-      // properties typed without `| undefined` (exactOptionalPropertyTypes
-      // mismatch with the Transport interface); the SDK constructed the
-      // object, so the cast records only that widening (official pattern).
+    case 'streamable-http':
       return new StreamableHTTPClientTransport(
         new URL(server.url),
         { requestInit: { headers: await resolveServerHeaders(server, resolve, warn) } },
-      ) as Transport
-    }
+      )
   }
 }

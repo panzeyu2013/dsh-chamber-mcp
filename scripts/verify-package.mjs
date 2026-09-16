@@ -29,11 +29,37 @@ const pkgName = pkg.name
 // Version identity (AGENTS.md): package.json == package-lock \`packages[""]\`.
 // No other gate compares the lock's root version, so a hand bump that forgot
 // \`npm install --package-lock-only\` would ship a mismatched pair silently.
-const lockRoot = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8')).packages?.['']
+const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'))
+const lockRoot = lock.packages?.['']
 if (lockRoot?.version !== pkg.version || lockRoot?.name !== pkg.name) {
   throw new Error(
     'package.json ' + pkg.name + '@' + pkg.version + ' != package-lock root '
     + String(lockRoot?.name) + '@' + String(lockRoot?.version) + ' — regenerate the lockfile',
+  )
+}
+// The lock's root block must describe the SAME surface as the manifest. Name and
+// version were the only comparison, so widening a peer range (or adding
+// peerDependenciesMeta) without regenerating the lock stayed invisible — the
+// lock then records a contract the published tarball does not have.
+const surface = ['dependencies', 'devDependencies', 'peerDependencies', 'peerDependenciesMeta']
+const drifted = surface.filter((field) => (
+  JSON.stringify(lockRoot?.[field] ?? null) !== JSON.stringify(pkg[field] ?? null)
+))
+if (drifted.length > 0) {
+  throw new Error(
+    'package-lock root ' + drifted.join(' / ') + ' drifted from package.json — regenerate the lockfile',
+  )
+}
+// Every entry that records a tarball URL must also pin its bytes: a lock can be
+// regenerated from a partial hidden lockfile with resolved-but-unpinned entries,
+// which would install unverified content.
+const unpinned = Object.entries(lock.packages ?? {}).filter(([key, entry]) => (
+  key !== '' && typeof entry.resolved === 'string' && entry.integrity === undefined
+))
+if (unpinned.length > 0) {
+  throw new Error(
+    String(unpinned.length) + ' package-lock entries have a resolved URL but no integrity (e.g. '
+    + unpinned[0][0] + ') — regenerate the lockfile from a clean tree',
   )
 }
 const scratch = join(root, '.smoke', 'verify')
