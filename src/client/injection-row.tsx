@@ -30,7 +30,7 @@
  *
  * The row's form follows the shipped conversation rows rule for rule (the
  * system-prompt card and the injected-context rows): one 24px disclosure line —
- * leading box, 13px secondary title, the marked-up server summary and total, a
+ * leading box, 13px secondary title, the marked-up source summary, a
  * hover/open chevron — that a click (or Enter/Space) expands into the shipped
  * 141px code-block scrollport. That body lists each owning server and the
  * public names it contributed; the collapsed line already carries the counts,
@@ -434,7 +434,6 @@ export function createInjectionNodeDefinition(options: InjectionRowOptions = {})
       const reason = (match.event.data as { reason?: unknown } | undefined)?.reason
       return {
         servers,
-        total: servers.reduce((sum, server) => sum + server.toolCount, 0),
         signature,
         anchorSeq: anchorSeqOf(match, promptAnchor, reason === 'initial'),
         unchanged: previous !== undefined && previous.signature === signature,
@@ -474,7 +473,7 @@ export function createInjectionNodeDefinition(options: InjectionRowOptions = {})
         anchorSeq,
         location: INJECTION_NODE_LOCATION,
         visibility: visible ? 'visible' : 'hidden',
-        data: { servers: state.servers, total: state.total },
+        data: { servers: state.servers },
       }
     },
   }

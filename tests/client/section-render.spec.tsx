@@ -936,8 +936,9 @@ describe('McpScopeSection render', () => {
     // Expanded: ALL rows + the bulk switches + the default-off hint.
     expect(mounted.text()).toContain('two')
     expect(mounted.text()).toContain(en['server.defaultOff'])
+    // Only the ON state is spelled out: the enabled row says On, the
+    // default-off rows say nothing beside a switch that already reads off.
     expect(mounted.text()).toContain(en['row.on'])
-    expect(mounted.text()).toContain(en['row.off'])
     expect(buttonByText(mounted.host, en['row.allOn'])).toBeDefined()
     expect(buttonByText(mounted.host, en['row.allOff'])).toBeDefined()
     expect(writes).toEqual([]) // expansion is local UI state, not a settings write
@@ -1156,6 +1157,52 @@ describe('McpScopeSection render', () => {
     await flush()
     expect(names()).toEqual(['tmp', 'daily', 'quant', 'literature', 'perf'])
     expect(buttonByText(mounted.host, t('row.allOn'))).toBeDefined()
+  })
+
+  it('never strands a query behind a filter input that is gone', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {},
+      {
+        wsItems: [
+          { workspaceId: 'ws-1', title: 'tmp' },
+          { workspaceId: 'ws-2', title: 'daily' },
+          { workspaceId: 'ws-3', title: 'quant' },
+          { workspaceId: 'ws-4', title: 'literature' },
+          { workspaceId: 'ws-5', title: 'perf' },
+        ],
+      },
+    )
+    await flush()
+    buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
+    await flush()
+    const block = mounted.host.querySelector('.' + styles.wsBlock)
+    setValue(block?.querySelector<HTMLInputElement>('input[type="search"]') as HTMLInputElement, 'da')
+    await flush()
+    const names = (): (string | null)[] =>
+      Array.from(mounted.host.querySelectorAll('.' + styles.wsName)).map((el) => el.textContent)
+    expect(names()).toEqual(['daily'])
+
+    // The list shrinks below the threshold: the input disappears, so the query
+    // must stop narrowing (otherwise rows stay hidden with no way to clear it).
+    mounted.live.wsItems.splice(2)
+    mounted.rerender()
+    await flush()
+    expect(mounted.host.querySelector('.' + styles.wsBlock + ' input[type="search"]')).toBeNull()
+    expect(names()).toEqual(['tmp', 'daily'])
+    expect(mounted.text()).not.toContain(t('wsFilter.none', { query: 'da' }))
+
+    // Growing back to a filterable list starts unfiltered (the query was dropped,
+    // not merely hidden).
+    mounted.live.wsItems.push(
+      { workspaceId: 'ws-3', title: 'quant' },
+      { workspaceId: 'ws-4', title: 'literature' },
+      { workspaceId: 'ws-5', title: 'perf' },
+    )
+    mounted.rerender()
+    await flush()
+    expect(mounted.host.querySelector('.' + styles.wsBlock + ' input[type="search"]')).not.toBeNull()
+    expect(names()).toEqual(['tmp', 'daily', 'quant', 'literature', 'perf'])
   })
 
   it('leaves a short list without a filter input', async () => {

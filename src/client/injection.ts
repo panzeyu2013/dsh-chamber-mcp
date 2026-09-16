@@ -85,7 +85,6 @@ export interface InjectionServer {
 /** Normalized payload of one injection notice. */
 export interface InjectionPayload {
   servers: readonly InjectionServer[]
-  total: number
 }
 
 /** The two model-facing shapes one request can carry MCP tools in. */
@@ -317,7 +316,7 @@ export function readInjectionPayload(data: unknown): InjectionPayload | undefine
     entries.push({ name, toolCount: typeof count === 'number' && Number.isFinite(count) && count > 0 ? count : 0, tools })
   }
   if (entries.length === 0) return undefined
-  return { servers: entries, total: entries.reduce((sum, entry) => sum + entry.toolCount, 0) }
+  return { servers: entries }
 }
 
 /**

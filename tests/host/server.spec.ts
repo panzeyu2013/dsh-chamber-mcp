@@ -480,12 +480,17 @@ describe('bounded connect against a server that never answers the handshake', ()
       },
       logger: { info: (m) => log('info', m), warn: (m) => log('warn', m), error: (m) => log('error', m) },
       onDefsChanged: () => {},
-      toolCallTimeoutMs: 100,
+      // The operator's per-server timeout ALSO bounds the handshake, so it has to
+      // cover a real `node` spawn + initialize + sync: at 100ms the SECOND
+      // attempt (the real fixture) timed out under load too, maxAttempts ran out
+      // and this test failed 2 runs in 3 on a busy machine.
+      toolCallTimeoutMs: 3000,
       reconnect: { enabled: true, initialDelayMs: 100, maxDelayMs: 200, maxAttempts: 3 },
     })
     handles.push(handle)
     await waitFor(() => handle.snapshot().phase === 'reconnecting', 'first bounded failure')
-    await waitFor(() => handle.state.connected && handle.state.syncId === 1, 'reconnect onto the real server')
+    // Room for the backoff plus every remaining attempt's own bound.
+    await waitFor(() => handle.state.connected && handle.state.syncId === 1, 'reconnect onto the real server', 15000)
     const snap = handle.snapshot()
     expect(snap.phase).toBe('connected')
     // A healthy snapshot must never carry the previous outage's reason, and the

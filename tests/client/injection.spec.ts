@@ -281,7 +281,6 @@ describe('injection payload reader', () => {
       { name: 'zotero', toolCount: 43, tools: ['mcp__zotero__search'] },
       { name: 'email', toolCount: 18, tools: [] },
     ])
-    expect(payload?.total).toBe(61)
   })
 
   it('never throws on a malformed payload (the lane renders nothing instead)', () => {
@@ -297,7 +296,6 @@ describe('injection payload reader', () => {
       { name: 'b', toolCount: 0, tools: [] },
       { name: 'c', toolCount: 0, tools: [] },
     ])
-    expect(payload?.total).toBe(0)
   })
 
   it('keeps only real names from a hostile tools list', () => {

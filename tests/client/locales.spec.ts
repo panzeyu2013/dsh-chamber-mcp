@@ -38,7 +38,9 @@ describe('locales: en/zh parity', () => {
     expect(en['row.on']).toBe('On')
     expect(zh['row.on']).toBe('开启')
     expect(en['row.on']).not.toContain('default')
-    expect(zh['row.off']).toContain('关闭')
+    // The OFF state word retired with the On-only rows: the label would be dead
+    // copy and the switch already carries the off state.
+    expect(Object.keys(en)).not.toContain('row.off')
     expect(zh['add.commandUserHint']).toContain('该命令将以此 dsh 实例的用户身份直接执行。')
   })
 

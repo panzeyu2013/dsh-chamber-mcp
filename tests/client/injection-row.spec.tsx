@@ -318,8 +318,7 @@ describe('MCP injection node definition', () => {
     expect(state.servers).toEqual([
       { name: 'zotero', toolCount: 2, tools: ['mcp__zotero__fetch', 'mcp__zotero__search'] },
     ])
-    expect(state.total).toBe(2)
-    expect(nodeOf(state)).toMatchObject({ visibility: 'visible', data: { total: 2 } })
+    expect(nodeOf(state)).toMatchObject({ visibility: 'visible' })
   })
 
   it('unions both sources without double counting', () => {
@@ -331,7 +330,6 @@ describe('MCP injection node definition', () => {
   it('falls back to just before the header when the window resolves no step', () => {
     const state = stateOf(header(12, 'initial', zotero), undefined, { kind: 'unresolved' })
     expect(state.servers).toEqual([{ name: 'zotero', toolCount: 2, tools: zotero }])
-    expect(state.total).toBe(2)
     expect(state.unchanged).toBe(false)
     const node = nodeOf(state)
     expect(node).toMatchObject({
@@ -341,7 +339,7 @@ describe('MCP injection node definition', () => {
       target: 'chat',
       visibility: 'visible',
       anchorSeq: 11.9,
-      data: { servers: [{ name: 'zotero', toolCount: 2, tools: zotero }], total: 2 },
+      data: { servers: [{ name: 'zotero', toolCount: 2, tools: zotero }] },
     })
   })
 
@@ -363,7 +361,6 @@ describe('MCP injection node definition', () => {
           { name: 'email', toolCount: 1, tools: ['mcp__email__send'] },
           { name: 'zotero', toolCount: 2, tools: zotero },
         ],
-        total: 3,
       },
     })
   })

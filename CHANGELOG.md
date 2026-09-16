@@ -95,6 +95,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The workspace card's filter can no longer strand its own query, and the
+  dead copy this work left behind is gone.** A query narrowed the list even after
+  the filter input disappeared (deleting workspaces down past the five-workspace
+  threshold), leaving rows — and the bulk pair's scope — unreachable behind a
+  control that was no longer on screen; the query is dropped with the input.
+  `row.off` (only the ON state is spelled out now) and `state.clearing` were
+  dead labels, and the notice payload's `total` was dead state: all three are
+  removed rather than left for the contract to pin.
+- **`retires the retained error once a generation is established` is no longer
+  load-sensitive.** The test bound the handshake at 100ms while also requiring a
+  real `node` spawn + initialize + sync on its second attempt; on a busy machine
+  that attempt timed out too, the reconnect budget ran out and the test failed 2
+  runs in 3. The bound now covers a real spawn (only the test changed).
 - **A workspace row's switch was a 36×20 target and its state word swallowed
   clicks.** The native checkbox fills its box, so the box WAS the hit area, and
   "Off"/"On" sat beside the label as an inert sibling that looked clickable but

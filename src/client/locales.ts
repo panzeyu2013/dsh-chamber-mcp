@@ -17,7 +17,6 @@ export const en = {
   // lifecycle / page-level state
   'state.loading': 'Loading…',
   'state.saving': 'Saving…',
-  'state.clearing': 'Clearing…',
   'state.unavailable': 'MCP server settings are unavailable here (namespace not served to this client or connection is read-only).',
   'state.readonly': 'This document is read-only here; changes cannot be saved.',
 
@@ -58,7 +57,6 @@ export const en = {
 
   // per-workspace rows
   'row.on': 'On',
-  'row.off': 'Off',
 
   // credential badges / secret controls (tri-state: configured / unset / unknown)
   'secret.configured': 'Configured',
@@ -239,7 +237,6 @@ export const zh: Record<SettingsKey, string> = {
   // lifecycle / page-level state
   'state.loading': '加载中…',
   'state.saving': '保存中…',
-  'state.clearing': '清除中…',
   'state.unavailable': 'MCP 服务器设置当前不可用（命名空间未注册到本客户端，或连接为只读）。',
   'state.readonly': '当前文档为只读，无法保存修改。',
 
@@ -279,7 +276,6 @@ export const zh: Record<SettingsKey, string> = {
 
   // per-workspace rows
   'row.on': '开启',
-  'row.off': '已关闭',
 
   // credential badges / secret controls (tri-state: configured / unset / unknown)
   'secret.configured': '已配置',

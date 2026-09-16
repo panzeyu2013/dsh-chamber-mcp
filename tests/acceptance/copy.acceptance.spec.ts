@@ -65,8 +65,11 @@ describe('C4 correctness: locale copy', () => {
     expect((zh['row.on'] ?? '').trim()).toBe('开启')
   })
 
-  it('[correctness] copy: row.off keeps its plain Off/已关闭 label', () => {
-    expect((en['row.off'] ?? '').trim()).toBe('Off')
-    expect((zh['row.off'] ?? '').trim()).toBe('已关闭')
+  it('[correctness] copy: row.off is retired with the On-only state word', () => {
+    // The rows spell ONLY the ON state now (a column of "Off" beside a switch
+    // that already reads off was noise), so the key is gone from both locales
+    // rather than left as dead copy for this contract to pin.
+    expect(lookup(en, 'row.off')).toBeUndefined()
+    expect(lookup(zh, 'row.off')).toBeUndefined()
   })
 })

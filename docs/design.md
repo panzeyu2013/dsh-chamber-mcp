@@ -183,10 +183,10 @@ comments, anchors and formatting survive on untouched nodes.
 | `src/server-context.ts` | per-server publication of the `mcp:<serverName>` instructions section and the `mcpResources` provider (the official `registerServerContext` shape) |
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture on the 2.0 server packages (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe; publishes instructions, oversized under `FIXTURE_HUGE_INSTRUCTIONS=1`) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (11 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`; repo total 513 tests / 26 files) |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (11 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`; repo total 514 tests / 26 files) |
 
 Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (513 tests / 26 files).
+`node node_modules/vitest/vitest.mjs run` — both fully green (514 tests / 26 files).
 
 ### (a) API signatures and runtime assumptions
 
@@ -569,10 +569,11 @@ written — through the platform's own seams rather than a new channel:
   renders no node while a real change adds one line where it took effect.
 - **Render**: one disclosure row in the shipped conversation-row chrome — the
   form the system-prompt card and the injected-context rows use: a 24px head
-  with the plugin's own plug glyph, a hover/open chevron swap, the localized
-  title, the per-server counts and the tool total, expanding (click, or
-  Enter/Space) into the shipped 141px code-block scrollport that lists each
-  server and its public tool names. No shipped component is imported — the
+  with the plugin's own plug glyph, a hover/open chevron swap and the localized
+  title ALONE (no source, no count: that is bookkeeping until asked for),
+  expanding (click, or Enter/Space) into the shipped 141px code-block scrollport
+  whose first line names every source and its count and whose remaining rows give
+  each source its own disclosure over its public tool names. No shipped component is imported — the
   built client bundle may require nothing but react — so the geometry is
   reproduced in `src/client/styles.ts` against the same `--dsw-*` tokens, and it
   scales like the shipped rows do: the head, leading box and glyph add
@@ -995,7 +996,7 @@ from the pinned generation, which §9.3 pins property by property.
 | `border: 1px dashed rgba(127,127,127,.5)` form box | the panel's editing surface (`bg-module-platform`, r12, 14/16 padding) |
 | raw `<button>` (OS default chrome) | `ui-primitives` Button capsules: `size="sm"` (h28/r14) for row and header actions, the figma `md` capsule (h36/r18) for the form footer; `outline` for dismiss/secondary, `primary` for commit, danger tint for destructive actions |
 | raw `<input>` (OS default chrome) | official field vocabulary: h34/r8, `border-l4` hairline, `bg-layer-1`, 13px, `brand-primary` focus border, `label-dimmed` placeholder, dimmed when disabled, error border when invalid |
-| raw `<input type="checkbox" role="switch">` | the Switch primitive's look (36×20 track, `brand-primary` when on, 16px thumb, 120ms slide) driven by the same controlled checkbox through `:checked`. The invisible input fills its box, so the box carries a 4px slop (with a cancelling negative margin) — a 44×28 target around the unchanged track. In a workspace row the label spans the WHOLE text run and only the ON state is spelled out (that word is `aria-hidden`, since `role="switch"` + `checked` already say it — a column of "Off" beside a switch that reads off is noise). The expanded block LEADS with the bulk pair so a long list cannot push it past the fold, and past five workspaces it grows a name filter whose narrowing scopes that pair (`All on (N shown)`, and the pair is inert when nothing matches); the rows are a responsive `auto-fill / minmax(200px, 1fr)` grid, and the row order is frozen when the list opens (enabled first) so a toggle never moves a row out from under the pointer |
+| raw `<input type="checkbox" role="switch">` | the Switch primitive's look (36×20 track, `brand-primary` when on, 16px thumb, 120ms slide) driven by the same controlled checkbox through `:checked`. The invisible input fills its box, so the box carries a 4px slop (with a cancelling negative margin) — a 44×28 target around the unchanged track. In a workspace row the label spans the WHOLE text run and only the ON state is spelled out (that word is `aria-hidden`, since `role="switch"` + `checked` already say it — a column of "Off" beside a switch that reads off is noise). The expanded block LEADS with the bulk pair so a long list cannot push it past the fold, and past five workspaces it grows a name filter whose narrowing scopes that pair (`All on (N shown)`, and the pair is inert when nothing matches); the query is dropped when its input goes away, so deleting workspaces down past the threshold cannot strand hidden rows behind a control that is no longer there. The rows are a responsive `auto-fill / minmax(200px, 1fr)` grid (a truncated name keeps its full text in `title`), and the row order is frozen when the list opens (enabled first) so a toggle never moves a row out from under the pointer |
 | native radios | the Pill primitive's pill (24px/r12, ghost-active fill + inset ring when selected) over the same real radios |
 | literal-colour banners (`#c0392b` / green box) | token notices: failures on the danger tint with `state-error` text, the saved note as `state-success` text |
 | opaque spans for transport/summary/credentials | the Tag pill (999px + `corner-shape: round`, 11/17) with the Tag tone palette: `outline` for the transport, `success`/`warning` (10%/12% `color-mix`) for configured/unconfigured refs, neutral for unknown |

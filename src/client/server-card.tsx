@@ -301,12 +301,22 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
     wsNeedle === ''
       ? orderedWorkspaces
       : orderedWorkspaces.filter((ws) => ws.title.toLowerCase().includes(wsNeedle))
-  const wsFiltered = wsNeedle !== ''
   /**
    * The filter only earns its pixels once the list is long: below this many
    * workspaces the expanded block stays a plain list.
    */
   const wsFilterVisible = workspaces.length >= WS_FILTER_MIN
+  /**
+   * A query whose input is NOT on screen must stop narrowing the list: deleting
+   * workspaces down past the threshold would otherwise strand the rows (and the
+   * scope of the bulk pair) behind a control nobody can reach. The effect drops
+   * the query as soon as the input goes away, so growing back to a filterable
+   * list starts unfiltered.
+   */
+  useEffect(() => {
+    if (!wsFilterVisible) setWsQuery((current) => (current === '' ? current : ''))
+  }, [wsFilterVisible])
+  const wsFiltered = wsFilterVisible && wsNeedle !== ''
   const busy =
     removing ||
     pendingWs !== undefined ||
@@ -553,7 +563,11 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
           </span>
         </span>
         <label htmlFor={id} className={styles.wsLabel}>
-          <span className={styles.wsName}>{ws.title}</span>
+          {/* The grid narrows cells, so a long name truncates: the title is the
+              full one. */}
+          <span className={styles.wsName} title={ws.title}>
+            {ws.title}
+          </span>
           {/* Only the ON state is spelled out: a column of "Off" beside a switch
               that already shows off is noise, and it used to swallow clicks as an
               inert sibling of the label. Inside the label now, aria-hidden
