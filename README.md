@@ -137,9 +137,10 @@ Consequences worth knowing:
 - **The tools are part of the context.** MCP definitions are ordinary tool
   schemas on the request, so they appear in the composer's context meter (the
   ring beside the send button) under **工具定义 / Tool definitions**, priced
-  heuristically from the request's tool array. The plugin injects no prose into
-  the system prompt, so there is no separate "MCP servers" context line. The
-  meter itself renders only after the model has reported usage for the session.
+  heuristically from the request's tool array. A server that publishes
+  `instructions` additionally contributes a literal `### MCP server: <name>`
+  prompt section (not counted by the tool-definition line). The meter itself
+  renders only after the model has reported usage for the session.
 - **A call renders as an MCP row, not the generic card.** The plugin owns how
   its calls render through the keyed `tool.call.toolview` slot: the leading mark
   is a plug, the title is `serverName · toolName` with a `stdio` / `Streamable HTTP`
@@ -160,13 +161,16 @@ Consequences worth knowing:
   (≤ 64 chars of `[A-Za-z0-9_-]`); when normalization is lossy, a 12-hex
   SHA-256 identity suffix is appended so two distinct MCP tools can never
   collapse into one name. The raw MCP name is what is sent in `tools/call`.
-- **Image/audio/resource payloads degrade to text placeholders.** The
-  attachments-based image bridge is a documented scope cut
-  (`docs/design.md` §5), matching the reference implementation's behaviour.
+- **Rich content is the official adapter's.** An image block becomes a durable
+  attachment when the composition provides an attachment store and the current
+  model route declares image input; otherwise it projects a diagnostic line
+  (`[image unavailable: …]`) while the canonical value keeps the raw block —
+  base64 never reaches model history. Audio and embedded resources project as
+  diagnostics.
 - **Tool calls time out after 60 s** (official default) and are aborted with
-  the run's signal. A server that overruns the fetch bounds — a repeated
-  cursor, or more than `MAX_SYNC_PAGES` pages — fails the sync and keeps its
-  previous tool generation.
+  the run's signal. A listing that does not converge (the client's own
+  `listMaxPages`, 64) or that exceeds the plugin's 2000-tool cap fails the sync
+  and keeps its previous tool generation.
 
 ## Where the configuration lives
 
@@ -235,10 +239,10 @@ part of what "manage MCP servers for this dsh" means:
 | Secret handling | literals (or `!!js process.env.X`) in that config file | **credential refs**; values live in the credentials domain and never ride the settings document or any API response |
 | Who sees the tools | whatever context the row is composed in — host-level rows land in the **global layer**, so every agent/session sees them | **only the tool scopes of enabled workspaces**; disabling a workspace removes the server's tools from that workspace's model-visible set |
 | Enable/disable, add/remove | edit the config file and reload | per-workspace switches + add/remove in the UI, plus live hand-editing of the document |
-| MCP capabilities bridged | tools only | tools only (same) |
+| MCP capabilities bridged | tools only | tools, **plus resources** on 0.1.6+ (the plugin contributes the `mcpResources` provider, so the official resource tools can reach its servers); tools only on 0.1.5 |
 | Naming / env scrub / reconnect / generation swap | `mcp__<serverName>__<tool>`, scrubbed child env, backoff reconnect, `tools/list_changed` re-sync | the same contract, verified against it |
 | The call's row in the transcript | whatever the shipped tool row renders (generic card, title = tool name) | an **MCP row** owned through the keyed `tool.call.toolview` slot: plug mark, `server · tool` title, transport tag, shipped state marks (red/amber dots) and disclosure behaviour, expandable arguments + result |
-| Image results | bridged to attachments when the model accepts images | **degraded to text placeholders** — a deliberate scope cut (see `docs/design.md` §5) |
+| Image results | bridged to attachments when the model accepts images | the same bridge, attachments, diagnostics and canonical value on **both** generations: 0.1.6+ runs the official adapter, 0.1.5 this plugin's verbatim port of it |
 
 Stock dsh has no MCP management surface to reuse: the Plugins → *Plugin
 configuration* tab renders a card only for a settings namespace a plugin
@@ -251,9 +255,9 @@ through its own settings namespace and per-agent tool scopes (`docs/design.md`).
 
 | | Version | Notes |
 |---|---|---|
-| Compile-time anchor & CI guard | dsh **0.1.5-rc.2** | every `@deepseek-ai/dsh-*` devDependency is pinned to the generation a `dsh@0.1.5-rc.1` install resolves to; `npm run typecheck` + tests run against it |
-| Live-verified | dsh **0.1.5-rc.2** | the chamber anchor runs this generation (gateway 0.3.0, measured 2026-09-14), and `npm run test:smoke` boots *and* installs through that same anchor CLI |
-| Peer range | `^0.1.2-rc.1 \|\| ^0.1.5-rc.1` | 0.1.2-rc.1 was the anchor generation at recon/first-release time; the API surface this plugin calls is byte-identical or additively changed across both, and both are live-verified |
+| Compile-time anchor & CI guard | dsh **0.1.6-alpha.1** | every `@deepseek-ai/dsh-*` devDependency is pinned to that generation and `npm run typecheck` + tests run against it |
+| Live-verified | dsh **0.1.5-rc.2** and **0.1.6-alpha.1** | `npm run test:smoke` installs and boots the packed tarball through whichever anchor CLI `DSH_ANCHOR_CLI` points at, and each transcript records the version it used. The chamber anchor (dsh 0.1.5-rc.2) exercises the built-in fallback; the 0.1.6-alpha.1 anchor exercises the official adapter |
+| Peer range | `^0.1.5-rc.2 \|\| ^0.1.6-alpha.1` | the two generations verified live: 0.1.6+ gets the official `createMcpToolDefinition` adapter, the `mcpResources` provider and prompt instructions; 0.1.5 keeps the plugin's own text projection and publishes no prompt section (that host always interpolates section text) |
 
 - Requirement model: every configured server defaults on for all of this dsh's
   workspaces; only explicit per-workspace records turn one off.
@@ -280,10 +284,10 @@ through its own settings namespace and per-agent tool scopes (`docs/design.md`).
 - **Child environments are scrubbed.** stdio children inherit neither `DSH_*`
   nor credential-shaped ambient variables — only the keys you declare
   explicitly; spawn is `shell: false` (no shell interpolation).
-- **Remote input is bounded.** `tools/list` pagination is capped
-  (`MAX_SYNC_TOOLS` / `MAX_SYNC_PAGES` = 2000), a repeated continuation cursor
-  rejects the sync, and invalid results fail closed to the previous tool
-  generation. Input schemas pass through unchanged; an advertised output schema
+- **Remote input is bounded.** `tools/list` aggregation is capped by the
+  client itself (`listMaxPages`, 64 — the non-converging-cursor defence), the
+  plugin caps the TOTAL listed tools at `MAX_SYNC_TOOLS` = 2000 per server, and
+  invalid results fail closed to the previous tool generation. Input schemas pass through unchanged; an advertised output schema
   is only honoured when it passes the dsh tool-registry's JSON-schema check,
   and otherwise falls back to an unconstrained result.
 - **A failed connection stops being dangerous.** After 10 consecutive failed
@@ -309,7 +313,7 @@ through its own settings namespace and per-agent tool scopes (`docs/design.md`).
 ```sh
 npm install            # dev deps (all @deepseek-ai/* pinned to one dsh generation)
 npm run typecheck      # src + tests
-npm test               # vitest suite (452 tests, 24 files)
+npm test               # vitest suite (497 tests, 25 files)
 npm run check          # full gate: typecheck + tests + build + package verify
 npm run verify:package # pack → contents whitelist → consumer d.ts → built host entry import → bundle purity → MCP-row artifact check → determinism
 npm run verify:client-artifact # drive the BUILT client bundle in jsdom (MCP row + registered-tools notice registration/render/expand, incl. the PTC prompt-only source)
@@ -339,10 +343,12 @@ run of `release.yml` before the tag.
 | `docs/status.md` | Current release/verification state and known limitations |
 | `docs/RELEASE.md` | CI + release mechanics, smoke runner, rollback |
 
-Smoke drivers under `scripts/smoke/` boot scratch instances from the gateway's
-current anchor CLI (dsh **0.1.5-rc.2** as measured on 2026-09-14 — each transcript
-records the version it used), install the tarball freshly packed from the working
-tree, and drive the real RPC surface.
+Smoke drivers under `scripts/smoke/` boot scratch instances from the anchor CLI
+named by `DSH_ANCHOR_CLI` — the chamber anchor (dsh **0.1.5-rc.2**, gateway
+0.3.0) or a newer one such as **0.1.6-alpha.1** — install the tarball freshly
+packed from the working tree, and drive the real RPC surface. Each transcript
+records the version it used, and M0 asserts through `/api/mcp-scope.tools` that
+the supervisor actually listed the fixture server's tools on that anchor.
 
 ## License
 

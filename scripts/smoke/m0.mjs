@@ -156,8 +156,24 @@ try {
 } catch (e) { conflict = String(e) }
 say(`settings-conflict observed: ${conflict?.includes('conflict')}`)
 
-step('wait for supervisor connect + sync (boot-log evidence)')
-await new Promise((r) => setTimeout(r, 4000))
+step('wait for supervisor connect + sync (route evidence)')
+// Read the plugin's OWN synced list over its runtime route: this is direct
+// evidence that the supervisor connected, listed the server's tools and
+// committed a generation on THIS anchor — a boot-log line would only prove the
+// process stayed up. Retried because activation is asynchronous.
+let listed
+for (let attempt = 0; attempt < 20 && listed === undefined; attempt++) {
+  await new Promise((r) => setTimeout(r, 500))
+  const res = await fetch(`${inst.base}/api/mcp-scope.tools?server=fixture`, {
+    headers: inst.cookies ? { Cookie: inst.cookies } : {},
+  })
+  const body = await res.json()
+  if (body?.ok === true && (body.value?.tools?.length ?? 0) > 0) listed = body.value
+}
+if (listed === undefined) {
+  throw new Error('mcp-scope.tools reported no synced tool list for server "fixture"')
+}
+say(`listed ${listed.tools.length} tools: ${listed.tools.map((tool) => tool.publicName ?? tool.name).join(', ')}`)
 
 // ── phase: workspace gate ────────────────────────────────────────────────────
 step('enable fixture for ws-a only (MCP is off by default)')

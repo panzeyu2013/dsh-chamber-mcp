@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import type { ServerDef } from '../../src/shared/model.js'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import type { Transport } from '@modelcontextprotocol/client'
 import {
   EMPTY_DEFS,
   RECONNECT_DEFAULTS,
@@ -23,7 +23,11 @@ import {
   type ServerSnapshot,
 } from '../../src/server.js'
 import { createTransport } from '../../src/transport.js'
-import { renderResultText } from '../../src/tools.js'
+import { Context } from '@deepseek-ai/cordis'
+
+// The supervisor builds definitions through the official adapter, which
+// resolves attachments/llm from this context only for image-bearing results.
+const ctx = new Context()
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixture')
 const fixtureServer = join(fixtureDir, 'mcp-fixture-server.mjs')
@@ -102,6 +106,7 @@ async function boot(serverName = 'fix', reconnect?: Parameters<typeof startServe
   const { log, lines } = makeLogger()
   const commits: { serverName: string; syncId: number; size: number }[] = []
   const handle = startServerSupervisor({
+    ctx,
     serverName,
     buildTransport: () => createTransport(stdioDef(serverName), noopResolve, NO_WARN),
     logger: { info: (m) => log('info', m), warn: (m) => log('warn', m), error: (m) => log('error', m) },
@@ -151,9 +156,18 @@ describe('server supervisor with a real stdio MCP server', () => {
 
     // Image content degrades to placeholder text in the render projection.
     const image = defs.get('mcp__fix__image')!
-    const imageValue = await image.execute({}, execContext()) as { content: unknown[] }
-    expect(renderResultText(imageValue.content as never, 'image'))
-      .toBe('Here is an image:\n[image: image/png, content discarded]\nEnd of image.')
+    const imageValue = await image.execute({}, execContext()) as { content: { type: string }[] }
+    // The canonical value keeps every raw block, image payload included (the
+    // adapter's durable-image contract; nothing is discarded at this layer).
+    expect(imageValue.content.map((block) => block.type)).toEqual(['text', 'image', 'text'])
+    // The model-facing projection must never inline the base64 payload — no
+    // attachment store is mounted on this context, so the block projects as a
+    // diagnostic instead of an image.
+    const rendered = image.output.render({}, imageValue as never) as { type: string; text?: string }[]
+    const text = rendered.map((block) => block.text ?? '').join('\n')
+    expect(text).toContain('Here is an image:')
+    expect(text).toContain('End of image.')
+    expect(text).not.toContain('iVBORw0KGgo')
 
     // Structured lifecycle log lines carry the stable prefix.
     expect(lines.some((l) => l.level === 'info' && l.message.includes('mcp-scope(fix)') && l.message.includes('synced 8 tools'))).toBe(true)
@@ -220,6 +234,7 @@ describe('server supervisor with a real stdio MCP server', () => {
     const { log, lines } = makeLogger()
     const commits: { serverName: string; syncId: number; size: number }[] = []
     const handle = startServerSupervisor({
+      ctx,
       serverName: 'ghost',
       buildTransport: async () => createTransport(stdioDef('ghost', { command: '/nonexistent/definitely-missing', args: [] }), noopResolve, NO_WARN),
       logger: { info: (m) => log('info', m), warn: (m) => log('warn', m), error: (m) => log('error', m) },
@@ -261,6 +276,10 @@ describe('server supervisor with a real stdio MCP server', () => {
     expect(handle.state.connected).toBe(false)
     expect(handle.snapshot().phase).toBe('failed')
     expect(lines.some((line) => line.level === 'error' && line.message.includes('giving up after 1 consecutive failed reconnect attempts'))).toBe(true)
+    // The give-up retracts the INSTRUCTIONS too, not just the tools: the
+    // prompt section is live, so leaving it up would keep telling the model to
+    // use mcp__fix__* names that no longer exist.
+    expect(handle.context.instructions()).toBe('')
     const settled = commits.length
     await new Promise((resolve) => setTimeout(resolve, 150))
     expect(commits.length).toBe(settled)
@@ -281,12 +300,50 @@ describe('server supervisor with a real stdio MCP server', () => {
     expect(lines.some((line) => line.level === 'error' && line.message.includes('giving up'))).toBe(false)
   })
 
+  it('closes a generation that disposal superseded while the transport was being built', async () => {
+    // dispose() during `await buildTransport()` sees an UNATTACHED client and
+    // confirms a close that never happened. Without the post-connect ownership
+    // check the attempt then attaches and returns, leaving a live child process
+    // nobody will reap (the official supervisor closes it there).
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let transportClosed = false
+    const { log } = makeLogger()
+    const handle = startServerSupervisor({
+      ctx,
+      serverName: 'fix',
+      buildTransport: async () => {
+        await gate
+        const transport = await createTransport(stdioDef('fix'), noopResolve, NO_WARN)
+        const close = transport.close.bind(transport)
+        transport.close = async () => {
+          transportClosed = true
+          await close()
+        }
+        return transport
+      },
+      logger: { info: (m) => log('info', m), warn: (m) => log('warn', m), error: (m) => log('error', m) },
+      onDefsChanged: () => {},
+      reconnect: { enabled: false },
+    })
+    handles.push(handle)
+
+    const disposal = handle.dispose()
+    release?.()
+    await disposal
+
+    await waitFor(() => transportClosed, 'superseded generation closed')
+    expect(handle.state.connected).toBe(false)
+    expect(handle.state.defs).toBe(EMPTY_DEFS)
+  })
+
   it('contains a throwing unregister push instead of rejecting unhandled', async () => {
     // The give-up continuation pushes an empty generation through the caller's
     // applier: a throw there used to become an unhandled rejection, which takes
     // the whole Host down (Node's default). It must be reported instead.
     const { log, lines } = makeLogger()
     const handle = startServerSupervisor({
+      ctx,
       serverName: 'ghost',
       buildTransport: async () => createTransport(stdioDef('ghost', { command: '/nonexistent/definitely-missing', args: [] }), noopResolve, NO_WARN),
       logger: { info: (m) => log('info', m), warn: (m) => log('warn', m), error: (m) => log('error', m) },
@@ -323,6 +380,7 @@ describe('server supervisor with a real stdio MCP server', () => {
     const { log, lines } = makeLogger()
     const commits: string[] = []
     const handle = startServerSupervisor({
+      ctx,
       serverName: 'ghost',
       buildTransport: async () => createTransport(stdioDef('ghost', { command: '/nonexistent/definitely-missing', args: [] }), noopResolve, NO_WARN),
       logger: { info: (m) => log('info', m), warn: (m) => log('warn', m), error: (m) => log('error', m) },
@@ -342,6 +400,7 @@ describe('bounded connect against a server that never answers the handshake', ()
     const { log, lines } = makeLogger()
     const received: string[][] = []
     const handle = startServerSupervisor({
+      ctx,
       serverName: 'hung',
       buildTransport: async () => {
         const messages: string[] = []
@@ -360,7 +419,10 @@ describe('bounded connect against a server that never answers the handshake', ()
     // The SDK really issued the handshake and the attempt really failed on the
     // operator's 100 ms bound: with the SDK's silent 60 s default this poll
     // would never observe an error and the test would fail on its timeout.
-    expect(received[0]?.some((message) => message.includes('initialize'))).toBe(true)
+    // Requiring the probe is what pins `versionNegotiation: {mode:'auto'}`:
+    // dropping that option would send the legacy `initialize` first and this
+    // assertion would fail.
+    expect(received[0]?.some((message) => message.includes('server/discover'))).toBe(true)
     expect(elapsed).toBeGreaterThanOrEqual(90)
     expect(elapsed).toBeLessThan(5000)
     const snap = handle.snapshot()
@@ -372,6 +434,7 @@ describe('bounded connect against a server that never answers the handshake', ()
   it('keeps the failure reason visible while the next attempt is in flight', async () => {
     const { log } = makeLogger()
     const handle = startServerSupervisor({
+      ctx,
       serverName: 'hung',
       buildTransport: async () => hungTransport(),
       logger: { info: (m) => log('info', m), warn: (m) => log('warn', m), error: (m) => log('error', m) },
@@ -407,6 +470,7 @@ describe('bounded connect against a server that never answers the handshake', ()
     const { log, lines } = makeLogger()
     let attempts = 0
     const handle = startServerSupervisor({
+      ctx,
       serverName: 'fix',
       buildTransport: async () => {
         attempts += 1
@@ -448,9 +512,64 @@ describe('runtime snapshot + probe (M3)', () => {
     expect(tools.find((tool) => tool.publicName === 'mcp__fix__add')?.description).toBe('Adds two numbers.')
   })
 
+  it('routes resource operations to the live generation and fails fast once it is gone', async () => {
+    const { handle } = await boot()
+    handles.push(handle)
+    // Connected: the call must actually reach the server and come back with
+    // the fixture's body. Asserting only "not our disconnected error" would
+    // stay green if the provider threw anything at all.
+    const read = await handle.context.resources.request(
+      { method: 'resources/read', uri: 'file:///fixture-readme.txt' },
+      execContext(),
+    ) as { contents?: { text?: string }[] }
+    expect(read.contents?.[0]?.text).toBe('fixture resource body')
+    const listed = await handle.context.resources.request({ method: 'resources/list' }, execContext()) as { resources?: { uri?: string }[] }
+    expect(listed.resources?.some((resource) => resource.uri === 'file:///fixture-readme.txt')).toBe(true)
+    await handle.dispose()
+    await expect(handle.context.resources.request({ method: 'resources/list' }, execContext()))
+      .rejects.toThrow(/server is disconnected/)
+  })
+
+  it('publishes the established generation instructions and clears them on disposal', async () => {
+    const { handle } = await boot()
+    handles.push(handle)
+    expect(handle.context.instructions())
+      .toBe('### MCP server: fix\n\nFixture guidance for MCP tools: call add before greet.')
+    await handle.dispose()
+    expect(handle.context.instructions()).toBe('')
+  })
+
+  it('fails the attempt when server instructions exceed MAX_INSTRUCTION_BYTES', async () => {
+    const { log, lines } = makeLogger()
+    const handle = startServerSupervisor({
+      ctx,
+      serverName: 'huge',
+      buildTransport: () => createTransport(
+        stdioDef('huge', { envKeys: ['FIXTURE_HUGE_INSTRUCTIONS'] }),
+        async (ref) => ref === 'FIXTURE_HUGE_INSTRUCTIONS' ? { value: '1', source: 'test' } : undefined,
+        NO_WARN,
+      ),
+      logger: { info: (m) => log('info', m), warn: (m) => log('warn', m), error: (m) => log('error', m) },
+      onDefsChanged: () => {},
+      reconnect: { enabled: false },
+    })
+    handles.push(handle)
+    await handle.ready
+    // The oversized block fails the connect itself: no tools, no instructions,
+    // and the reason names the bound.
+    expect(handle.state.connected).toBe(false)
+    expect(handle.state.defs.size).toBe(0)
+    expect(handle.context.instructions()).toBe('')
+    // The bound is the attempt's own failure text (the snapshot carries the
+    // reconnect-disabled policy copy, by design).
+    expect(handle.snapshot().error).toMatch(/reconnect is disabled/)
+    expect(lines.some((line) => line.level === 'warn' && /MAX_INSTRUCTION_BYTES/.test(line.message))).toBe(true)
+  })
+
   it('reports failed with the next-retry bookkeeping after the budget is exhausted', async () => {
     const { log, lines } = makeLogger()
     const handle = startServerSupervisor({
+      ctx,
       serverName: 'ghost',
       buildTransport: async () =>
         createTransport(stdioDef('ghost', { command: '/nonexistent/definitely-missing', args: [] }), noopResolve, NO_WARN),
@@ -473,6 +592,7 @@ describe('runtime snapshot + probe (M3)', () => {
 
   it('probes with a throwaway connection and reports its tool count / failure', async () => {
     const result = await probeServer({
+      ctx,
       serverName: 'probe',
       buildTransport: () => createTransport(stdioDef('probe'), noopResolve, NO_WARN),
     })
@@ -480,6 +600,7 @@ describe('runtime snapshot + probe (M3)', () => {
     expect(result.toolCount).toBeGreaterThan(0)
 
     const failed = await probeServer({
+      ctx,
       serverName: 'probe',
       buildTransport: () =>
         createTransport(stdioDef('probe', { command: '/nonexistent/definitely-missing', args: [] }), noopResolve, NO_WARN),

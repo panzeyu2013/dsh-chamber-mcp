@@ -25,6 +25,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { Workspace } from '@deepseek-ai/dsh-workspace'
 import { createAgentApplier, type AgentApplier, type ApplierLogger } from './agents.js'
+import { registerServerContext } from './server-context.js'
 import { createTransport } from './transport.js'
 import {
   probeServer,
@@ -54,6 +55,12 @@ interface TrackedServer {
   handle: ServerHandle
   /** Serialized definition the handle was started with (change detection). */
   defFingerprint: string
+  /**
+   * Unloads this server's prompt/resource contributions (system-prompt section
+   * + `mcpResources` provider). Owned here, disposed before the handle so no
+   * consumer can call into a generation that is already going away.
+   */
+  disposeContext: () => Promise<void>
 }
 
 /** Manager construction options. */
@@ -295,6 +302,7 @@ export function createManager(options: ManagerOptions): ManagerHandle {
     // give-up empty commit) pushes under the new generation token.
     const epoch = nextEpoch(serverName)
     const handle = startServerSupervisor({
+      ctx,
       serverName,
       // Document timeout (tools/call + one tools/list page); absent = official default.
       toolCallTimeoutMs: server.timeoutMs,
@@ -314,7 +322,11 @@ export function createManager(options: ManagerOptions): ManagerHandle {
         }
       },
     })
-    tracked.set(serverName, { handle, defFingerprint: fingerprint(server) })
+    // Publish the server's connection-owned context to the optional consumers
+    // (system-prompt section, shared resource tools). Registration is
+    // effect-scoped to the plugin fiber and owned per handle.
+    const disposeContext = registerServerContext(ctx, serverName, handle.context, logger)
+    tracked.set(serverName, { handle, defFingerprint: fingerprint(server), disposeContext })
     logger.info(`mcp-scope(${serverName}): server started (${server.transport === 'stdio' ? 'stdio' : 'streamable-http'})`)
   }
 
@@ -325,6 +337,7 @@ export function createManager(options: ManagerOptions): ManagerHandle {
     tracked.delete(serverName)
     if (revokeFirst) applier.revokeServer(serverName)
     try {
+      await current.disposeContext()
       await current.handle.dispose()
     } finally {
       logger.info(`mcp-scope(${serverName}): server stopped`)
@@ -568,6 +581,7 @@ export function createManager(options: ManagerOptions): ManagerHandle {
         return { ok: true, toolCount: live.handle.snapshot().toolCount }
       }
       const result = await probeServer({
+        ctx,
         serverName,
         buildTransport: () => createTransport(def, resolveCredential, (message) => logger.warn(message)),
         toolCallTimeoutMs: def.timeoutMs,

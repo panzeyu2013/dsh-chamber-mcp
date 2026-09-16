@@ -384,7 +384,7 @@ check(
   noticeHead.getAttribute('aria-expanded') === 'true' && noticeExpanded.includes('data-injection-body'),
 )
 check(
-  'the expanded notice names the injected tools',
+  'the expanded notice names the registered tools',
   noticeExpanded.includes('mcp__fixture__greet') && noticeExpanded.includes('mcp__fixture__late'),
 )
 

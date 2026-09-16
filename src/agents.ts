@@ -346,9 +346,12 @@ const fmtError = (error: unknown): string =>
   }
 
   ctx.effect(() => {
-    const offCreated = ctx.on('agent/created', ({ agent }: { agent: Agent }) => {
-      if (disposed) return
-      adoptContained(agent)
+    // 0.1.6 types this listener as a veto protocol: it must settle to
+    // `undefined` (no veto) rather than return void. Adoption failures are
+    // already contained inside `adoptContained`, so this never vetoes.
+    const offCreated = ctx.on('agent/created', ({ agent }: { agent: Agent }): undefined => {
+      if (!disposed) adoptContained(agent)
+      return undefined
     })
     const offDisposed = ctx.on('agent/disposed', ({ agent }: { agent: Agent }) => {
       // Scope-layer registrations made through agent.ctx are owned by that

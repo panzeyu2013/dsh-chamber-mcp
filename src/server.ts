@@ -12,8 +12,15 @@
  *   `onDefsChanged`) and stops until reload;
  * - a failed generation must close within 5 s before the supervisor retries
  *   (no overlapping children);
- * - `notifications/tools/list_changed` enqueues a serialized re-sync; all
- *   syncs run on one chain so commits can never interleave;
+ * - a 2.0 client generation: `versionNegotiation: { mode: 'auto' }` (probe the
+ *   modern revision, fall back to the plain 2025 handshake) and a
+ *   connection-owned `listChanged.tools` hook that enqueues a serialized
+ *   re-sync; all syncs run on one chain so commits can never interleave;
+ * - server `instructions` are captured once per established generation, bounded
+ *   by {@link MAX_INSTRUCTION_BYTES}, and published through
+ *   {@link ServerContext.instructions} (never registered here);
+ * - {@link ServerContext.resources} runs `resources/*` through the CURRENT
+ *   connection generation, or fails fast when the server is down;
  * - fetch-phase failures keep the previous generation committed.
  *
  * Registration happens NOWHERE here: the committed `defs` map is the master
@@ -23,13 +30,20 @@
  */
 
 import { createRequire } from 'node:module'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js'
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import { Client } from '@modelcontextprotocol/client'
+import type { Transport } from '@modelcontextprotocol/client'
+import type { Context } from '@deepseek-ai/cordis'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
-import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import type { ToolDefinition, ToolExecution } from '@deepseek-ai/dsh-tools'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import type { McpResourceRequest } from '@deepseek-ai/dsh-mcp-resources'
 import { fetchToolDefinitions, DEFAULT_TOOL_CALL_TIMEOUT_MS } from './tools.js'
 import type { ToolDefinitions } from './tools.js'
+import type { ServerContext } from './server-context.js'
+
+// Re-exported for the supervisor's consumers and tests; the definition lives
+// with the module that publishes it.
+export type { ServerContext } from './server-context.js'
 
 // Package identity the MCP client announces (kept in sync with package.json).
 const pkgIdentity = createRequire(import.meta.url)('../package.json') as { name: string; version: string }
@@ -129,6 +143,13 @@ export type DefsChangedListener = (
  */
 export type ServerConnectionPhase = 'connecting' | 'connected' | 'reconnecting' | 'failed' | 'stopped'
 
+/**
+ * Hard cap on one server's published instruction text, measured over the
+ * COMPLETE attributed value (header line included). An oversized block fails
+ * that connection attempt instead of injecting an unbounded prompt section.
+ */
+export const MAX_INSTRUCTION_BYTES = 32_768
+
 /** One server's runtime status snapshot (no credential material). */
 export interface ServerSnapshot {
   phase: ServerConnectionPhase
@@ -159,7 +180,27 @@ export interface ToolSummary {
  * payloads (e.g. an HTTP error body echoing a credential value) must never
  * reach the log verbatim. */
 export function safeErrorText(error: unknown): string {
-  return String(error).replace(/[\u0000-\u001f\u007f]/g, '?').slice(0, 300)
+  // The 2.0 client keeps the HTTP status of a failed POST on `data.status`
+  // (the message is only "Error POSTing to endpoint: <body>"), so carry it into
+  // the sanitized text — otherwise a 401/403 with a neutral body classifies as
+  // a generic connection failure instead of 'forbidden'.
+  const status = (error as { data?: { status?: unknown }; status?: unknown } | null | undefined)
+  const httpStatus = typeof status?.data?.status === 'number' ? status.data.status
+    : typeof status?.status === 'number' ? status.status
+      : undefined
+  const suffix = httpStatus === undefined ? '' : ` (HTTP ${httpStatus})`
+  return `${String(error).replace(/[\u0000-\u001f\u007f]/g, '?').slice(0, 300)}${suffix}`
+}
+
+/**
+ * The transport the client actually attached to, or undefined for an attempt
+ * that never bound one (a spawn failure, or a probe that never attached).
+ * `Protocol` declares `get transport(): Transport | undefined`, so this is the
+ * SDK's own attach signal — the official `dsh-mcp-client` supervisor reads the
+ * same field to decide whether a close event is owed before a retry may start.
+ */
+function attachedTransport(client: Client): Transport | undefined {
+  return client.transport
 }
 
 /** Read-only master state view for one supervised server. */
@@ -190,6 +231,8 @@ export interface ServerHandle {
    * the supervisor enters its reconnect loop regardless.
    */
   readonly ready: Promise<void>
+  /** Connection-owned prompt/resource context for this server's consumers. */
+  readonly context: ServerContext
   /** Runtime status snapshot for the settings surface. */
   snapshot(): ServerSnapshot
   /** Identity + description of every tool in the committed generation. */
@@ -218,11 +261,16 @@ export interface ProbeResult {
  * anything; the caller owns rate/concurrency discipline.
  */
 export async function probeServer(options: {
+  /** Plugin context the official tool adapter resolves attachments/llm from. */
+  ctx: Context
   serverName: string
   buildTransport: () => Promise<Transport>
   toolCallTimeoutMs?: number
 }): Promise<ProbeResult> {
-  const client = new Client({ name: pkgIdentity.name, version: pkgIdentity.version }, { capabilities: {} })
+  const client = new Client(
+    { name: pkgIdentity.name, version: pkgIdentity.version },
+    { capabilities: {}, versionNegotiation: { mode: 'auto' } },
+  )
   const toolCallTimeoutMs = options.toolCallTimeoutMs ?? DEFAULT_TOOL_CALL_TIMEOUT_MS
   try {
     const transport = await options.buildTransport()
@@ -230,7 +278,7 @@ export async function probeServer(options: {
     // per-server timeout the supervised attempt passes to `connect` (the SDK
     // would otherwise stall on its silent 60 s DEFAULT_REQUEST_TIMEOUT_MSEC).
     await client.connect(transport, { timeout: toolCallTimeoutMs })
-    const defs = await fetchToolDefinitions(client, { serverName: options.serverName, toolCallTimeoutMs })
+    const defs = await fetchToolDefinitions(options.ctx, client, { serverName: options.serverName, toolCallTimeoutMs })
     return { ok: true, toolCount: defs.size }
   } catch (error) {
     return { ok: false, error: safeErrorText(error) }
@@ -241,6 +289,8 @@ export async function probeServer(options: {
 
 /** Supervisor construction options. */
 export interface SupervisorOptions {
+  /** Plugin context the official tool adapter resolves attachments/llm from. */
+  ctx: Context
   /** Resolved server definition (transport selects the transport builder). */
   serverName: string
   /** Build ONE fresh transport for a connect attempt (resolver runs per attempt). */
@@ -261,7 +311,7 @@ export interface SupervisorOptions {
  * first attempt runs asynchronously and its outcome settles `ready`.
  */
 export function startServerSupervisor(options: SupervisorOptions): ServerHandle {
-  const { serverName } = options
+  const { serverName, ctx } = options
   const policy = resolveReconnectPolicy(options.reconnect, `mcp-scope(${serverName}): reconnect`)
   const label = `mcp-scope(${serverName})`
   const fmtError = safeErrorText
@@ -271,8 +321,11 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
   let disposed = false
   /** Current generation: the connecting or connected client; undefined during backoff waits and after final failure. */
   let client: Client | undefined
-  /** Close signal paired with {@link client}; captured by dispose before current ownership is cleared. */
-  let clientClosed: Promise<void> | undefined
+  /**
+   * Attach-aware closer for {@link client}: true when closure is confirmed.
+   * Captured by dispose before current ownership is cleared.
+   */
+  let clientCloser: (() => Promise<boolean>) | undefined
   /** Committed master definitions (never mutated after commit). */
   let master: ReadonlyMap<string, ToolDefinition> = EMPTY_DEFS
   let generation = 0
@@ -295,6 +348,8 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
   let gaveUp = false
   /** Tool identity/copy of the committed generation. */
   let toolSummaries: readonly ToolSummary[] = []
+  /** Published instructions of the last established generation ('' while none). */
+  let serverInstructions = ''
 
   /** A generation may act only while it is the current one on a live supervisor. */
   const isCurrent = (generationClient: Client): boolean => !disposed && client === generationClient
@@ -324,6 +379,11 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
   function unregister(): void {
     master = EMPTY_DEFS
     toolSummaries = []
+    // The published instructions belong to a LIVE generation: retracting the
+    // tools without retracting them would keep telling the model to use
+    // `mcp__<server>__*` names that no longer exist (official discipline —
+    // upstream clears the same field on budget exhaustion).
+    serverInstructions = ''
     options.onDefsChanged(serverName, syncId, master)
   }
 
@@ -339,8 +399,9 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
       // Phase 1: fetch the full next generation WITHOUT touching master state.
       const listed: ToolSummary[] = []
       const next = await fetchToolDefinitions(
+        ctx,
         generationClient,
-        { serverName, toolCallTimeoutMs },
+        { serverName, toolCallTimeoutMs, log: (message) => log.info(message) },
         (info) => {
           listed.push({ publicName: info.publicName, rawName: info.rawName, description: info.description })
         },
@@ -355,11 +416,28 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
     return run
   }
 
+  /**
+   * Notification-driven re-sync, wired as the 2.0 `listChanged.tools` hook and
+   * serialized on the same chain as every other sync. A fetch-phase failure
+   * keeps the previous committed generation serving.
+   */
+  async function refreshTools(generationClient: Client): Promise<void> {
+    if (!isCurrent(generationClient)) return
+    log.info(`${label}: tool list changed, re-syncing`)
+    try {
+      await enqueueSync(generationClient)
+    } catch (error) {
+      // Fetch-phase failure: the previous generation is still committed
+      // — keep serving the last good list.
+      if (!disposed) log.error(`${label}: tool re-sync failed: ${fmtError(error)}`)
+    }
+  }
+
   /** One disconnect decision per generation: the isCurrent guard makes racing close/error signals idempotent. */
   function generationDown(generationClient: Client): void {
     if (!isCurrent(generationClient)) return
     client = undefined
-    clientClosed = undefined
+    clientCloser = undefined
     connected = false
     scheduleReconnect()
   }
@@ -432,7 +510,23 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
   async function connectGeneration(): Promise<void> {
     const generationClient = new Client(
       { name: pkgIdentity.name, version: pkgIdentity.version },
-      { capabilities: {} },
+      {
+        capabilities: {},
+        // 2.0 era negotiation: probe for the modern revision and fall back to
+        // the plain 2025 handshake when the server only speaks legacy.
+        versionNegotiation: { mode: 'auto' },
+        // Tool-list invalidation is connection-owned: the SDK registers the
+        // handler at the end of the handshake (before the caller's first
+        // listing), so a post-connect change is queued behind the sync chain
+        // and a change on a superseded generation is ignored.
+        listChanged: {
+          tools: {
+            autoRefresh: false,
+            debounceMs: 0,
+            onChanged: () => { void refreshTools(generationClient) },
+          },
+        },
+      },
     )
     gaveUp = false
     // `lastError` is deliberately NOT cleared at the top of an attempt. The
@@ -447,7 +541,7 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
     let closeObserved = false
     const hasClosed = (): boolean => closeObserved
     client = generationClient
-    clientClosed = closed.promise
+    clientCloser = closeGeneration
     generationClient.onclose = () => {
       closeObserved = true
       closed.resolve()
@@ -455,35 +549,51 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
       // established generation can transition down directly from this signal.
       if (attemptSettled) generationDown(generationClient)
     }
-    // Registered before connect so a list change during the initial sync is
-    // queued behind it rather than dropped.
-    generationClient.setNotificationHandler(
-      ToolListChangedNotificationSchema,
-      async () => {
-        if (!isCurrent(generationClient)) return
-        log.info(`${label}: tool list changed, re-syncing`)
-        try {
-          await enqueueSync(generationClient)
-        } catch (error) {
-          // Fetch-phase failure: the previous generation is still committed
-          // — keep serving the last good list.
-          if (!disposed) log.error(`${label}: tool re-sync failed: ${fmtError(error)}`)
-        }
-      },
-    )
+    /**
+     * Close this attempt's client/transport and report whether closure is
+     * confirmed (official attach discipline). An UNATTACHED attempt — the
+     * client never bound the transport, as in a spawn failure or a probe that
+     * never attached — is closed through the transport itself and owes NO
+     * client close event; demanding one burned the whole barrier and
+     * permanently stopped reconnection after a plain "command not found". An
+     * attached generation additionally waits for the close event (the stdio
+     * transport's own termination grace can take ~2 s before it lands).
+     */
+    async function closeGeneration(): Promise<boolean> {
+      const attached = attachedTransport(generationClient) !== undefined
+      try {
+        await (attached ? generationClient.close() : transport?.close())
+      } catch {
+        if (!attached) return hasClosed()
+      }
+      return !attached || hasClosed() || await waitForClose(closed.promise)
+    }
+    // Captured inside the attempt and published only once connect AND the
+    // initial discovery both succeeded (see the success path below).
+    let instructions: string
+    let transport: Transport | undefined
     try {
-      const transport = await options.buildTransport()
+      transport = await options.buildTransport()
       // Bound the MCP handshake with the operator's per-server timeout: a
-      // server that spawns/accepts HTTP but never answers `initialize` would
-      // otherwise hang on the SDK's silent DEFAULT_REQUEST_TIMEOUT_MSEC (60 s)
-      // for every attempt of the reconnect budget. The SDK rejects with
-      // McpError(RequestTimeout, 'Request timed out'), which the manager's
-      // errorCodeOf maps to the localized 'timeout' copy.
+      // server that spawns/accepts HTTP but never answers would otherwise hang
+      // on the SDK's silent DEFAULT_REQUEST_TIMEOUT_MSEC (60 s) for every
+      // attempt of the reconnect budget. The 2.0 client inherits this bound for
+      // its `mode: 'auto'` era probe too, and both failures surface as a
+      // timed-out SdkError — the manager's errorCodeOf maps that to the
+      // localized 'timeout' copy.
       await generationClient.connect(transport, { timeout: toolCallTimeoutMs })
       if (hasClosed()) {
         attemptSettled = true
         generationDown(generationClient)
         return
+      }
+      // Attributed instruction block, bounded over the COMPLETE value (header
+      // line included): an oversized block fails THIS attempt instead of
+      // injecting an unbounded prompt section.
+      const serverText = generationClient.getInstructions()?.trimEnd() ?? ''
+      instructions = serverText ? `### MCP server: ${serverName}\n\n${serverText}` : ''
+      if (Buffer.byteLength(instructions) > MAX_INSTRUCTION_BYTES) {
+        throw new Error(`${label}: server instructions exceed MAX_INSTRUCTION_BYTES (${MAX_INSTRUCTION_BYTES})`)
       }
       await enqueueSync(generationClient)
     } catch (error) {
@@ -494,13 +604,15 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
         lastError = fmtError(error)
         log.warn(`${label}: connection attempt failed: ${fmtError(error)}`)
       }
-      try { await generationClient.close() } catch { /* transport already gone */ }
-      const quiesced = hasClosed() || await waitForClose(closed.promise)
+      const quiesced = await closeGeneration()
       attemptSettled = true
       if (!isCurrent(generationClient)) return
       if (!quiesced) {
         client = undefined
-        clientClosed = undefined
+        clientCloser = undefined
+        // Giving up here bypasses unregister(): retire the published
+        // instructions too, or the prompt keeps advertising dead tool names.
+        serverInstructions = ''
         // No timer is armed (an overlapping retry would be worse), so without
         // this the snapshot would report 'connecting' forever.
         gaveUp = true
@@ -516,7 +628,19 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
       generationDown(generationClient)
       return
     }
-    if (!isCurrent(generationClient)) return
+    if (!isCurrent(generationClient)) {
+      // Disposal won the race while this attempt was connecting, so nobody else
+      // owns the generation any more: close it here or a live child process is
+      // orphaned (official discipline).
+      if (!await closeGeneration()) {
+        log.error(`${label}: generation superseded during connect did not close within ${GENERATION_CLOSE_TIMEOUT_MS}ms — a server process may still be running`)
+      }
+      return
+    }
+    // Publication rule: instructions belong to an ESTABLISHED generation
+    // (connect + initial discovery both committed). A failed attempt leaves the
+    // previous value in place; disposal clears it.
+    serverInstructions = instructions
     connected = true
     connectedAt = Date.now()
     // The generation is established (connect + initial sync committed): only
@@ -576,25 +700,53 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
     serverName,
     state,
     ready,
+    context: {
+      instructions: () => serverInstructions,
+      resources: {
+        // Resolve the live generation BEFORE any network operation: a
+        // configured-but-down server fails the call instead of hanging.
+        async request(request: McpResourceRequest, exec: ToolExecution): Promise<JsonValue> {
+          const generation = client
+          if (generation === undefined || !connected) throw new Error(`${label}: server is disconnected`)
+          const callOptions = { signal: exec.signal, timeout: toolCallTimeoutMs }
+          switch (request.method) {
+            case 'resources/list':
+              return await generation.listResources(
+                request.cursor === undefined ? undefined : { cursor: request.cursor },
+                callOptions,
+              ) as JsonValue
+            case 'resources/templates/list':
+              return await generation.listResourceTemplates(
+                request.cursor === undefined ? undefined : { cursor: request.cursor },
+                callOptions,
+              ) as JsonValue
+            case 'resources/read':
+              return await generation.readResource({ uri: request.uri }, callOptions) as JsonValue
+            default:
+              // The operation union is closed; this only fires for an
+              // untyped caller, and returning `undefined` typed as JsonValue
+              // would be a silent failure (official code asserts never).
+              throw new Error(`${label}: unsupported resource operation`)
+          }
+        },
+      },
+    },
     snapshot,
     tools: () => toolSummaries,
     async dispose(): Promise<void> {
       disposed = true
+      serverInstructions = ''
       if (reconnectTimer !== undefined) {
         clearTimeout(reconnectTimer)
         reconnectTimer = undefined
       }
       nextRetryAt = undefined
-      const current = client
-      const currentClosed = clientClosed
+      const close = clientCloser
       client = undefined
-      clientClosed = undefined
+      clientCloser = undefined
       connected = false
-      if (current !== undefined) {
-        try { await current.close() } catch { /* transport already gone */ }
-        if (currentClosed !== undefined && !await waitForClose(currentClosed)) {
-          log.error(`${label}: generation did not close within ${GENERATION_CLOSE_TIMEOUT_MS}ms during disposal — server shutdown may be incomplete`)
-        }
+      if (close !== undefined && !await close()) {
+        log.error(`${label}: generation did not close within ${GENERATION_CLOSE_TIMEOUT_MS}ms during disposal — server shutdown may be incomplete`)
       }
       // Quiesce, don't just request it: the in-flight attempt enqueues its
       // sync before settling, so awaiting both leaves `master` final.
