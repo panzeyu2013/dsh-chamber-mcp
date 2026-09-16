@@ -474,6 +474,10 @@ export const css = `
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  /* Holds the enable switch's 28px hit box, and keeps wrapped lines further
+     apart than its 4px slop (see .mcpScope_switchBox). */
+  min-height: 28px;
+  row-gap: 10px;
 }
 
 .mcpScope_cardName {
@@ -820,6 +824,8 @@ export const css = `
   display: flex;
   align-items: center;
   gap: 8px;
+  /* Holds the 28px hit box (see .mcpScope_switchBox). */
+  min-height: 28px;
 }
 
 .mcpScope_toggleLabel {
@@ -972,6 +978,12 @@ export const css = `
    below grows it to 44x28 around the unchanged 36x20 track, and the negative
    margin cancels the padding in layout (nothing moves, only the target does).
    The card-head switch and the staged form share it. */
+/* Hit box = track + 4px on every side (36x20 -> 44x28), laid out at the track's
+   own 20px via the cancelling margin. INVARIANT for every container of a switch:
+   it must be at least 28px tall, or the slop leaves the container and the
+   absolutely positioned inputs of two neighbours overlap — the later one paints
+   on top and steals the band. Containers that WRAP need a row-gap above 4px for
+   the same reason. */
 .mcpScope_switchBox {
   position: relative;
   flex: none;

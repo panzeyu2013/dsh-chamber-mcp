@@ -339,9 +339,14 @@ describe('mcp-scope stylesheet', () => {
     expect(ruleOf('.mcpScope_switchBox')).toMatch(/margin:\s*-4px/)
     expect(ruleOf('.mcpScope_switch')).toMatch(/width:\s*36px/)
     expect(ruleOf('.mcpScope_switch')).toMatch(/height:\s*20px/)
-    // The row holds the whole 28px hit box (4 + 20 + 4): anything shorter lets
-    // two rows' hit boxes overlap, and the lower input wins that band.
+    // EVERY container of a switch holds the whole 28px hit box (4 + 20 + 4):
+    // anything shorter lets two neighbours' hit boxes overlap, and the later
+    // absolutely positioned input wins that band.
     expect(ruleOf('.mcpScope_wsRow')).toMatch(/min-height:\s*28px/)
+    expect(ruleOf('.mcpScope_toggleRow')).toMatch(/min-height:\s*28px/)
+    expect(ruleOf('.mcpScope_cardHead')).toMatch(/min-height:\s*28px/)
+    // ...and a WRAPPING container keeps its lines further apart than the slop.
+    expect(ruleOf('.mcpScope_cardHead')).toMatch(/row-gap:\s*10px/)
     // The keyboard ring draws the hit box, not the bare track.
     expect(ruleOf('.mcpScope_switchInput:focus-visible + .mcpScope_switch')).toMatch(/outline-offset:\s*4px/)
     expect(ruleOf('.mcpScope_rowInput')).toMatch(/min-width:\s*0/)
