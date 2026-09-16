@@ -227,6 +227,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `docs/design.md` records the removal as a deliberate gap. The acceptance
   suite pins the new header contract (Add/Cancel only), the per-card refresh and
   the banner's single full refresh.
+- **The card's four actions are one capsule again.** Edit, Remove, Disconnect and
+  Test already shared the official `.sm` outline geometry, but the destructive
+  action carried the error colour in its label over a neutral hairline frame, so
+  the group read as mixed. All four now share one recipe (h28 / r14 / `0 10px` /
+  12-18, transparent fill, one frame, one hover tint) and the destructive one
+  paints its FRAME with `state-error-primary` at the 1px a state border takes
+  (S3) — its label keeps the upstream destructive vocabulary. The plain danger
+  treatment inside the confirm dialog and the staged form is unchanged.
 
 ## [0.0.3] - 2026-09-15
 

@@ -969,6 +969,11 @@ describe('McpScopeSection render', () => {
     const remove = buttonByText(mounted.host, en['server.remove'])
     expect(remove?.className).toContain(styles.buttonOutline)
     expect(remove?.className).toContain(styles.buttonDanger)
+    // Edit is the same capsule without the destructive variant: one control
+    // group, the danger frame being the only difference.
+    const edit = buttonByText(mounted.host, en['server.edit'])
+    expect(edit?.className).toContain(styles.buttonOutline)
+    expect(edit?.className).not.toContain(styles.buttonDanger)
   })
 
   it('keeps the workspace exception control reachable with a SINGLE workspace', async () => {

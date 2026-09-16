@@ -152,6 +152,35 @@ describe('mcp-scope stylesheet', () => {
     }
   })
 
+  it('keeps every card action on one capsule and gives the destructive one a state frame', () => {
+    const capsule = rules(css).find((rule) => rule.selector === '.mcpScope_button')
+    expect(capsule, 'no rule for .mcpScope_button').toBeDefined()
+    // One shared recipe for Edit / Remove / Disconnect / Test (and the Tools
+    // disclosure): the official Button `.sm` outline capsule.
+    for (const declaration of [
+      /height:\s*28px/,
+      /border-radius:\s*14px/,
+      /padding:\s*0 10px/,
+      /font-size:\s*12px/,
+      /background:\s*transparent/,
+    ]) {
+      expect(capsule!.body, `capsule lost ${declaration}`).toMatch(declaration)
+    }
+    // The destructive variant keeps the capsule and paints its FRAME with the
+    // error token at the 1px a state border takes (S3) — the neutral frame is
+    // the 0.5px hairline in .mcpScope_buttonOutline.
+    const dangerOutline = rules(css).find(
+      (rule) => rule.selector === '.mcpScope_buttonDanger.mcpScope_buttonOutline',
+    )
+    expect(dangerOutline, 'no rule for the destructive outline capsule').toBeDefined()
+    expect(dangerOutline!.body).toContain('border: 1px solid var(--dsw-alias-state-error-primary)')
+    expect(dangerOutline!.body).not.toMatch(/(?:height|padding|border-radius|font-size)/)
+    // The plain danger treatment (confirm CTA, form discard) keeps its red label.
+    expect(rules(css).find((rule) => rule.selector === '.mcpScope_buttonDanger')!.body).toContain(
+      'color: var(--dsw-alias-state-error-primary)',
+    )
+  })
+
   it('paints the official panel card recipe: r14 + elevation stroke + 12/14 inset, no border', () => {
     const card = rules(css).find((rule) => rule.selector === '.mcpScope_card')
     expect(card, 'no rule for .mcpScope_card').toBeDefined()
