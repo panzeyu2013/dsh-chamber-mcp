@@ -183,10 +183,10 @@ comments, anchors and formatting survive on untouched nodes.
 | `src/server-context.ts` | per-server publication of the `mcp:<serverName>` instructions section and the `mcpResources` provider (the official `registerServerContext` shape) |
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture on the 2.0 server packages (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe; publishes instructions, oversized under `FIXTURE_HUGE_INSTRUCTIONS=1`) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (10 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`; repo total 503 tests / 26 files) |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (11 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`; repo total 506 tests / 26 files) |
 
 Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (503 tests / 26 files).
+`node node_modules/vitest/vitest.mjs run` — both fully green (506 tests / 26 files).
 
 ### (a) API signatures and runtime assumptions
 
@@ -1020,10 +1020,17 @@ shell renders from our registration (the localized `nav` label) and accepted onl
 in the shell's own shape (a button whose two element children are the glyph svg
 and the label span), the replacement carries the shell glyph's class so sizing
 and colour stay shell-owned, and a marker attribute makes re-application
-idempotent. Repaints ride a capture-phase click (opening the panel renders the
-rows), a childList observer scoped to the row's own list, and the locale feed. A
-renamed DOM shape, a composition without the settings panel or a different label
-all degrade to the shipped gear, and nothing in the patch throws.
+idempotent. The sweep is scoped to the panel (`[role="dialog"]`, both
+generations) and to `button > span`, so it never walks the chat DOM and a
+same-labelled control elsewhere cannot match. Repaints ride a capture-phase click
+(opening the panel renders the rows), a childList observer scoped to the row's own
+list, and the locale feed; a document observer covers a panel opened WITHOUT a
+click, and it is disconnected the moment the row is found (and its callback only
+fires while a panel is on the page, so a streaming chat costs one selector probe
+per mutation batch, never a scan). A renamed DOM shape, a composition without the
+settings panel or a different label all degrade to the shipped gear, and nothing
+in the patch throws. `verify-client-artifact` seeds a shell-shaped row before the
+mount and fails if the wiring stops painting it.
 
 ## 10. Settings UI layout reference
 

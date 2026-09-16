@@ -59,6 +59,50 @@ describe('paintNavGlyph', () => {
     expect(document.querySelector('[data-mcp-scope-nav-glyph]')).toBe(painted)
   })
 
+  it('pins the matcher: button parent, exact text, single glyph, non-empty label', () => {
+    // A div shaped exactly like the row (svg + label span): not a button.
+    const div = document.createElement('div')
+    const divGlyph = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    const divSpan = document.createElement('span')
+    divSpan.textContent = LABEL
+    div.append(divGlyph, divSpan)
+    document.body.append(div)
+    // A button whose label merely CONTAINS ours.
+    const containing = navRow(`  ${LABEL} (2)`)
+    // A button whose two children are both glyphs (no label).
+    const glyphsOnly = document.createElement('button')
+    glyphsOnly.append(
+      document.createElementNS('http://www.w3.org/2000/svg', 'svg'),
+      document.createElementNS('http://www.w3.org/2000/svg', 'svg'),
+    )
+    document.body.append(glyphsOnly)
+    // An empty label matches nothing: the boot-time call before the locale lands.
+    navRow('')
+    expect(paintNavGlyph(document, LABEL)).toBe(0)
+    expect(paintNavGlyph(document, '')).toBe(0)
+    expect(divGlyph.getAttribute('data-mcp-scope-nav-glyph')).toBeNull()
+    expect(containing.button.firstElementChild?.getAttribute('data-mcp-scope-nav-glyph')).toBeNull()
+  })
+
+  it('scopes the sweep to the settings panel when one is on the page', () => {
+    const outside = navRow(LABEL)
+    const panel = document.createElement('div')
+    panel.setAttribute('role', 'dialog')
+    document.body.append(panel)
+    // With the panel open, a same-labelled row elsewhere is not ours.
+    expect(paintNavGlyph(document, LABEL)).toBe(0)
+    expect(outside.button.firstElementChild?.getAttribute('data-mcp-scope-nav-glyph')).toBeNull()
+    // The row inside the panel is.
+    const inside = document.createElement('button')
+    const glyph = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    const labelSpan = document.createElement('span')
+    labelSpan.textContent = LABEL
+    inside.append(glyph, labelSpan)
+    panel.append(inside)
+    expect(paintNavGlyph(document, LABEL)).toBe(1)
+    expect(inside.firstElementChild?.getAttribute('data-mcp-scope-nav-glyph')).toBe('1')
+  })
+
   it('accepts nothing but the shell row shape, and never throws', () => {
     // A span with our text that is not a nav row: free-standing, in a div, in a
     // button with three children, or with the glyph after the label.
@@ -105,6 +149,24 @@ describe('mountNavGlyph', () => {
     expect(after.button.firstElementChild?.getAttribute('data-mcp-scope-nav-glyph')).toBeNull()
   })
 
+  it('patches a panel opened without a click (programmatic open)', async () => {
+    const dispose = mountNavGlyph({ label: () => LABEL })
+    try {
+      // No click and no change-feed notification: the host opened the panel
+      // itself (onboarding, restored state). The shell renders the panel as a
+      // dialog and the row inside it — that is what arms the body observer.
+      const panel = document.createElement('div')
+      panel.setAttribute('role', 'dialog')
+      document.body.append(panel)
+      const ours = navRow(LABEL)
+      panel.append(ours.button)
+      await tick()
+      expect(ours.button.firstElementChild?.getAttribute('data-mcp-scope-nav-glyph')).toBe('1')
+    } finally {
+      dispose()
+    }
+  })
+
   it('repaints on the change feed (locale flip) and survives an absent document', async () => {
     let notify: (() => void) | undefined
     const dispose = mountNavGlyph({
@@ -125,7 +187,11 @@ describe('mountNavGlyph', () => {
       dispose()
     }
     expect(notify).toBeUndefined()
-    // A composition without a document is a silent no-op.
-    expect(() => mountNavGlyph({ label: () => LABEL, doc: undefined })).not.toThrow()
+    // A composition without a usable document is a silent no-op. (Passing
+    // `doc: undefined` would fall back to the ambient jsdom document and prove
+    // nothing; a stub without a body is what exercises the guard.)
+    expect(() =>
+      mountNavGlyph({ label: () => LABEL, doc: { body: null } as unknown as Document }),
+    ).not.toThrow()
   })
 })

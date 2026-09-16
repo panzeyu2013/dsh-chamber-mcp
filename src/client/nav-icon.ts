@@ -75,6 +75,35 @@ function plugGlyph(doc: Document, size: number, className: string | null): Eleme
 }
 
 /**
+ * The scan scope: the settings panel when it is on the page (both generations
+ * render it as `[role="dialog"]`), else the whole document. Scoping keeps the
+ * sweep off the chat DOM and stops a same-labelled control elsewhere from
+ * matching.
+ */
+function navScope(doc: Document): ParentNode {
+  return doc.querySelector('[role="dialog"]') ?? doc
+}
+
+/** Paint every row carrying this label; report the count and the first row. */
+function paintRows(doc: Document, label: string, size: number): { painted: number; row: Element | undefined } {
+  if (label === '') return { painted: 0, row: undefined }
+  let painted = 0
+  let first: Element | undefined
+  // `button > span` is the shell's own row shape and the cheapest selector that
+  // can match it: a document-wide `span` sweep would grow with the chat DOM.
+  for (const span of Array.from(navScope(doc).querySelectorAll('button > span'))) {
+    const row = navRowOf(span, label)
+    if (row === undefined) continue
+    first ??= row
+    const glyph = row.firstElementChild
+    if (glyph === null || alreadyPainted(glyph)) continue
+    glyph.replaceWith(plugGlyph(doc, size, glyph.getAttribute('class')))
+    painted += 1
+  }
+  return { painted, row: first }
+}
+
+/**
  * Paint the plug into every nav row carrying this label.
  *
  * @param doc - the document to patch.
@@ -83,17 +112,7 @@ function plugGlyph(doc: Document, size: number, className: string | null): Eleme
  * @returns how many rows were painted (0 = already ours, or no such row).
  */
 export function paintNavGlyph(doc: Document, label: string, size = 16): number {
-  if (label === '') return 0
-  let painted = 0
-  for (const span of Array.from(doc.querySelectorAll('span'))) {
-    const row = navRowOf(span, label)
-    if (row === undefined) continue
-    const glyph = row.firstElementChild
-    if (glyph === null || alreadyPainted(glyph)) continue
-    glyph.replaceWith(plugGlyph(doc, size, glyph.getAttribute('class')))
-    painted += 1
-  }
-  return painted
+  return paintRows(doc, label, size).painted
 }
 
 /** Options of {@link mountNavGlyph}. */
@@ -124,6 +143,7 @@ export function mountNavGlyph(options: NavGlyphOptions): () => void {
   let scheduled: ReturnType<typeof setTimeout> | undefined
   let rowObserver: MutationObserver | undefined
   let observedList: Element | undefined
+  let bodyObserver: MutationObserver | undefined
   let disposed = false
 
   const schedule = (): void => {
@@ -136,13 +156,18 @@ export function mountNavGlyph(options: NavGlyphOptions): () => void {
     if (disposed) return
     let row: Element | undefined
     try {
-      const label = options.label()
-      paintNavGlyph(doc as Document, label, size)
-      row = rowOf(doc as Document, label)
+      // ONE sweep: the scan reports the row it matched, so the observer does not
+      // walk the panel twice.
+      row = paintRows(doc as Document, options.label(), size).row
     } catch {
       return // a shell change must never surface from here
     }
     if (row === undefined) return
+    // The row is on the page: the panel-wide observer has done its job (it
+    // covers a panel opened WITHOUT a click — a programmatic/onboarding open),
+    // and the row-scoped one takes over for later re-renders.
+    bodyObserver?.disconnect()
+    bodyObserver = undefined
     const list = row.parentElement
     if (list === null || list === observedList) return
     // A composition (or a test harness) without MutationObserver keeps the
@@ -159,14 +184,6 @@ export function mountNavGlyph(options: NavGlyphOptions): () => void {
     }
   }
 
-  function rowOf(doc: Document, label: string): Element | undefined {
-    for (const span of Array.from(doc.querySelectorAll('span'))) {
-      const row = navRowOf(span, label)
-      if (row !== undefined) return row
-    }
-    return undefined
-  }
-
   const onClick = (): void => schedule()
   doc.addEventListener('click', onClick, true)
   // The change feed is optional in practice as well as in signature: a face
@@ -178,11 +195,32 @@ export function mountNavGlyph(options: NavGlyphOptions): () => void {
   } catch {
     offChange = undefined
   }
+  // Until our row is on the page, watch the document itself: that covers a panel
+  // opened without a click, and it is disconnected the moment the row is found
+  // (so the steady-state cost is the row's own list, not the whole app).
+  try {
+    if (typeof MutationObserver === 'function') {
+      bodyObserver = new MutationObserver(() => {
+        // Only the settings panel can hold our row, so a mutation batch with no
+        // panel on the page (a streaming chat, a transcript update) costs one
+        // cheap `[role="dialog"]` probe instead of a scan.
+        try {
+          if ((doc as Document).querySelector('[role="dialog"]') !== null) schedule()
+        } catch {
+          /* a shell change must never surface from here */
+        }
+      })
+      bodyObserver.observe(doc.body, { childList: true, subtree: true })
+    }
+  } catch {
+    bodyObserver = undefined
+  }
   run()
   return () => {
     disposed = true
     doc.removeEventListener('click', onClick, true)
     offChange?.()
+    bodyObserver?.disconnect()
     rowObserver?.disconnect()
     if (scheduled !== undefined) clearTimeout(scheduled)
   }

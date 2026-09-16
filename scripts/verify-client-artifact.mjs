@@ -187,8 +187,35 @@ const ctx = {
   },
 }
 
+// The settings shell renders a section nav row as
+// <button><svg/><span>label</span></button> and picks the glyph itself (a map by
+// section id with a gear fallback) with no icon seat for registrants, so the
+// browser half patches ITS row. Seed such a row before the mount: the patch finds
+// it by the plugin's own nav copy and must have replaced the shell glyph by the
+// time apply() returns (a dropped wiring fails this check, not a later one).
+const navPanel = document.createElement('div')
+navPanel.setAttribute('role', 'dialog')
+const navRow = document.createElement('button')
+const navShellGlyph = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+navShellGlyph.setAttribute('viewBox', '0 0 16 16')
+navShellGlyph.setAttribute('class', 'Shell_navIcon__fixture')
+const navLabel = document.createElement('span')
+navLabel.textContent = 'MCP servers'
+navRow.append(navShellGlyph, navLabel)
+navPanel.append(navRow)
+document.body.append(navPanel)
+
 bundle.apply(ctx)
 if (!bundle.inject.includes('sessions')) fail('the browser half no longer injects the sessions service')
+const navGlyph = navRow.firstElementChild
+check(
+  'the settings sidebar row draws the plugin plug, not the shell gear',
+  navGlyph !== null &&
+    navGlyph.getAttribute('data-mcp-scope-nav-glyph') === '1' &&
+    navGlyph.getAttribute('viewBox') === '0 0 24 24' &&
+    // The shell glyph's own class rides along: sizing and colour stay shell-owned.
+    navGlyph.getAttribute('class') === 'Shell_navIcon__fixture',
+)
 
 const keys = registrations
   .map((entry) => entry.spec.key)
