@@ -155,7 +155,7 @@ describe('mcp-scope stylesheet', () => {
     }
   })
 
-  it('keeps every card action on one capsule and gives the destructive one a state frame', () => {
+  it('keeps every card action on one capsule and marks the destructive one by its label', () => {
     const capsule = rules(css).find((rule) => rule.selector === '.mcpScope_button')
     expect(capsule, 'no rule for .mcpScope_button').toBeDefined()
     // One shared recipe for Edit / Remove / Disconnect / Test (and the Tools
@@ -169,15 +169,17 @@ describe('mcp-scope stylesheet', () => {
     ]) {
       expect(capsule!.body, `capsule lost ${declaration}`).toMatch(declaration)
     }
-    // The destructive variant keeps the capsule and paints its FRAME with the
-    // error token at the 1px a state border takes (S3) — the neutral frame is
-    // the 0.5px hairline in .mcpScope_buttonOutline.
-    const dangerOutline = rules(css).find(
-      (rule) => rule.selector === '.mcpScope_buttonDanger.mcpScope_buttonOutline',
+    // ONE frame for all four: the neutral 0.5px hairline. Nothing gives the
+    // destructive variant a border of its own — its colour rides the LABEL, so
+    // the control group keeps a single border weight.
+    expect(rules(css).find((rule) => rule.selector === '.mcpScope_buttonOutline')!.body).toContain(
+      'border: 0.5px solid var(--dsw-alias-border-l3)',
     )
-    expect(dangerOutline, 'no rule for the destructive outline capsule').toBeDefined()
-    expect(dangerOutline!.body).toContain('border: 1px solid var(--dsw-alias-state-error-primary)')
-    expect(dangerOutline!.body).not.toMatch(/(?:height|padding|border-radius|font-size)/)
+    const dangerRules = rules(css).filter((rule) => rule.selector.includes('buttonDanger'))
+    expect(dangerRules.length).toBeGreaterThan(0)
+    for (const rule of dangerRules) {
+      expect(rule.body, `${rule.selector} must not paint a frame`).not.toMatch(/border(?!-radius)/)
+    }
     // The plain danger treatment (confirm CTA, form discard) keeps its red label.
     expect(rules(css).find((rule) => rule.selector === '.mcpScope_buttonDanger')!.body).toContain(
       'color: var(--dsw-alias-state-error-primary)',

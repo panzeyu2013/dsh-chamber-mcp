@@ -310,14 +310,6 @@ export const css = `
   background: var(--dsw-alias-interactive-bg-hover-danger);
 }
 
-/* The card's destructive action is the SAME capsule as Edit / Disconnect / Test
-   (h28, r14, 0 10px, 12-18, transparent fill, one frame); it differs only by
-   the error token, which rides its FRAME as well as its label — a state border
-   takes 1px (S3), where the neutral frame is the hairline. */
-.mcpScope_buttonDanger.mcpScope_buttonOutline {
-  border: 1px solid var(--dsw-alias-state-error-primary);
-}
-
 /* Text-only affordance inside a tag (the official reset vocabulary). */
 .mcpScope_linkButton {
   border: none;

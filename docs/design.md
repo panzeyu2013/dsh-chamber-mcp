@@ -1005,7 +1005,7 @@ byte-equal declaration.
 |---|---|---|
 | section column | `ui-settings-models` `.section` | same (flex column, gap 12, max-width 720, `label-primary`) |
 | section title | `.title` | same (16px/24px, 500) |
-| header action / row actions | `ui-primitives` Button `.sm` + `outline` (what the official `settings.action` seat renders) | same (h28, r14, 0 10px, 12/18, `border-l3`); Edit / Remove / Disconnect / Test share that one capsule, and the destructive action differs only by the error token on its frame (1px, the state-border width) and its label |
+| header action / row actions | `ui-primitives` Button `.sm` + `outline` (what the official `settings.action` seat renders) | same (h28, r14, 0 10px, 12/18, `border-l3`); Edit / Remove / Disconnect / Test share that one capsule — one neutral frame — and the destructive action differs only by the error token on its LABEL |
 
 ## 10. Settings UI layout reference
 
