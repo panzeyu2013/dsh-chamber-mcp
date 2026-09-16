@@ -929,6 +929,12 @@ export const css = `
   min-width: 0;
 }
 
+/* Only the row whose write is running shows a busy state: the card no longer
+   dims every switch while one row saves. */
+.mcpScope_wsRow[data-pending] .mcpScope_switch {
+  opacity: 0.6;
+}
+
 /* The label is the WHOLE text run (name + the state word) so every pixel of it
    toggles, and the cursor says so. */
 .mcpScope_wsLabel {

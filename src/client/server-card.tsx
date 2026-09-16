@@ -185,7 +185,14 @@ const WS_FILTER_MIN = 5
 export function ServerCard(props: ServerCardProps): JSX.Element | null {
   const { t, server, doc, credentials, writable, workspaces, workspaceStatus } = props
   const [confirmingRemove, setConfirmingRemove] = useState(false)
-  const [pendingWs, setPendingWs] = useState<string | undefined>(undefined)
+  /**
+   * The row whose OWN write is in flight: the only busy affordance a row write
+   * shows. The card does not dim every switch for it any more.
+   */
+  const [pendingRow, setPendingRow] = useState<string | undefined>(undefined)
+  /** This card's document writes, serialized (see queueWrite). */
+  const writeChain = useRef<Promise<unknown>>(Promise.resolve())
+  const [writesInFlight, setWritesInFlight] = useState(0)
   const [removing, setRemoving] = useState(false)
   const [clearingRef, setClearingRef] = useState<string | null>(null)
   const [pendingEnabled, setPendingEnabled] = useState(false)
@@ -317,16 +324,22 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
     if (!wsFilterVisible) setWsQuery((current) => (current === '' ? current : ''))
   }, [wsFilterVisible])
   const wsFiltered = wsFilterVisible && wsNeedle !== ''
-  const busy =
-    removing ||
-    pendingWs !== undefined ||
-    clearingRef !== null ||
-    pendingEnabled ||
-    pendingAll ||
-    pendingRuntime !== null
+  /**
+   * Structural actions (remove / edit / global switch / runtime) still run one
+   * at a time and gate the header controls. Row and bulk toggles are QUEUED
+   * instead (see queueWrite): the controller must never judge two overlapping
+   * writes, but blocking — and dimming — every row while one row saves made the
+   * whole card blink on each toggle.
+   */
+  const actionsBusy =
+    removing || clearingRef !== null || pendingEnabled || pendingAll || pendingRuntime !== null
+  const busy = actionsBusy || writesInFlight > 0
   const disabled = !writable || busy || props.actionsDisabled === true
-  /** Workspace rows and bulk switches are inert while the server is globally off. */
-  const rowsDisabled = disabled || globallyDisabled
+  /**
+   * Rows dim only for a STRUCTURAL action or a globally off server: a row write
+   * leaves every row live (the next click queues behind it).
+   */
+  const rowsDisabled = !writable || actionsBusy || props.actionsDisabled === true || globallyDisabled
   const runtime = props.runtime
   const runtimeState: RuntimePhase = runtime?.state ?? 'unknown'
   const statusTone = statusToneOf(runtimeState)
@@ -368,18 +381,41 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
       ? [server.command, ...(server.args ?? [])].join(' ')
       : ''
 
+  /**
+   * Queue one settings write behind the previous one from THIS card. The
+   * controller judges a save against the document it read, so overlapping
+   * writes would report a spurious conflict; queuing keeps them serial while
+   * leaving every other control interactive.
+   */
+  function queueWrite(run: () => Promise<void>): Promise<void> {
+    const next = writeChain.current.then(run, run)
+    writeChain.current = next.then(
+      () => undefined,
+      () => undefined,
+    )
+    return next
+  }
+
   async function handleToggle(workspaceId: string, checked: boolean): Promise<void> {
     setFailure(null)
-    setPendingWs(workspaceId)
-    let outcome: SaveOutcome
-    try {
-      outcome = await props.onToggle(workspaceId, server.serverName, checked)
-    } catch {
-      outcome = { ok: false, reason: 'save-failed' }
-    }
-    if (!mounted.current) return
-    setPendingWs(undefined)
-    if (!outcome.ok) setFailure(outcome)
+    return queueWrite(async () => {
+      if (!mounted.current) return
+      setPendingRow(workspaceId)
+      setWritesInFlight((count) => count + 1)
+      let outcome: SaveOutcome
+      try {
+        outcome = await props.onToggle(workspaceId, server.serverName, checked)
+      } catch {
+        outcome = { ok: false, reason: 'save-failed' }
+      } finally {
+        if (mounted.current) {
+          setPendingRow(undefined)
+          setWritesInFlight((count) => Math.max(0, count - 1))
+        }
+      }
+      if (!mounted.current) return
+      if (!outcome.ok) setFailure(outcome)
+    })
   }
 
   async function handleSetEnabled(enabled: boolean): Promise<void> {
@@ -413,6 +449,8 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
 
   async function handleToggleAll(enabled: boolean): Promise<void> {
     setFailure(null)
+    return queueWrite(async () => {
+    if (!mounted.current) return
     setPendingAll(true)
     let outcome: SaveOutcome
     try {
@@ -429,6 +467,7 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
     if (!mounted.current) return
     setPendingAll(false)
     if (!outcome.ok) setFailure(outcome)
+    })
   }
 
   async function handleRuntime(action: 'connect' | 'disconnect'): Promise<void> {
@@ -539,15 +578,20 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
   /** One workspace row (shared by the exception list and the expanded list). */
   function workspaceRow(ws: WorkspaceItem): JSX.Element {
     const on = isEnabled(doc.overrides, ws.workspaceId, server.serverName)
-    // ONE toggle per card at a time: the controller judges a save by comparing
+    // ONE write per card at a time: the controller judges a save by comparing
     // the landed document against the expectation it built from the base it
     // read, so a second overlapping toggle would report a spurious 'conflict'
-    // (or be fenced away) even though nothing is wrong. Every row is inert
-    // while one toggle is in flight, not just the row that was clicked.
-    const pending = pendingWs !== undefined
+    // (or be fenced away) even though nothing is wrong. The queue serializes
+    // them; only the row whose write is running shows it.
+    const pending = pendingRow === ws.workspaceId
     const id = `mcp-scope-${server.serverName}-${ws.workspaceId}`
     return (
-      <li key={ws.workspaceId} className={styles.wsRow}>
+      <li
+        key={ws.workspaceId}
+        className={styles.wsRow}
+        data-pending={pending || undefined}
+        aria-busy={pending || undefined}
+      >
         <span className={styles.switchBox}>
           <input
             id={id}
@@ -555,7 +599,7 @@ export function ServerCard(props: ServerCardProps): JSX.Element | null {
             role="switch"
             className={styles.switchInput}
             checked={on}
-            disabled={rowsDisabled || pending}
+            disabled={rowsDisabled}
             onChange={(event) => void handleToggle(ws.workspaceId, event.target.checked)}
           />
           <span className={styles.switch} aria-hidden="true">

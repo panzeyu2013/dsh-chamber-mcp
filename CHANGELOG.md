@@ -98,6 +98,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A workspace switch no longer dims the whole card.** Flipping one workspace
+  made every row inert for the duration of the write (the controller judges a
+  save against the document it read, so overlapping writes would report a
+  spurious conflict) — and inert means `opacity: .5` on every switch plus the
+  card's buttons, so each toggle blinked the card. Row toggles are now QUEUED
+  behind one another instead: every row stays interactive, a click during a write
+  lands right after it, and only the row whose write is running carries
+  `data-pending` / `aria-busy`.
 - **The workspace card's filter can no longer strand its own query, and the
   dead copy this work left behind is gone.** A query narrowed the list even after
   the filter input disappeared (deleting workspaces down past the five-workspace

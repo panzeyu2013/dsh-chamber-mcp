@@ -1280,34 +1280,51 @@ describe('McpScopeSection render', () => {
     expect(allOn?.compareDocumentPosition(list as Node)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
-  it('serializes workspace toggles: every row is inert while one save is in flight', async () => {
+  it('queues workspace toggles: no other row dims, and the writes land in order', async () => {
+    const calls: string[] = []
     let release: (outcome: { ok: true }) => void = () => {}
-    const pending = new Promise<{ ok: true }>((resolve) => {
+    const first = new Promise<{ ok: true }>((resolve) => {
       release = resolve
     })
     const mounted = mountSection(
       { servers: [stdioServer('alpha')], overrides: {} },
-      { toggleWorkspace: async () => pending },
+      {
+        toggleWorkspace: async (workspaceId) => {
+          calls.push(workspaceId)
+          // The first write parks until released; a second must not even START
+          // before it (the controller judges a save against the document it
+          // read, so overlapping writes would report a spurious conflict).
+          return calls.length === 1 ? first : { ok: true as const }
+        },
+      },
       { wsItems: [{ workspaceId: 'ws-1', title: 'one' }, { workspaceId: 'ws-2', title: 'two' }] },
     )
     await flush()
     buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
     await flush()
+    const rows = Array.from(mounted.host.querySelectorAll('.' + styles.wsRow))
     const inputs = Array.from(mounted.host.querySelectorAll<HTMLInputElement>('.' + styles.wsRow + ' input'))
     expect(inputs).toHaveLength(2)
 
     inputs[0]?.click()
     await flush()
-    // The save is still in flight, so BOTH rows stay inert: an overlapping
-    // toggle on the second row would be judged against a single-change
-    // expectation built from the same base and report a spurious conflict.
-    expect(inputs[0]?.disabled).toBe(true)
-    expect(inputs[1]?.disabled).toBe(true)
+    // Only the writing row is marked; NO row is disabled, so a card full of
+    // switches never dims and brightens on every toggle.
+    expect(rows[0]?.getAttribute('data-pending')).toBe('true')
+    expect(rows[1]?.getAttribute('data-pending')).toBeNull()
+    expect(inputs.map((input) => input.disabled)).toEqual([false, false])
+    expect(calls).toEqual(['ws-1'])
+
+    // The second click QUEUES behind the first instead of being refused.
+    inputs[1]?.click()
+    await flush()
+    expect(calls).toEqual(['ws-1'])
 
     release({ ok: true })
     await flush()
-    expect(inputs[0]?.disabled).toBe(false)
-    expect(inputs[1]?.disabled).toBe(false)
+    expect(calls).toEqual(['ws-1', 'ws-2'])
+    expect(rows[0]?.getAttribute('data-pending')).toBeNull()
+    expect(inputs.map((input) => input.disabled)).toEqual([false, false])
   })
 
   it('zh dictionary mirrors the en key set', () => {
