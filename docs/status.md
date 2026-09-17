@@ -20,7 +20,11 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
   downloaded asset. All six linked remote instances were updated through the
   chamber gateway's official `materialize` path and then restarted through the
   gateway's own `runtime/restart` action (every host reported a new instance
-  process and a healthy gateway afterwards), so each runs `0.1.1` now.
+  process and a healthy gateway afterwards), so each runs `0.1.1` now. The LOCAL
+  instance's profile was updated the same way through its own dsh CLI
+  (`plugin --profile web add` on the chamber-managed `dsh-home`, asset staged as
+  `dsh-chamber-mcp-0.1.1-<sha256 head>.tgz` like its predecessor) and keeps
+  running until its runtime is restarted.
 - **`v0.1.1` verification (on the tagged commit).** `npm ci` + `npm run check` PASS —
   `tsc` ×2, **554 tests / 28 files**, 47 packed entries, `verify-client-artifact`
   PASS, determinism (43 files), `verify:package` PASS;
