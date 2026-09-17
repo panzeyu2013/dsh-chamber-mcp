@@ -17,8 +17,10 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
   CI + Release workflows green). Asset `dsh-chamber-mcp-0.1.1.tgz` (165,638 bytes,
   47 entries) with its `.sha256`; the published hash
   `52a8a2ad2536e20a5a2c8d798490b641b42fcd6ebe61de885a1ea54ad9803492` matches the
-  downloaded asset. The maintainer's linked remote instances were updated through
-  the chamber gateway's official `materialize` path (no runtime restart).
+  downloaded asset. All six linked remote instances were updated through the
+  chamber gateway's official `materialize` path and then restarted through the
+  gateway's own `runtime/restart` action (every host reported a new instance
+  process and a healthy gateway afterwards), so each runs `0.1.1` now.
 - **`v0.1.1` verification (on the tagged commit).** `npm ci` + `npm run check` PASS —
   `tsc` ×2, **554 tests / 28 files**, 47 packed entries, `verify-client-artifact`
   PASS, determinism (43 files), `verify:package` PASS;
