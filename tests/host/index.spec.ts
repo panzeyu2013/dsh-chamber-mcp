@@ -60,4 +60,41 @@ describe('plugin entry shape', () => {
       '/api/mcp-scope.tools',
     ])
   })
+
+  // alpha.2 contract note for plugin authors: the runtime resolves packages at
+  // load time and can UNLOAD a row again, so an activation must be reversible
+  // and repeatable. src/index.ts owns everything through `ctx.effect` and keeps
+  // a per-root reservation in a WeakSet — these two cases pin that discipline
+  // (a leaked reservation would make the second mount throw, and a missing
+  // guard would let a duplicate activation shadow the first silently).
+  it('is effect-owned: disposing the activation releases the root, and the same root activates again', async () => {
+    const build = (): Context => {
+      const ctx = new Context()
+      ctx.provide('settings', { installSection: () => {} } as never)
+      ctx.provide('credentials', { resolve: async () => undefined } as never)
+      ctx.provide('tools', {} as never)
+      ctx.provide('workspaceRegistry', { list: () => [] } as never)
+      ctx.provide('agents', { roots: () => [], get: () => undefined } as never)
+      return ctx
+    }
+
+    const ctx = build()
+    const first = await ctx.plugin(entry)
+    await first.dispose()
+    const second = await ctx.plugin(entry)
+    await second.dispose()
+  })
+
+  it('refuses a duplicate concurrent activation on the same root, loudly', async () => {
+    const ctx = new Context()
+    ctx.provide('settings', { installSection: () => {} } as never)
+    ctx.provide('credentials', { resolve: async () => undefined } as never)
+    ctx.provide('tools', {} as never)
+    ctx.provide('workspaceRegistry', { list: () => [] } as never)
+    ctx.provide('agents', { roots: () => [], get: () => undefined } as never)
+
+    const first = await ctx.plugin(entry)
+    await expect(ctx.plugin(entry)).rejects.toThrow(/already active/)
+    await first.dispose()
+  })
 })
