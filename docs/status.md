@@ -4,14 +4,16 @@ Current release, compatibility and verification state. Refreshed 2026-09-25.
 
 ## Release state
 
-- **`v0.2.0` is prepared on `main` (2026-09-25) but NOT tagged — do not
-  describe it as released.** The candidate carries the 0.1.7-generation
-  migration and the review fixes; its verification is the `0.2.0` entry under
-  §Verification state (531 tests / 28 files, `verify:package` PASS, live smoke
-  green on a real `dsh@0.1.7-rc.2` anchor including the restart leg).
-  Publishing is the tag push (`git push origin v0.2.0`), which triggers the
-  Release workflow; this bullet and the README *Install* line flip to released
-  in a post-release edit once the workflow reports success.
+- **Published release: `v0.2.0`** — tag `v0.2.0` on `main` (`eec844e`),
+  GitHub Release published 2026-09-25 with `dsh-chamber-mcp-0.2.0.tgz`
+  (162,898 bytes, sha256
+  `9984a453dcd5ae49179d6d3e6aa15f8f40c8bddb0ca50073897a13f957d53586`) + its
+  matching `.sha256` sidecar; notes composed from the dated CHANGELOG section.
+  CI and Release ran green on the tag. The published tarball's 47 packed files
+  are byte-identical to the locally gated pack (only the gzip container differs
+  by environment: local sha256
+  `e71e08ca82771eaf23b899d58360d99f8e170a1a959d0a118910b992474e5c9a`). This is
+  the first release on the 0.1.7 generation (`v0.1.1` is the previous one).
 - **Published release: `v0.1.0`** — tag `v0.1.0` on `main`
   (`4413b0e`), GitHub Release published 2026-09-16 with
   `dsh-chamber-mcp-0.1.0.tgz` (157,283 bytes, sha256
@@ -160,7 +162,7 @@ Current release, compatibility and verification state. Refreshed 2026-09-25.
 
 ## Verification state
 
-- **0.2.0 (release candidate on `main`; migrated to the 0.1.7 generation):**
+- **0.2.0 (published `v0.2.0`, tag `eec844e`; migrated to the 0.1.7 generation):**
   `npm run check` PASS — `tsc` ×2, **531 tests / 28 files**, 47 packed entries,
   `verify-client-artifact` PASS, determinism (43 files), `verify:package` PASS.
   Live smoke on a real `dsh@0.1.7-rc.2` anchor (scratch
