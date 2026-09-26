@@ -62,7 +62,7 @@ import {
   readDelegationNarrowing,
   type DelegationNarrowing,
 } from './delegation.js'
-import { isEnabled, type WorkspaceOverrides } from './shared/model.js'
+import { isEnabled, type DisabledServers, type WorkspaceOverrides } from './shared/model.js'
 import { workspaceIdOf, type WorkspaceLike } from './workspace.js'
 // Side-effect type imports: declaration-merge ctx.tools / ctx.agents / events.
 import type {} from '@deepseek-ai/dsh-tools'
@@ -158,10 +158,10 @@ export interface AgentApplierOptions {
   /** Current document overrides (read live — never cached across pushes). */
   overrides: () => WorkspaceOverrides
   /**
-   * Global off-switch lookup (read live). Optional so existing test mounts
-   * keep their shape; absent ⇒ never globally disabled.
+   * Global off-switch snapshot (read live, ONE read per pass). Optional so
+   * existing test mounts keep their shape; absent ⇒ never globally disabled.
    */
-  isDisabled?: (serverName: string) => boolean
+  disabled?: () => DisabledServers
 }
 
 /** The per-agent applier owned by the manager. */
@@ -209,7 +209,7 @@ const fmtError = (error: unknown): string =>
 
   /** Live enablement sources — never cached across pushes (settings reads are per-op). */
   const overrides = options.overrides
-  const isDisabled = options.isDisabled ?? ((): boolean => false)
+  const disabled = options.disabled ?? ((): DisabledServers => ({}))
 
   const resolveWorkspace = (agent: Agent): string | undefined =>
     workspaceIdOf(agent.session.header.cwd, workspaceRegistry.list())
@@ -295,7 +295,8 @@ const fmtError = (error: unknown): string =>
     entries.set(agent, entry)
     logger.info(`${label}: tracking agent ${agent.id}${entry.workspaceId === undefined ? ' (no workspace — MCP tools withheld)' : ` workspace=${entry.workspaceId}`}`)
     const docOverrides = overrides()
-    for (const serverName of serverState.keys()) applyToEntry(entry, serverName, docOverrides)
+    const docDisabled = disabled()
+    for (const serverName of serverState.keys()) applyToEntry(entry, serverName, docOverrides, docDisabled)
   }
 
   /** Revoke one applied server generation; disposers run only while the agent is alive. */
@@ -329,12 +330,18 @@ const fmtError = (error: unknown): string =>
    * mid-swap rolls the partial generation back (zero tools from this server
    * for that agent) and logs.
    *
-   * Enablement is judged LIVE (per call) from the caller's doc snapshot;
+   * Enablement is judged LIVE (per call) from the caller's doc snapshots;
    * the (epoch, syncId) guard turns an unchanged (state, enablement) pair
-   * into a no-op. `docOverrides` is one snapshot per event so reconcile
-   * loops never re-read the settings doc per (entry × server) pair.
+   * into a no-op. `docOverrides` and `docDisabled` are ONE snapshot per pass,
+   * so reconcile loops never re-read the settings doc per (entry × server)
+   * pair.
    */
-  function applyToEntry(entry: AgentEntry, serverName: string, docOverrides: WorkspaceOverrides): void {
+  function applyToEntry(
+    entry: AgentEntry,
+    serverName: string,
+    docOverrides: WorkspaceOverrides,
+    docDisabled: DisabledServers,
+  ): void {
     const state = serverState.get(serverName)
     const applied = entry.applied.get(serverName)
     if (state === undefined) {
@@ -342,7 +349,7 @@ const fmtError = (error: unknown): string =>
       return
     }
     const { workspaceId } = entry
-    const globallyOff = isDisabled(serverName)
+    const globallyOff = Object.hasOwn(docDisabled, serverName)
     const enabled =
       workspaceId !== undefined &&
       !globallyOff &&
@@ -426,7 +433,8 @@ const fmtError = (error: unknown): string =>
       // agents live) — refresh every entry before judging this push.
       refreshEntryWorkspaces()
       const docOverrides = overrides()
-      for (const entry of entries.values()) applyToEntry(entry, serverName, docOverrides)
+      const docDisabled = disabled()
+      for (const entry of entries.values()) applyToEntry(entry, serverName, docOverrides, docDisabled)
     },
     revokeServer(serverName) {
       if (disposed) return
@@ -444,8 +452,9 @@ const fmtError = (error: unknown): string =>
       // (epoch, syncId, enablement) pairs stay no-ops (PERF-1/IMPL-2).
       refreshEntryWorkspaces()
       const docOverrides = overrides()
+      const docDisabled = disabled()
       for (const entry of entries.values()) {
-        for (const serverName of serverState.keys()) applyToEntry(entry, serverName, docOverrides)
+        for (const serverName of serverState.keys()) applyToEntry(entry, serverName, docOverrides, docDisabled)
       }
     },
     dispose() {
@@ -481,7 +490,7 @@ const fmtError = (error: unknown): string =>
   }
 
   ctx.effect(() => {
-    // 0.1.6 types this listener as a veto protocol: it must settle to
+    // The host types this listener as a veto protocol: it must settle to
     // `undefined` (no veto) rather than return void. Adoption failures are
     // already contained inside `adoptContained`, so this never vetoes.
     const offCreated = ctx.on('agent/created', ({ agent }: { agent: Agent }): undefined => {

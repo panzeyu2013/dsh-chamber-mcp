@@ -123,16 +123,17 @@ const ctx = {
     },
     bind: () => t,
   },
-  settingsScope: {
-    bind: (options) => ({
+  // 0.1.7 seam: the entry's own Config form, addressed by profile entry id.
+  configForms: {
+    get: (entryId) => ({
       getSnapshot: () => ({
-        status: 'ready',
-        value: options.decode === undefined ? rawDoc : options.decode(rawDoc),
+        status: entryId === 'mcp-scope' ? 'ready' : 'unavailable',
+        value: entryId === 'mcp-scope' ? rawDoc : undefined,
         revision: 1,
         writable: true,
       }),
       subscribe: () => () => {},
-      mutate: async () => {},
+      mutate: async () => true,
     }),
   },
   remote: {

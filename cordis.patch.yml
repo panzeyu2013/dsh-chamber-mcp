@@ -1,5 +1,5 @@
 # dsh-chamber-mcp bundle layer: one loader row naming this package.
-# - host half (lib/index.js) runs the MCP bridge + settings namespace;
+# - host half (lib/index.js) runs the MCP bridge + the mcp-scope Config form;
 # - the browser half (lib/client.js) is discovered via dsh.client/exports["./client"].
 - insert:
     - id: mcp-scope

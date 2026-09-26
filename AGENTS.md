@@ -4,8 +4,8 @@
 from the dsh Settings UI, with tools injected into the tool scopes of the
 workspaces that explicitly enable them — **MCP is OFF by default**, so a new
 server, a new workspace and a fresh session register no tools until the user
-turns the pair on. Internal settings namespace / loader row id:
-`mcp-scope`.
+turns the pair on. Internal Loader entry id (the settings form and the
+legacy `settings.yaml` import both address it): `mcp-scope`.
 
 Releases are GitHub Releases carrying the packed tgz + `.sha256` (npm publishing
 temporarily disabled). **Tagging, pushing and publishing are maintainer
@@ -16,10 +16,13 @@ state: `docs/status.md`.
 
 Upstream generation: the `@deepseek-ai/dsh-*` devDependencies pin **one resolved
 generation** — the compile-time API surface and the CI guard — and the peer
-ranges declare the generations this plugin was verified against. Do not mix
-generations in the dev tree, and do not pin the umbrella's own version when its
-internals resolve past it. The live smoke installs and boots through the
-chamber's current anchor CLI, read at run time. Migration recipe:
+ranges declare the generations this plugin was verified against. Since 0.2.0
+that is the 0.1.7 line only (`0.1.7-rc.2` in the dev tree, peers
+`^0.1.7-rc.2`), which owns the Config/volatile settings model and the
+`createMcpToolDefinition` adapter. Do not mix generations in the dev tree, and
+do not pin the umbrella's own version when its internals resolve past it. The
+live smoke installs and boots through the anchor CLI `DSH_ANCHOR_CLI` names,
+read at run time (it must be a 0.1.7-generation CLI). Migration recipe:
 `docs/RELEASE.md`.
 
 ## Where things live
@@ -87,6 +90,6 @@ chamber's current anchor CLI, read at run time. Migration recipe:
 
 `npm run check` (typecheck + tests + build + verify:package),
 `node scripts/release-notes.mjs <version>`, `node
-scripts/verify-workflow-action-pins.mjs`, `npm run verify:low-generation`
-(built half against the low generation's real packages), then the live smoke
-(`npm run test:smoke`) on the smoke machine. Full runbook: `docs/RELEASE.md`.
+scripts/verify-workflow-action-pins.mjs`, then the live smoke
+(`npm run test:smoke`, with `DSH_ANCHOR_CLI` pointing at a 0.1.7-generation
+CLI) on the smoke machine. Full runbook: `docs/RELEASE.md`.

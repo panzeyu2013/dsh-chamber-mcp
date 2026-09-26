@@ -1,19 +1,15 @@
 /**
  * Unit tests for the tool bridge (src/tools.ts): the naming contract this
- * plugin owns, the listing/call wiring, and — since 0.1.0 — the EQUIVALENCE of
- * the two definition builders (the official `createMcpToolDefinition` adapter
- * and the local pre-2.0 fallback) plus the selection between them.
- *
- * The shared suite below runs the SAME assertions against both builders: that
- * is the anti-drift mechanism for keeping a 0.1.5 host on the old behavior and
- * a 0.1.6 host on the official one. What is NOT asserted here is the adapter's
- * own image admission (that is upstream's tested surface, and the fallback
- * deliberately lacks it).
+ * plugin owns, the listing/call wiring, and the OFFICIAL definition build
+ * (`createMcpToolDefinition` from `@deepseek-ai/dsh-mcp-client`), which is the
+ * only builder since the 0.2.0 generation move. The local pre-2.0 port and its
+ * parity suite were removed with the 0.1.5/0.1.6 peer range; the adapter's
+ * `projectContent` hook (0.1.7 renamed `finalizeContent` for the pre-policy
+ * slot) is asserted here through the real resolution path.
  */
 
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
-import { createMcpToolDefinition } from '@deepseek-ai/dsh-mcp-client'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import {
@@ -21,15 +17,10 @@ import {
   MAX_PUBLIC_NAME_LENGTH,
   MAX_SYNC_TOOLS,
   buildDefinitions,
-  buildLocalToolDefinition,
   definitionBuilder,
   fetchToolDefinitions,
   publicToolName,
-  renderResultText,
-  reportSelection,
-  selectDefinitionBuilder,
   type DefinitionBuilder,
-  type DefinitionSelection,
 } from '../src/tools.ts'
 
 const testToolSignal = new AbortController().signal
@@ -45,7 +36,7 @@ function execContext(overrides: Partial<ToolRunContext> = {}): ToolRunContext {
 
 /**
  * Bare plugin context: the composition mounts neither `attachments` nor `llm`,
- * which is exactly the shape both builders must diagnose identically for an
+ * which is exactly the shape the official adapter must diagnose for an
  * image-bearing result.
  */
 const ctx = { get: () => undefined } as unknown as Context
@@ -157,82 +148,69 @@ describe('fetchToolDefinitions', () => {
 
 // ---- Selection ----
 
-describe('selectDefinitionBuilder', () => {
-  it('takes the official adapter when the host namespace carries it', () => {
-    expect(selectDefinitionBuilder({ createMcpToolDefinition })).not.toBe(buildLocalToolDefinition)
-  })
-
-  it('falls back when the export is absent — the 0.1.5 shape', () => {
-    // 0.1.5 exports only {Config, apply, inject, name}, and a host without the
-    // package at all lands in the same branch.
-    expect(selectDefinitionBuilder({})).toBe(buildLocalToolDefinition)
-    expect(selectDefinitionBuilder({ createMcpToolDefinition: undefined })).toBe(buildLocalToolDefinition)
-    expect(selectDefinitionBuilder({ createMcpToolDefinition: 'not-a-function' })).toBe(buildLocalToolDefinition)
-  })
-
-  it('memoizes one process-wide answer and reports which path won', async () => {
+describe('definitionBuilder', () => {
+  it('memoizes one process-wide official adapter', async () => {
     const first = await definitionBuilder()
     const second = await definitionBuilder()
     expect(first).toBe(second)
-    // This dev tree installs 0.1.6, so the official path wins here.
-    expect(first.official).toBe(true)
-    expect(first.build).not.toBe(buildLocalToolDefinition)
+    expect(typeof first).toBe('function')
+  })
+
+  it('reports an adapter without the export once, and retries the import on the next sync', async () => {
+    // A fresh module instance: the memo is per-process, and this case needs the
+    // unresolved state. A namespace WITHOUT `createMcpToolDefinition` is the
+    // "host generation that lacks the official adapter" composition.
+    vi.resetModules()
+    vi.doMock('@deepseek-ai/dsh-mcp-client', () => ({ createMcpToolDefinition: undefined }))
+    try {
+      const fresh = await import('../src/tools.ts')
+      const log = vi.fn()
+      const client = createMockClient([])
+      await expect(fresh.fetchToolDefinitions(ctx, client as never, { ...defaultOpts, log })).rejects.toThrow(
+        /does not export createMcpToolDefinition/,
+      )
+      expect(log).toHaveBeenCalledTimes(1)
+      expect(log.mock.calls[0]?.[0]).toMatch(/official MCP tool adapter is unavailable/)
+      // The resolution failure is NOT memoized: the next sync retries the
+      // import, while the notice stays once-per-process.
+      await expect(fresh.fetchToolDefinitions(ctx, client as never, { ...defaultOpts, log })).rejects.toThrow(
+        /does not export createMcpToolDefinition/,
+      )
+      expect(log).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.doUnmock('@deepseek-ai/dsh-mcp-client')
+      vi.resetModules()
+    }
   })
 })
 
 // ---- Production wiring (the builder that actually runs) ----
 
 describe('definition wiring', () => {
-  it('selects the OFFICIAL adapter on this host and uses it through the real listing path', async () => {
-    // The selection itself is pinned...
-    expect((await definitionBuilder()).official).toBe(true)
-    // ...and the definitions the listing path produces carry the full official
-    // contract (the projection hook included).
+  it('builds definitions through the official adapter with the 0.1.7 projection hook', async () => {
     const client = createMockClient([{ name: 't', inputSchema: { type: 'object' } }])
     const definitions = await fetchToolDefinitions(ctx, client as never, defaultOpts)
     const definition = definitions.get('mcp__srv__t')
     expect(definition).toBeDefined()
-    expect(definition!.finalizeContent).toBeTypeOf('function')
-    // A silent swap to the fallback is caught BEHAVIORALLY: both builders now
-    // implement the same contract, and the parity suites below hold each of
-    // them to the deployed adapter's exact output.
-  })
-
-  it('drives the LOCAL fallback down the same listing path when it is selected', async () => {
-    const client = createMockClient([{ name: 't', inputSchema: { type: 'object' } }])
-    const definitions = await buildDefinitions(buildLocalToolDefinition, ctx, client as never, defaultOpts)
-    expect(definitions.get('mcp__srv__t')).toBeDefined()
-    expect(definitions.get('mcp__srv__t')!.finalizeContent).toBeTypeOf('function')
-    // The 0.1.5 path keeps the same listing contract, deadline included.
+    // 0.1.7 installs the adapter's projection as projectContent — the slot
+    // that runs BEFORE tools/post-execute policies; finalizeContent is the
+    // later, separate slot and the adapter does not use it anymore.
+    expect(definition!.projectContent).toBeTypeOf('function')
     expect(client.listTools).toHaveBeenCalledWith(undefined, { cacheMode: 'refresh', timeout: 60_000 })
+    // The exported low-level path drives the very same official builder.
+    const direct = await buildDefinitions(await definitionBuilder(), ctx, client as never, defaultOpts)
+    expect(direct.get('mcp__srv__t')).toBeDefined()
   })
 })
 
-describe('reportSelection', () => {
-  it('reports a degraded selection exactly once per process', () => {
-    const messages: string[] = []
-    const fallback: DefinitionSelection = { build: buildLocalToolDefinition, official: false }
-    reportSelection(fallback, 'srv', (message) => void messages.push(message))
-    reportSelection(fallback, 'srv', (message) => void messages.push(message))
-    expect(messages).toHaveLength(1)
-    expect(messages[0]).toMatch(/does not provide createMcpToolDefinition/)
+// ---- The official build ----
+
+describe('definition build — official adapter', () => {
+  let build!: DefinitionBuilder
+  beforeAll(async () => {
+    build = await definitionBuilder()
   })
 
-  it('stays silent when the host provided the official adapter', () => {
-    const messages: string[] = []
-    reportSelection({ build: buildLocalToolDefinition, official: true }, 'srv', (message) => void messages.push(message))
-    expect(messages).toHaveLength(0)
-  })
-})
-
-// ---- Both builders, one suite (anti-drift) ----
-
-const builders: Array<[string, DefinitionBuilder]> = [
-  ['official adapter', selectDefinitionBuilder({ createMcpToolDefinition })],
-  ['local fallback', buildLocalToolDefinition],
-]
-
-describe.each(builders)('definition build — %s', (_name, build) => {
   function definitionFor(tool: MockTool, client: ReturnType<typeof createMockClient>, opts = defaultOpts) {
     return build({ ctx, client: client as never, publicName: publicToolName('srv', tool.name), tool: tool as never, opts })
   }
@@ -334,27 +312,27 @@ describe.each(builders)('definition build — %s', (_name, build) => {
     const definition = definitionFor(tool, client)
     const value = await definition.execute({}, execContext())
     // render() is a pure projection of the canonical value: the official
-    // "not admitted" diagnostic, identical in both builders.
+    // "not admitted" diagnostic.
     expect(definition.output.render({}, value as never)).toEqual([{
       type: 'text',
       text: '[image unavailable: image/png; this result was not admitted to durable model context; raw image data remains available to programmatic callers]',
     }])
   })
 
-  it('applies finalizeContent only to the exact execution that produced the value', async () => {
+  it('applies projectContent only to the exact execution that produced the value', async () => {
     const tool: MockTool = { name: 'shot', inputSchema: { type: 'object' } }
     const client = createMockClient([tool], { tools: {} }, {
       content: [{ type: 'image', data: 'aGk=', mimeType: 'image/png' }],
     })
     const definition = definitionFor(tool, client)
-    expect(definition.finalizeContent).toBeTypeOf('function')
+    expect(definition.projectContent).toBeTypeOf('function')
 
     // The execution's own value + its own rendered content → the admission
     // projection (here a refusal diagnostic) replaces the model-facing text.
     const ownExec = execContext()
     const ownValue = await definition.execute({}, ownExec)
     const ownRendered = definition.output.render({}, ownValue as never)
-    expect(definition.finalizeContent?.(
+    expect(definition.projectContent?.(
       ownExec as never,
       { value: ownValue, content: ownRendered, isError: false } as never,
     )).toEqual([{
@@ -365,13 +343,13 @@ describe.each(builders)('definition build — %s', (_name, build) => {
     // A foreign value from another execution → the hook stays out of the way.
     const foreignExec = execContext()
     await definition.execute({}, foreignExec)
-    expect(definition.finalizeContent?.(
+    expect(definition.projectContent?.(
       foreignExec as never,
       { value: { content: [] }, content: ownRendered, isError: false } as never,
     )).toBeUndefined()
   })
 
-  // ---- Image admission: the branch production only reaches on 0.1.5 ----
+  // ---- Durable image admission (attachment store + model route mounted) ----
 
   /** A composition mounting the services admission needs, with fault knobs. */
   function admissionComposition(options: {
@@ -409,17 +387,17 @@ describe.each(builders)('definition build — %s', (_name, build) => {
     })
   }
 
-  /** Run one image result through execute + finalizeContent and return the text. */
+  /** Run one image result through execute + projectContent and return the text. */
   async function projectedImageText(composition: Context, toolless: ReturnType<typeof admissionComposition>, result = pngResult): Promise<string> {
     const definition = imageDefinition(composition, result)
     const exec = toolless.exec()
     const value = await definition.execute({}, exec)
     const rendered = definition.output.render({}, value as never)
-    const finalized = definition.finalizeContent?.(
+    const projected = definition.projectContent?.(
       exec as never,
       { value, content: rendered, isError: false } as never,
     ) as { text: string }[]
-    return finalized.map((block) => block.text).join('\n')
+    return projected.map((block) => block.text).join('\n')
   }
 
   it('admits an image through the store and returns image content', async () => {
@@ -435,7 +413,7 @@ describe.each(builders)('definition build — %s', (_name, build) => {
     expect(saved.mediaType).toBe('image/png')
     expect(saved.data.toString('utf8')).toBe('hi')
     const rendered = definition.output.render({}, value as never)
-    expect(definition.finalizeContent?.(exec as never, { value, content: rendered, isError: false } as never))
+    expect(definition.projectContent?.(exec as never, { value, content: rendered, isError: false } as never))
       .toEqual([{ type: 'image', attachment: { id: 'ref-0', mediaType: 'image/png' } }])
   })
 
@@ -488,87 +466,11 @@ describe.each(builders)('definition build — %s', (_name, build) => {
     const exec = execContext({ signal: controller.signal, agent: (setup.exec() as unknown as { agent: unknown }).agent } as never)
     const value = await definition.execute({}, exec)
     const rendered = definition.output.render({}, value as never)
-    const finalized = definition.finalizeContent?.(
+    const projected = definition.projectContent?.(
       exec as never,
       { value, content: rendered, isError: false } as never,
     ) as { text: string }[]
     expect(setup.saveImages).not.toHaveBeenCalled()
-    expect(finalized[0]!.text).toBe('[image unavailable: image/png; the tool call was canceled before image storage; raw image data remains available to programmatic callers]')
-  })
-})
-
-// ---- The fallback's projection is held to the adapter's exact output ----
-
-describe('text projection parity with the official adapter', () => {
-  const officialBuilder = selectDefinitionBuilder({ createMcpToolDefinition })
-
-  function renderedBy(build: DefinitionBuilder, content: unknown[]): string {
-    const tool: MockTool = { name: 't', inputSchema: { type: 'object' } }
-    const client = createMockClient([tool])
-    const definition = build({
-      ctx,
-      client: client as never,
-      publicName: publicToolName('srv', 't'),
-      tool: tool as never,
-      opts: defaultOpts,
-    })
-    const rendered = definition.output.render({}, { content } as never) as { text: string }[]
-    return rendered.map((block) => block.text).join('\n')
-  }
-
-  /**
-   * Every case carries a literal AND is compared against the deployed adapter:
-   * the fallback must not drift from it, and a future adapter change cannot
-   * slip past this suite unnoticed.
-   */
-  const cases: Array<[string, unknown[], string]> = [
-    ['joins consecutive text runs', [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }], 'a\nb'],
-    ['reports an empty result with the model-visible marker', [], '(t returned no model-visible content)'],
-    ['keeps an empty text block empty instead of inventing a marker', [{ type: 'text', text: '' }], ''],
-    [
-      'diagnoses a non-object block and an unknown type',
-      [42, { type: 'weird' }],
-      '[unsupported MCP content block: expected an object]\n[unsupported MCP content type: weird]',
-    ],
-    [
-      'projects an unadmitted image with the official diagnostic',
-      [{ type: 'image', data: 'aGk=', mimeType: 'image/png' }],
-      '[image unavailable: image/png; this result was not admitted to durable model context; raw image data remains available to programmatic callers]',
-    ],
-    [
-      'projects an unsupported audio block',
-      [{ type: 'audio', data: 'aGk=', mimeType: 'audio/mpeg' }],
-      '[audio result unsupported: audio/mpeg; raw audio data remains available to programmatic callers]',
-    ],
-    [
-      'projects an embedded resource',
-      [{ type: 'resource', resource: { uri: 'x', text: 'y' } }],
-      '[embedded resource unsupported; raw resource data remains available to programmatic callers]',
-    ],
-    [
-      'names a complete resource link',
-      [{ type: 'resource_link', name: 'docs', uri: 'file:///d' }],
-      'Resource link: docs (file:///d)',
-    ],
-    [
-      'diagnoses an incomplete resource link instead of naming it',
-      [{ type: 'resource_link' }],
-      '[resource link unavailable: the MCP block is missing its name or URI]',
-    ],
-    [
-      'splits text runs around an image',
-      [
-        { type: 'text', text: 'a' },
-        { type: 'image', data: 'aGk=', mimeType: 'image/png' },
-        { type: 'text', text: 'b' },
-      ],
-      'a\n[image unavailable: image/png; this result was not admitted to durable model context; raw image data remains available to programmatic callers]\nb',
-    ],
-  ]
-
-  it.each(cases)('%s', (_label, content, expected) => {
-    expect(renderedBy(buildLocalToolDefinition, content)).toBe(expected)
-    expect(renderedBy(officialBuilder, content)).toBe(expected)
-    expect(renderResultText(content as never, 't')).toBe(expected)
+    expect(projected[0]!.text).toBe('[image unavailable: image/png; the tool call was canceled before image storage; raw image data remains available to programmatic callers]')
   })
 })

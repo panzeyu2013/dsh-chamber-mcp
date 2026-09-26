@@ -1,7 +1,8 @@
-// dsh-chamber-mcp smoke driver: boot a SCRATCH dsh instance from the gateway's
-// anchor CLI — the generation the chamber currently runs (measured 2026-09-14:
-// gateway 0.3.0 → dsh 0.1.5-rc.2; read it at run time with cliVersion() rather
-// than assuming) — and drive its HTTP RPC surface. Wire generation used below:
+// dsh-chamber-mcp smoke driver: boot a SCRATCH dsh instance from the anchor CLI
+// DSH_ANCHOR_CLI names — which must be a 0.1.7-generation CLI (the plugin's peer
+// range since 0.2.0; the default path is the chamber gateway's anchor, read at
+// run time with cliVersion() rather than assumed) — and drive its HTTP RPC
+// surface. boot() fails fast when the CLI is older. Wire generation used below:
 // slash typert endpoints (/api/settings/describe etc.), payloads {args:{...}}
 // inside the client-request envelope, launch-token cookie auth.
 import { execFileSync, spawn } from 'node:child_process'
@@ -88,6 +89,16 @@ export class Instance {
 
   /** Boot dsh web headless against a scratch DSH_HOME. Resolves once the URL line appears. */
   async boot(timeoutMs = 60_000, extraEnv = {}) {
+    // Peer range of the plugin under test: an older anchor cannot activate its
+    // entry at all (0.1.7 moved settings into each entry's own Config), so fail
+    // with the fix instead of a confusing entry-activation error.
+    const anchorVersion = cliVersion(ANCHOR_CLI)
+    if (!anchorVersion.startsWith('0.1.7')) {
+      throw new Error(
+        `anchor CLI is dsh@${anchorVersion} (${ANCHOR_CLI}); dsh-chamber-mcp 0.2.0 requires the 0.1.7 generation — ` +
+        'point DSH_ANCHOR_CLI at a dsh@0.1.7-rc.2 CLI (see docs/status.md "How to re-verify")',
+      )
+    }
     const env = {
       ...process.env,
       // The anchor CLI runs under THIS driver's interpreter by default (NODE),

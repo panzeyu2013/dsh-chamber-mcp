@@ -1,6 +1,6 @@
 // M0 smoke for dsh-chamber-mcp against a scratch instance booted from the
-// gateway's current anchor CLI (measured dsh 0.1.5-rc.2 on 2026-09-14; the run
-// transcript records the version it actually used).
+// DSH_ANCHOR_CLI anchor, which must be a 0.1.7-generation CLI (the run
+// transcript records the version it actually used; boot() fails fast otherwise).
 // Phases: setup (workspaces/creds/baseline), install (dsh plugin add tgz + restart),
 // plugin (namespace R/W + revision conflict), gate (server add → spawn → sessions in
 // two workspaces with ws-b off → apply/revoke log evidence).
@@ -26,6 +26,27 @@ const inst = new Instance({ home: HOME, port: PORT, label: 'm0' })
 const evidence = []
 const say = (m) => { evidence.push(m); log(m) }
 const step = (m) => say(`\n=== ${m}`)
+
+/**
+ * Read the plugin's OWN synced list over its runtime route with retries: direct
+ * evidence that the supervisor connected, listed the server's tools and
+ * committed a generation on THIS anchor (a boot-log line would only prove the
+ * process stayed up). Activation is asynchronous, so poll.
+ *
+ * @param attempts - poll rounds (500 ms each).
+ * @returns the route value with a non-empty tool list, or undefined on timeout.
+ */
+async function waitForToolList(attempts = 20) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    await new Promise((r) => setTimeout(r, 500))
+    const res = await fetch(`${inst.base}/api/mcp-scope.tools?server=fixture`, {
+      headers: inst.cookies ? { Cookie: inst.cookies } : {},
+    })
+    const body = await res.json()
+    if (body?.ok === true && (body.value?.tools?.length ?? 0) > 0) return body.value
+  }
+  return undefined
+}
 
 // A scratch instance must actually be scratch: a $DSH_HOME left by an earlier
 // run still has the plugin installed (often from a since-deleted tarball), so
@@ -164,23 +185,24 @@ try {
 say(`settings-conflict observed: ${conflict?.includes('conflict')}`)
 
 step('wait for supervisor connect + sync (route evidence)')
-// Read the plugin's OWN synced list over its runtime route: this is direct
-// evidence that the supervisor connected, listed the server's tools and
-// committed a generation on THIS anchor — a boot-log line would only prove the
-// process stayed up. Retried because activation is asynchronous.
-let listed
-for (let attempt = 0; attempt < 20 && listed === undefined; attempt++) {
-  await new Promise((r) => setTimeout(r, 500))
-  const res = await fetch(`${inst.base}/api/mcp-scope.tools?server=fixture`, {
-    headers: inst.cookies ? { Cookie: inst.cookies } : {},
-  })
-  const body = await res.json()
-  if (body?.ok === true && (body.value?.tools?.length ?? 0) > 0) listed = body.value
-}
+const listed = await waitForToolList()
 if (listed === undefined) {
   throw new Error('mcp-scope.tools reported no synced tool list for server "fixture"')
 }
 say(`listed ${listed.tools.length} tools: ${listed.tools.map((tool) => tool.publicName ?? tool.name).join(', ')}`)
+
+step('restart: the configured server must come back WITHOUT a settings write')
+// The loader applies an entry's Config by creating its fiber and emits
+// loader/volatile-update only for an in-place commit, so this leg pins the
+// activation pass: without the initial reconcile the server would stay
+// unstarted until a later settings write, and this re-assert catches it.
+await inst.stop()
+await inst.boot()
+const relisted = await waitForToolList()
+if (relisted === undefined) {
+  throw new Error('after restart: mcp-scope.tools reported no synced tool list for server "fixture" (missing activation-pass reconcile?)')
+}
+say(`after restart: listed ${relisted.tools.length} tools: ${relisted.tools.map((tool) => tool.publicName ?? tool.name).join(', ')}`)
 
 // ── phase: workspace gate ────────────────────────────────────────────────────
 step('enable fixture for ws-a only (MCP is off by default)')

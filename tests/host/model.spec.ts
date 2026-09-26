@@ -17,10 +17,12 @@ import {
   RESERVED_OVERRIDE_KEYS,
   TIMEOUT_MAX_MS,
   TIMEOUT_MIN_MS,
+  canonicalDoc,
   credentialRefsOf,
   isEnabled,
   isServerDisabled,
   pruneDisabled,
+  pruneEmptyOverrideRows,
   removeServerDisabled,
   removeServerOverrides,
   renameDisabledKey,
@@ -31,6 +33,46 @@ import {
   type WorkspaceOverrides,
 } from '../../src/shared/model.js'
 import { canonicalCwd, workspaceIdOf } from '../../src/workspace.js'
+
+describe('canonicalDoc', () => {
+  it('returns the frozen empty document for non-object input', () => {
+    expect(canonicalDoc(undefined)).toEqual({ servers: [], overrides: {}, disabled: {} })
+    expect(canonicalDoc('x')).toEqual({ servers: [], overrides: {}, disabled: {} })
+    expect(canonicalDoc([1, 2])).toEqual({ servers: [], overrides: {}, disabled: {} })
+    expect(canonicalDoc(EMPTY_DOC)).toEqual({ servers: [], overrides: {}, disabled: {} })
+  })
+
+  it('drops non-object server rows and keeps the LAST duplicate serverName', () => {
+    const doc = canonicalDoc({
+      servers: [
+        { serverName: 'dup', transport: 'stdio', command: 'first' },
+        null,
+        'junk',
+        { serverName: 'dup', transport: 'stdio', command: 'second' },
+        { transport: 'stdio', command: 'nameless' },
+      ],
+    })
+    expect(doc.servers.map((server) => (server as { command?: string }).command)).toEqual(['second', 'nameless'])
+  })
+
+  it('prunes empty/non-true enable rows and non-true disabled keys', () => {
+    const doc = canonicalDoc({
+      servers: [],
+      overrides: { 'ws-a': { on: true, off: false }, 'ws-empty': {}, 'ws-bad': 'nope' },
+      disabled: { off: true, stale: false },
+    })
+    expect(doc.overrides).toEqual({ 'ws-a': { on: true } })
+    expect(doc.disabled).toEqual({ off: true })
+  })
+
+  it('keeps a __proto__ workspace/disabled key as an OWN property', () => {
+    const overrides = pruneEmptyOverrideRows(JSON.parse('{"__proto__":{"a":true}}') as WorkspaceOverrides)
+    expect(Object.hasOwn(overrides, '__proto__')).toBe(true)
+    const doc = canonicalDoc({ servers: [], overrides, disabled: JSON.parse('{"__proto__":true}') })
+    expect(Object.hasOwn(doc.disabled ?? {}, '__proto__')).toBe(true)
+    expect(isServerDisabled(doc, '__proto__')).toBe(true)
+  })
+})
 
 describe('isEnabled', () => {
   it('defaults off when no record exists (new servers and workspaces)', () => {

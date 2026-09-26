@@ -1,49 +1,52 @@
 /**
  * dsh-chamber-mcp — host half plugin entry (also the package main).
  *
- * Manages MCP servers per workspace: a settings namespace document
- * (`mcp-scope`) defines servers (stdio / streamable-http) and per-workspace
- * explicit ENABLES (off by default); each server is supervised by a per-server supervisor
- * ({@link ./manager.js}) mirroring the official mcp-client reconnect
- * semantics; tools are injected per-agent-scope (never globally) into the
- * tool scopes of live agents whose session cwd belongs to an enabled
+ * Manages MCP servers per workspace: the plugin's own Loader-entry Config is
+ * the `mcp-scope` document — servers (stdio / streamable-http), per-workspace
+ * explicit ENABLES (off by default) and global off-switches — and every field
+ * is volatile, so a Settings write commits into the RUNNING fiber's references
+ * instead of remounting the plugin. Each server is supervised by a per-server
+ * supervisor ({@link ./manager.js}) mirroring the official mcp-client
+ * reconnect semantics; tools are injected per-agent-scope (never globally)
+ * into the tool scopes of live agents whose session cwd belongs to an enabled
  * workspace ({@link ./agents.js}).
  *
  * Namespace plugin shape: named exports `name` / `inject` / `Config` /
  * `apply`, no default export. `apply` returns fast — activation is NOT gated
  * on MCP connects; per-server connect runs asynchronously.
  *
- * @module dsh-chamber-mcp
+ * @module
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
 import { createManager, type ManagerHandle } from './manager.js'
 import { registerMcpScopeRoutes } from './routes.js'
-import { DocumentSchema } from './schema.js'
-import { EMPTY_DOC, validateDoc, type McpScopeDoc } from './shared/model.js'
+import { Config, readDocument, type McpScopeConfig } from './schema.js'
+
+// The entry's Config export (also the settings form schema: every field is
+// volatile, so form writes commit in place and never restart the plugin).
+export { Config }
 // Public type surface for typed consumers (FE-10 host side).
+export type { ConfigField, McpScopeConfig } from './schema.js'
 export type {
   McpScopeDoc,
   ServerDef,
   StdioServerDef,
   StreamableHttpServerDef,
   WorkspaceOverrides,
-  WorkspaceOverrides as WorkspaceOverridesAlias,
 } from './shared/model.js'
-// Side-effect type imports: ctx.tools / ctx.settings / ctx.credentials merge.
+// Side-effect type imports: ctx.tools / ctx.settings / ctx.credentials merges
+// and the loader's Events merge ('loader/volatile-update').
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-credentials'
+import type {} from '@deepseek-ai/cordis-plugin-loader'
 
 /** Cordis plugin name used by loader diagnostics (also the record scope). */
 export const name = 'mcp-scope'
 
-/** Services required by this plugin. */
-export const inject = ['settings', 'credentials', 'tools', 'workspaceRegistry', 'agents']
-
-/** Composition config: none — the whole surface is the settings namespace. */
-export const Config = z.object({})
+/** Services required by this plugin (Settings is an optional child below). */
+export const inject = ['credentials', 'tools', 'workspaceRegistry', 'agents']
 
 /**
  * Live single-instance reservations per app root: one mcp-scope instance per
@@ -53,13 +56,14 @@ export const Config = z.object({})
 const activeRoots = new WeakSet<Context>()
 
 /**
- * Apply the host half. Fast-returning: registers the settings namespace, then
+ * Apply the host half. Fast-returning: wires the config references, then
  * creates the bridge manager whose supervisors connect asynchronously.
  *
- * @param ctx - plugin context carrying settings/credentials/tools/agents.
- * @param config - composition config (empty by schema).
+ * @param ctx - plugin context carrying credentials/tools/agents.
+ * @param config - resolved plugin Config: the three document fields as live
+ * volatile references (0.1.7) or plain values (tests).
  */
-export async function apply(ctx: Context, _config: unknown): Promise<void> {
+export async function apply(ctx: Context, config: McpScopeConfig): Promise<void> {
   // Fail loud at load: duplicate plugin activation is a configuration error.
   ctx.effect(() => {
     if (activeRoots.has(ctx.root)) {
@@ -69,17 +73,15 @@ export async function apply(ctx: Context, _config: unknown): Promise<void> {
     return () => void activeRoots.delete(ctx.root)
   }, 'mcp-scope.instance')
 
-  // The settings source of truth: the LIVE thunk handed by setSource (read
-  // per operation, never snapshotted — settings reads are per-op).
-  let currentSource: () => McpScopeDoc = () => EMPTY_DOC
-
-  // The bridge manager: per-server supervisors + per-agent applier. Its own
-  // effect owns the credential listener and teardown; disposing it stops
-  // every supervisor and revokes live registrations.
+  // The bridge manager: per-server supervisors + per-agent applier. It reads
+  // the LIVE Config references per operation (never a startup snapshot, and
+  // never a stale thunk after a volatile commit). Its own effect owns the
+  // credential listener and teardown; disposing it stops every supervisor and
+  // revokes live registrations.
   const manager: ManagerHandle = createManager({
     ctx,
     logger: ctx.logger,
-    getDoc: () => currentSource(),
+    getDoc: () => readDocument(config),
     credentials: ctx.credentials,
   })
 
@@ -91,18 +93,28 @@ export async function apply(ctx: Context, _config: unknown): Promise<void> {
   // deployments); headless hosts simply never mount the routes.
   registerMcpScopeRoutes(ctx, manager, ctx.logger)
 
-  ctx.settings.installSection(ctx, 'mcp-scope', DocumentSchema, EMPTY_DOC, {
-    setSource: (source) => {
-      currentSource = source
-    },
-    onChange: () => {
-      manager.reconcile()
-    },
-    validate: (doc) => {
-      const errors = validateDoc(doc)
-      if (errors.length > 0) {
-        throw new Error(`mcp-scope: refusing document write: ${errors.join('; ')}`)
-      }
-    },
+  // The loader applies an entry's Config by CREATING its fiber, and
+  // `loader/volatile-update` is emitted only for an in-place volatile commit —
+  // so boot, a profile reload or an HMR restart with servers already configured
+  // produces no event at all. This initial pass is what starts them; later
+  // writes arrive through the listener below (or a fresh activation, when the
+  // commit had to restart the entry).
+  manager.reconcile()
+
+  // 0.1.7 live settings: a volatile-only profile-config write commits the new
+  // values into the running fiber's references IN PLACE and dispatches
+  // `loader/volatile-update` to the owning fiber — reconciling here applies
+  // the change without a remount, and untouched servers keep their connection.
+  ctx.effect(
+    () => ctx.on('loader/volatile-update', () => manager.reconcile()),
+    'mcp-scope: live config',
+  )
+
+  // This entry's custom `settings.section` page is its only editor: suppress
+  // the schema-derived automatic page (otherwise Settings would show a second,
+  // redundant form). The dependency is optional — a composition without
+  // Settings still runs the bridge.
+  ctx.inject(['settings'], (child) => {
+    child.effect(() => child.settings.configure({ auto: false }, ctx.fiber))
   })
 }

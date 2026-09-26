@@ -241,7 +241,11 @@ async function mount(): Promise<Harness> {
       agents: h.registry(),
       workspaceRegistry: { list: () => [...h.workspaces] },
       overrides: () => h.overrides,
-      isDisabled: (serverName: string) => h.globalDisabled.has(serverName),
+      disabled: () => {
+        const rows: Record<string, true> = {}
+        for (const name of h.globalDisabled) rows[name] = true
+        return rows
+      },
     })
   })
   return h

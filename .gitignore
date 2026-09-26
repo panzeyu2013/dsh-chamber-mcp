@@ -14,6 +14,10 @@ smoke/
 !scripts/smoke/**
 scripts/smoke/fixture/fixture-events.log
 
+# local scratch: anchor installs, probe scripts, review logs
+.scratch/
+.install/
+
 # editors
 .DS_Store
 .idea/

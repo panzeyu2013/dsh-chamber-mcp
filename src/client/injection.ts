@@ -9,8 +9,8 @@
  * An earlier revision had the host append a private `mcp-scope/injected` session
  * event. That is the one thing a third-party plugin must not do on this
  * generation: the persisted envelope's `ignorable?: true` marker is the only
- * way a reader may skip an event type it does not know, and 0.1.5-rc.2 has no
- * write path that can set it — `Session.append` composes `type`/`seq`/`time`/
+ * way a reader may skip an event type it does not know, and this generation has
+ * no write path that can set it — `Session.append` composes `type`/`seq`/`time`/
  * `data` plus surface metadata and nothing else. A private REQUIRED event
  * therefore makes the whole log unreadable: `validateStoredEvents` refuses any
  * log carrying a type outside the build-generated `KNOWN_SESSION_EVENT_TYPES`

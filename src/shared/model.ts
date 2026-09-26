@@ -7,9 +7,6 @@
 /** Settings namespace registered by the host plugin and bound by the UI. */
 export const MCP_SCOPE_NAMESPACE = 'mcp-scope'
 
-/** Cordis plugin name of the host entry (also the credentials record scope). */
-export const MCP_SCOPE_PLUGIN_NAME = 'mcp-scope'
-
 /** Official mcp-client serverName contract: /^[A-Za-z0-9_-]{1,32}$/. */
 export const SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
 
@@ -116,14 +113,71 @@ export interface McpScopeDoc {
 
 /**
  * Frozen empty document. Runtime-frozen (strict-mode writes throw); typed as
- * the mutable shape because it is consumed as a schema/installSection entry
- * and every writer copies before mutating.
+ * the mutable shape because it is consumed as a schema/Config entry and every
+ * writer copies before mutating.
  */
 export const EMPTY_DOC: McpScopeDoc = Object.freeze({
   servers: Object.freeze([]),
   overrides: Object.freeze({}),
   disabled: Object.freeze({}),
 }) as unknown as McpScopeDoc
+
+/**
+ * Prune enable rows that hold nothing: an explicit `false`/malformed value and
+ * a row left empty by a toggle-off both carry no enablement (the record's
+ * PRESENCE is the signal). Rows land through `Object.fromEntries`: assigning a
+ * workspace literally named `__proto__` would set the prototype and silently
+ * drop the row.
+ */
+export function pruneEmptyOverrideRows(overrides: WorkspaceOverrides): WorkspaceOverrides {
+  const rows = new Map<string, Record<string, true>>()
+  for (const [workspaceId, row] of Object.entries(overrides)) {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
+    const rest: Record<string, true> = {}
+    for (const [name, value] of Object.entries(row)) {
+      if (value === true) rest[name] = true
+    }
+    if (Object.keys(rest).length > 0) rows.set(workspaceId, rest)
+  }
+  return Object.fromEntries(rows) as WorkspaceOverrides
+}
+
+/**
+ * Canonical document shape from any decoded value: non-object server rows are
+ * dropped (the schema union admits every object shape), a duplicate
+ * serverName keeps the LAST definition (the same one the bridge supervisor
+ * ends up running), enable rows are pruned to their `true` entries and
+ * disabled keys to their own `true` entries. The host read path, the browser
+ * decoder and the landed-write comparison all normalize through here so every
+ * layer addresses ONE shape.
+ */
+export function canonicalDoc(raw: unknown): McpScopeDoc {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return EMPTY_DOC
+  const section = raw as Record<string, unknown>
+  const rows = Array.isArray(section.servers)
+    ? (section.servers as unknown[]).filter((server): server is ServerDef => server !== null && typeof server === 'object')
+    : []
+  const servers: ServerDef[] = []
+  const at = new Map<string, number>()
+  for (const row of rows) {
+    const name = (row as { serverName?: unknown }).serverName
+    if (typeof name === 'string') {
+      const seen = at.get(name)
+      if (seen !== undefined) {
+        servers[seen] = row
+        continue
+      }
+      at.set(name, servers.length)
+    }
+    servers.push(row)
+  }
+  const rawOverrides = section.overrides
+  const overrides =
+    rawOverrides !== null && typeof rawOverrides === 'object' && !Array.isArray(rawOverrides)
+      ? pruneEmptyOverrideRows(rawOverrides as WorkspaceOverrides)
+      : {}
+  return { servers, overrides, disabled: pruneDisabled(section.disabled as DisabledServers | undefined) }
+}
 
 /**
  * Default-OFF evaluation: only an explicit per-workspace record enables a

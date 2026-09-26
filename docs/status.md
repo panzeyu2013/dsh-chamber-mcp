@@ -1,9 +1,17 @@
 # Status — dsh-chamber-mcp
 
-Current release, compatibility and verification state. Refreshed 2026-09-16.
+Current release, compatibility and verification state. Refreshed 2026-09-25.
 
 ## Release state
 
+- **`v0.2.0` is prepared on `main` (2026-09-25) but NOT tagged — do not
+  describe it as released.** The candidate carries the 0.1.7-generation
+  migration and the review fixes; its verification is the `0.2.0` entry under
+  §Verification state (531 tests / 28 files, `verify:package` PASS, live smoke
+  green on a real `dsh@0.1.7-rc.2` anchor including the restart leg).
+  Publishing is the tag push (`git push origin v0.2.0`), which triggers the
+  Release workflow; this bullet and the README *Install* line flip to released
+  in a post-release edit once the workflow reports success.
 - **Published release: `v0.1.0`** — tag `v0.1.0` on `main`
   (`4413b0e`), GitHub Release published 2026-09-16 with
   `dsh-chamber-mcp-0.1.0.tgz` (157,283 bytes, sha256
@@ -59,33 +67,129 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
 
 ## Compatibility
 
-- Node ≥ 24; a dsh instance of a supported generation.
+- Node ≥ 24; a dsh instance of the **0.1.7 generation** (peers
+  **`^0.1.7-rc.2`**). The 0.1.5/0.1.6 generation is no longer supported: 0.2.0
+  removed the local tool-adapter port, `verify:low-generation` and the
+  low-generation smoke with it.
 - The `@deepseek-ai/dsh-*` devDependencies pin one resolved generation — the
-  compile-time API surface and the CI guard (**`0.1.6-alpha.1`** on this line).
-  The peers declare the generations this plugin was VERIFIED against:
-  **`^0.1.5-rc.2 || ^0.1.6-alpha.1`** (0.1.5-rc.1 is not claimed: only rc.2 was
-  ever run). The `0.1.2` generation is no longer claimed either — this line
-  re-verified only these two.
-- The two generations differ in what the host provides, and the plugin selects at
-  runtime: 0.1.6+ supplies `createMcpToolDefinition` (official canonical
-  validation + durable image admission), `ctx.mcpResources` and literal
-  system-prompt sections; 0.1.5 runs this plugin's verbatim port of that adapter
-  — same projection, validation, admission and `finalizeContent` hook, held to
-  the adapter's exact output by a parity suite — but has no shared resource tools
-  and publishes no prompt section (that host interpolates every section, so server
-  prose containing `{{...}}` could abort a turn). That selection is a NAMESPACE lookup — a static named import of the
-  0.1.6-only export fails the whole cordis plugin tree on an older host
-  (measured; the dsh instance exited 1).
-- The client half speaks **`@modelcontextprotocol/client@2.0.0`** on BOTH
-  generations (it is this plugin's own dependency, not a host surface);
-  `@modelcontextprotocol/sdk` (1.x) is no longer a dependency at all.
-- The live smoke installs *and* boots through a chamber-compatible anchor CLI,
-  reading its `dsh` version at run time and recording it in the transcript; the
-  anchor must sit inside the peer range above.
-- Internal settings namespace / loader row id: `mcp-scope`.
+  compile-time API surface and the CI guard (**`0.1.7-rc.2`** on this line) —
+  and the peers declare the generation this plugin was verified against. Do not
+  mix generations in the dev tree, and do not pin the umbrella's own version
+  when its internals resolve past it.
+- Each Loader entry's own exported `Config` IS its settings form: this
+  plugin's document (`servers`/`overrides`/`disabled`) lives in the profile
+  patch row `{ id: mcp-scope, name: dsh-chamber-mcp, config: … }`, every field
+  carries schemastery `.volatile()`, and a form write commits into the RUNNING
+  fiber's references in place (`loader/volatile-update`) instead of remounting
+  the plugin. An upgrading installation's legacy `<DSH_HOME>/settings.yaml`
+  `mcp-scope:` section is imported once by `SettingsForms` into that same-id
+  entry and the file is renamed `settings.yaml.imported` (measured end to end;
+  see §Verification state).
+- The tool build is the OFFICIAL `createMcpToolDefinition` from
+  `@deepseek-ai/dsh-mcp-client` — imported DYNAMICALLY, so a composition
+  without the package fails that server's tool sync with a reported reason
+  instead of failing the whole plugin tree. Its 0.1.7 projection hook is
+  `projectContent` (run before `tools/post-execute` policies). The adapter owns
+  canonical result validation, `taskRequired` refusal, `isError` → throw and
+  DURABLE IMAGE ADMISSION; this plugin owns the naming contract, the per-server
+  tool cap, registration per agent scope, and transport/lifetime.
+- The client half speaks **`@modelcontextprotocol/client@2.0.0`** (this
+  plugin's own dependency, not a host surface); `@modelcontextprotocol/sdk`
+  (1.x) is no longer a dependency at all.
+- The live smoke installs *and* boots through the anchor CLI `DSH_ANCHOR_CLI`
+  names, reading its `dsh` version at run time and recording it in the
+  transcript; the anchor must be a 0.1.7-generation CLI (the driver fails fast
+  otherwise). The chamber gateway's anchor must be upgraded to 0.1.7 before this
+  release can be installed there.
+- **Upstream dist-tags (measured 2026-09-25):** `@deepseek-ai/dsh`
+  `latest` = `0.1.5-rc.3`, `next` = `0.1.7-rc.2`, `alpha` =
+  `0.1.7-alpha.2`. This line targets `next`; re-check the peer range when
+  `latest` moves to the 0.1.7 line.
+- **What 0.1.7 provides and this plugin consumes:** the per-entry
+  `Config` settings model with `dsh-config-editor` persistence and volatile
+  in-place commits; `SettingsForms`/`ConfigForms`; `createMcpToolDefinition`
+  and the `server-context` module publishing `mcp:<server>` literal sections
+  plus `mcpResources` providers; `maxInstructionBytes` (32,768-byte ceiling,
+  fixed); `taskRequired` rejection; `outputSchema`/`structuredContent`
+  handling. Not surfaced — and not implemented upstream either: OAuth-provider
+  transport config, resource subscriptions, prompt templates, sampling,
+  elicitation.
+
+- **Upstream `0.1.7-rc.2` settings-seam change — the pre-migration tree broke
+  (2026-09-25, reproduced on a real 0.1.7-rc.2 instance).** Registry dist-tags
+  moved (`next` = `0.1.7-rc.2`, `alpha` = `0.1.7-alpha.2`, `latest` stays
+  `0.1.5-rc.3`) while the chamber anchor still read `0.1.5-rc.3`. The
+  generation redesigned the settings seam: `ctx.settings` became
+  `SettingsForms` (per-entry `Config`, schema-projected volatile forms,
+  `dsh-config-editor` persistence, in-place commits), and
+  `SettingsProvider.register`/`installSection`, `SettingsScope`,
+  `SettingsSectionHooks`, `SettingsRegisterOptions`/`SettingsApplies`, the
+  `settings/updated` event and the `dsh-settings-file` provider were deleted
+  without a shim; the browser seam `ctx.settingsScope`/`SettingsScopeBinder`
+  was replaced by `ctx.configForms.get(entryId)` → `ConfigForm<T>`
+  (`getSnapshot`/`subscribe`/`mutate`, plus `describe()`/`whileServed()`).
+  Measured on `dsh-chamber-mcp@0.1.1`: `dsh: warning: 1 entry did not
+  activate`, the plugin row `fiberPhase: "failed"`, `TypeError:
+  ctx.settings.installSection is not a function`, no `mcp-scope` form and no
+  registered tool; the browser half could not apply either (its `inject` named
+  the removed service), so the settings page and the keyed
+  `tool.call.toolview` lane were dark. The 0.1.7 compatibility preflight
+  (`evaluatePluginCompatibility`, prerelease-inclusive semver) did NOT catch it
+  — the old peers evaluated as compatible, so an install-before-upgrade fails at
+  apply time rather than at install time.
+- **The fix shipped in `0.2.0`; the measured evidence is under
+  §Verification state.** The document moved into the entry's own
+  `.volatile()` `Config` and is read per operation; the bridge runs an
+  activation-time reconcile (the loader creates the fiber with its config and
+  emits `loader/volatile-update` only for in-place commits) and reconciles on
+  that event; the browser half binds `ctx.configForms.get('mcp-scope')` and
+  suppresses the auto-generated page with
+  `settings.configure({ auto: false }, ctx.fiber)`; the tool build is the
+  official adapter only. Two accepted limitations are recorded rather than
+  fixed: the schema cannot express the cross-field rules (duplicate
+  serverNames/env keys/header names), so those stay client-enforced before a
+  write, and a hand-edited profile patch that violates the *schema* keeps its
+  entry from activating (no repair form would be left) — everything the schema
+  shape still admits is canonicalized by `readDocument`.
+- **Verdict (historical, 2026-09-25):** the pre-migration tree and `v0.1.1`
+  did NOT work on `0.1.7-rc.2`; MCP was gone because the host fiber failed at
+  apply. `0.2.0` migrates to that generation and drops the old peer range — the
+  0.1.5/0.1.6 claims in the release records above remain the record for those
+  releases.
+- Internal Loader entry id (settings form + legacy import target): `mcp-scope`.
 
 ## Verification state
 
+- **0.2.0 (release candidate on `main`; migrated to the 0.1.7 generation):**
+  `npm run check` PASS — `tsc` ×2, **531 tests / 28 files**, 47 packed entries,
+  `verify-client-artifact` PASS, determinism (43 files), `verify:package` PASS.
+  Live smoke on a real `dsh@0.1.7-rc.2` anchor (scratch
+  `npm i @deepseek-ai/dsh@0.1.7-rc.2`, `DSH_ANCHOR_CLI` pointed at its
+  `lib/bin.js`): **M0 exit 0** with the plugin row `fiberPhase: "active"` (no
+  `failed` line), `settings/describe` serving the `mcp-scope` form
+  (`revision=0 value={"servers":[],"overrides":{},"disabled":{}}`), a
+  `settings/mutate` landing as `revision=1` with the fixture server, the
+  stale-revision write refused, and `/api/mcp-scope.tools` listing
+  `mcp__fixture__echo` / `mcp__fixture__env_report`; the same route re-asserts
+  the listing after an instance RESTART with no settings write in between
+  (`after restart: listed 2 tools`), which pins the activation-time reconcile
+  (the loader emits `loader/volatile-update` only for in-place commits);
+  **M1 exit 0** with the
+  tarball installed and the sessions created, `R3-live-capture: not-captured`
+  (the known headless-anchor limitation — no turn starts without a UI surface
+  claim). The settings write → volatile commit → reconcile → connect chain is
+  therefore exercised end-to-end through the real RPC; the in-place
+  (no-remount) property rides the loader's `loader/volatile-update` contract
+  and is pinned by the entry-wiring test in `tests/host/index.spec.ts`.
+  Two further checks were measured out of band on the same anchor: (a) the
+  legacy import — a fresh home seeded with the old `settings.yaml` serves the
+  imported server + override through `settings/describe`, carries them in the
+  profile patch, and leaves `settings.yaml.imported` behind (the original file
+  gone); (b) the browser default decode —
+  `volatileForm(Config).toJSON()` rehydrated with a fresh schemastery node
+  accepts the projected drafts of empty, legacy, HTTP+headers+disabled and
+  partial documents, so `ConfigForm` does not sit at `loading` on our
+  projected form.
 - **0.0.3 (published):** `npm run check` PASS — `tsc` ×2, 250 tests / 17 files,
   build, `verify:package` (40 packed entries), and live smoke `npm run test:smoke`
   (`M1` + `M0`) exit 0 against the anchor CLI with `dsh-chamber-mcp@0.0.3`
@@ -172,18 +276,15 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
   The legacy `toolResult` branch and the hand-rolled pagination guards are gone
   with the 1.x client, so they need no test at all.
 - `M1`'s live R3 capture (the model-facing `tools[]` array) needs an anchor that
-  actually starts a turn: on the chamber anchor (0.1.5-rc.2) the 0.1.0 run records
-  **`R3-live-capture: PASS`**, while the 0.1.6-alpha.1 anchor records
-  `not-captured` — that instance never starts a turn, so the mock LLM receives no
-  chat request. The capture is transcript evidence either way: the driver reports
-  the verdict without failing on it.
-- **On 0.1.5 two host surfaces are simply absent, and the plugin degrades
-  explicitly**: the shared `list_mcp_resources` family does not exist there, and
-  no `mcp:<server>` prompt section is published (that host always interpolates
-  section text, so server prose containing `{{...}}` could abort a turn or be
-  substituted with a host variable). Everything else — tool projection and
-  failures, canonical values, and durable image admission — behaves exactly like
-  the official adapter on both generations.
+  actually starts a turn: on the 0.1.5-rc.2 chamber anchor the 0.1.0/0.1.1 runs
+  recorded **`R3-live-capture: PASS`**, while the headless 0.1.6-alpha.1 and
+  0.1.7-rc.2 anchors record `not-captured` — those instances never start a turn,
+  so the mock LLM receives no chat request. The capture is transcript evidence
+  either way: the driver reports the verdict without failing on it.
+- **The 0.1.5/0.1.6 generation is unsupported as of 0.2.0.** The plugin's
+  verbatim port of the official tool adapter (and its parity suite) was removed
+  with that generation, and so was `npm run verify:low-generation`; 0.1.7 is the
+  only peer range.
 - **`npm run test:smoke` packs `lib/`, not `src/`.** Run `npm run build` (or
   the full `npm run check`) first, or the smoke silently exercises the PREVIOUS
   build — a stale `lib/tools.js` once kept the static adapter import and
@@ -226,24 +327,29 @@ Current release, compatibility and verification state. Refreshed 2026-09-16.
 
 ```sh
 npm run check                                    # typecheck + tests + build + pack surface
-node scripts/release-notes.mjs 0.1.1             # the dated CHANGELOG section (before tagging)
+node scripts/release-notes.mjs 0.2.0             # the dated CHANGELOG section (before tagging)
 npm run verify:workflows                         # action pins + release structure
-npm run verify:low-generation                    # resolve the BUILT half against the LOW generation's real packages
-npm run test:smoke                               # live M1 + M0 on the chamber anchor
+# Live smoke on the ONLY supported generation (0.1.7): the chamber anchor must
+# be a 0.1.7 CLI before `npm run test:smoke` can pass. For a local run:
+#   mkdir -p .scratch/anchor-017 && (cd .scratch/anchor-017 && npm i --no-audit @deepseek-ai/dsh@0.1.7-rc.2)
+#   export DSH_ANCHOR_CLI="$PWD/.scratch/anchor-017/node_modules/@deepseek-ai/dsh/lib/bin.js"
+#   npm run test:smoke
+# pnpm EAGAIN workaround: some sandboxes fail pnpm's store→profile copy
+# (`EAGAIN ... copyfile`). Pin the import method to hardlink in the scratch
+# home's .npmrc (store and profile both live under .smoke, same filesystem):
+#   printf 'package-import-method=hardlink\n' > .smoke/homedir/.npmrc
 # macOS: nvm's `pnpm` is a corepack shim and refuses while this repo pins
 # `packageManager: npm`. With node on PATH, build the gitignored .smoke/bin
 # scratch shim once (run the three lines, dropping the leading "#   "):
 #   mkdir -p .smoke/bin && ln -sf "$(command -v node)" .smoke/bin/node
 #   printf '#!/bin/sh\nexec node /Applications/dsh-chamber.app/Contents/Resources/pnpm/bin/pnpm.cjs "$@"\n' > .smoke/bin/pnpm
 #   chmod +x .smoke/bin/pnpm
-# then point the driver at it and at the chamber anchor:
+# then point the driver at it and at a 0.1.7-generation anchor CLI:
 #   export DSH_SMOKE_NODE="$PWD/.smoke/bin/node"
 #   export DSH_SMOKE_NODE_BIN_DIR="$PWD/.smoke/bin"
-#   export DSH_ANCHOR_CLI="$PWD/.smoke/anchor-016/node_modules/@deepseek-ai/dsh/lib/bin.js"
-#     (any CLI inside the support window works: the chamber app ships
-#      0.1.5-rc.2, which exercises the fallback; install e.g.
-#      `npm i @deepseek-ai/dsh@0.1.6-alpha.1` into a scratch dir and point at its
-#      node_modules/@deepseek-ai/dsh/lib/bin.js to exercise the official adapter)
+#   export DSH_ANCHOR_CLI="$PWD/.smoke/anchor-017/node_modules/@deepseek-ai/dsh/lib/bin.js"
+#     (install `npm i @deepseek-ai/dsh@0.1.7-rc.2` into a scratch dir and point at
+#      its node_modules/@deepseek-ai/dsh/lib/bin.js)
 #   npm run test:smoke
 git ls-remote --tags origin                      # what is actually released
 ```

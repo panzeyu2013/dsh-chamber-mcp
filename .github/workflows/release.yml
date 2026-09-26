@@ -70,10 +70,10 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        # No --legacy-peer-deps: after the 0.1.5 migration every @deepseek-ai
-        # devDep is pinned to the SAME generation, so npm resolves the peer graph
-        # unaided — the release gate must resolve exactly like the CI gate in
-        # ci.yml (see its comment for the full rationale).
+        # No --legacy-peer-deps: since the 0.2.0 generation move every
+        # @deepseek-ai devDep is pinned to the SAME generation (0.1.7-rc.2), so
+        # npm resolves the peer graph unaided — the release gate must resolve
+        # exactly like the CI gate in ci.yml (see its comment for the rationale).
         run: npm ci --no-audit --no-fund
 
       - name: Assert lockfile not rewritten

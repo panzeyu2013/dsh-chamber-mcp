@@ -20,9 +20,9 @@ import type { Context } from '@deepseek-ai/cordis'
 import { registerInjectionRow, type InjectionRegistrationHost } from './injection-row.js'
 import { mountNavGlyph } from './nav-icon.js'
 import type { CredentialInfo as CredentialInfoView } from '@deepseek-ai/dsh-credentials/types'
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client' // 'settings.section' SlotMap entry + ctx.settingsScope merge (type-only)
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client' // 'settings.section' SlotMap entry + ctx.configForms merge (type-only)
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client' // 'tool.call.toolview' SlotMap entry (type-only)
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client' // ctx.slots merge (type-only; the renderer owns the slot registry in the 0.1.5 generation)
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client' // ctx.slots merge (type-only; the renderer owns the slot registry)
 import type {} from '@deepseek-ai/dsh-client-locale/client' // ctx.locale merge (type-only)
 import type {} from '@deepseek-ai/dsh-api-workspace-controller/client' // ctx.workspaces merge + WorkspaceSnapshot (type-only)
 import type {} from '@deepseek-ai/dsh-client-connection/client' // 'connection/reset' event merge (type-only)
@@ -31,7 +31,6 @@ import { MCP_SCOPE_NAMESPACE } from '../shared/model.js'
 import { en, zh, NS, type SettingsKey } from './locales.js'
 import {
   McpScopeController,
-  decodeDoc,
   type CredentialsGateway,
   type RemoteResultLike,
 } from './controller.js'
@@ -86,7 +85,7 @@ export type {
   SaveFailure,
   ServerSaveInput,
   SecretWrite,
-  SettingsScopePort,
+  ConfigFormPort,
   CredentialsGateway,
   RemoteResultLike,
 } from './controller.js'
@@ -125,14 +124,14 @@ function remoteCredentials(wire: McpRemoteWire): CredentialsGateway {
  * window), and `slots` carries both the settings section and the keyed tool
  * rows.
  */
-export const inject = ['slots', 'locale', 'remote', 'remote.credentials', 'settingsScope', 'workspaces', 'sessions']
+export const inject = ['slots', 'locale', 'remote', 'remote.credentials', 'configForms', 'workspaces', 'sessions']
 
 /**
  * Apply the browser half. The context type is cordis `Context` — the client
- * context of the 0.1.5 generation (the 0.1.2-era `dsh-client-runtime`
+ * context of the supported generation (the 0.1.2-era `dsh-client-runtime`
  * `ClientContext` is off the upstream release train). `effect` is declared on
  * cordis's own `Context`, and the cross-package augmentations this plugin
- * calls (`ctx.slots`/`ctx.locale`/`ctx.settingsScope`/`ctx.remote`/
+ * calls (`ctx.slots`/`ctx.locale`/`ctx.configForms`/`ctx.remote`/
  * `ctx.workspaces`) merge through this module's type-only imports, so no
  * local structural patch is needed.
  */
@@ -163,13 +162,13 @@ export function apply(ctx: Context): void {
     'mcp-scope: sidebar glyph',
   )
 
-  // (b/c) controller over the bound namespace scope + the credentials wire.
-  // The credentials domain is reached through `ctx.remote.credentials` in
-  // rc.1 (there is no `connection.api` on this runtime).
-  const scope = ctx.settingsScope.bind<McpScopeDoc>({
-    namespace: MCP_SCOPE_NAMESPACE,
-    decode: decodeDoc,
-  })
+  // (b/c) controller over the entry's own Config form + the credentials wire.
+  // 0.1.7 derives settings forms from each Loader entry's Config, so the
+  // document is addressed by the profile entry id — `mcp-scope` in
+  // cordis.patch.yml, the same id the legacy `settings.yaml` section imports
+  // into. The credentials domain is reached through `ctx.remote.credentials`
+  // in this generation (there is no `connection.api`).
+  const scope = ctx.configForms.get<McpScopeDoc>(MCP_SCOPE_NAMESPACE)
   const remote = ctx.remote as unknown as McpRemoteWire
   const controller = new McpScopeController(scope, remoteCredentials(remote))
   // (a2) conversation-lane notice: "MCP tools registered" (optional seat — a
@@ -209,13 +208,14 @@ export function apply(ctx: Context): void {
   ctx.effect(
     () => {
       const disposers: (() => void)[] = [controller.start()]
-      // Forwarded-host-event freshness (rc.1 allowlist): a settings document
-      // commit re-reads the scope snapshot + credential badges; a credential
-      // reference change refreshes only badges.
+      // Forwarded-host-event freshness (0.1.7 allowlist): the settings client
+      // already reloads the SAME mirror our ConfigForm reads on
+      // `settings/document-updated`, and the controller subscribes to that
+      // form — so only the credential badges / runtime knowledge this plugin
+      // owns needs an extra pull here.
       disposers.push(
         remote.$on('settings/document-updated', (ns: string) => {
           if (ns !== MCP_SCOPE_NAMESPACE) return
-          controller.refresh()
           void runtime.refresh({ silent: true })
         }),
         remote.$on('credentials/reference-updated', (ref: string) => {

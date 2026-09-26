@@ -33,20 +33,20 @@ to `dsh.profile.bundles`, row inserted by patch, restart instance. Chamber: zero
 code/seed involvement; the section is served through the ordinary `settings.section`
 slot (in-GUI click-through still unverified — see `docs/status.md`).
 Uninstall: `dsh plugin --profile web remove dsh-chamber-mcp` + restart stops the
-servers and drops the section; leftovers (the `mcp-scope:` section and orphaned
-credential refs) are removed by hand.
+servers and drops the section; leftovers (the `mcp-scope` row in the profile
+patch and orphaned credential refs) are removed by hand.
 
 ## 2. Identity & plugin entry (host)
 
-- `export const name = 'mcp-scope'` (record scope, logs), `inject = ['settings','credentials','tools','workspaceRegistry','agents']`, `Config = z.object({})` (schemastery), `async apply(ctx, config)`.
-- Namespace **`mcp-scope`** registered via `ctx.settings.installSection(ctx, 'mcp-scope', DocumentSchema, EMPTY_DOC, { setSource, onChange, validate })`.
+- `export const name = 'mcp-scope'` (record scope, logs), `inject = ['credentials','tools','workspaceRegistry','agents']`, `Config` = the `mcp-scope` document (`servers`/`overrides`/`disabled`, every field `.volatile()`; `src/schema.ts`), `async apply(ctx, config)`.
+- Settings ride that Config: the loader serves the entry's form by profile entry id (`mcp-scope` in `cordis.patch.yml`) and commits volatile writes in place. `src/index.ts` reads the refs per operation and reconciles on `loader/volatile-update`; `settings.configure({ auto: false }, ctx.fiber)` suppresses the schema-derived auto page (Settings is an optional child, so a composition without it still runs the bridge).
 - Single-instance guard: a module-level `WeakSet<Context>` keyed on `ctx.root` (mirror official mcp-client serverName reservation) — duplicate plugin load fails loudly.
 - `apply` returns fast (no boot gating on server connects); per-server connect runs async with official reconnect defaults.
 
-## 3. Namespace document (settings domain)
+## 3. The Config document (settings domain)
 
 ```ts
-// resolved: schema defaults ← composition base {} ← user layer (settings.yaml "mcp-scope:")
+// resolved: schema defaults ← composition base {} ← user layer (profile patch "mcp-scope")
 servers: ServerDef[]        // serverName is the stable identity; timeoutMs optional
 disabled: { [serverName]: true }                       // presence = globally OFF (0.0.3)
 overrides: { [workspaceId]: { [serverName]: true } }   // presence = explicitly ON
@@ -70,9 +70,11 @@ ServerDef =
 // serverName: /^[A-Za-z0-9_-]{1,32}$/ (official contract)
 // ref: /^[A-Za-z_][A-Za-z0-9_]*$/ (CredentialRef = env-var name), value write-only via credentials domain
 ```
-Schema `validate` hook: duplicate serverName across `servers`; duplicate env keys or
-duplicate header names within one server → reject the write (the same credential
-ref may be referenced by differently-named headers).
+The schema cannot express cross-field uniqueness: duplicate serverName across
+`servers`, duplicate env keys or duplicate header names within one server are
+rejected by the EDITOR before a write (`validateDoc`), not by the schema — and
+the schema deliberately carries no transform, because a transform would not
+rehydrate in the browser's `ConfigForm` default decode.
 
 Cross-field rules (`src/shared/model.ts` `validateDoc`): unique `serverName`
 (`[A-Za-z0-9_-]{1,32}`, never `__proto__` / `constructor` / `prototype`), a required
@@ -80,16 +82,19 @@ Cross-field rules (`src/shared/model.ts` `validateDoc`): unique `serverName`
 refs matching `[A-Za-z_][A-Za-z0-9_]*` (the `overrides` values of exactly `true`
 are enforced by the schema, `src/schema.ts`, not by `validateDoc`).
 
-**Hand-editing contract** (default file provider, `watch: true`, 100 ms settle): the
-document is live-reloaded, so adding/removing a server or flipping an override with
-any editor takes effect without an instance restart — the plugin reconciles on the
-published change and starts/stops/restarts only the affected servers. An edit that
-breaks a rule is **not published** (the running instance keeps the last good document
-and warns while the file on disk holds the bad text); an unparsable document fails
-the boot load loudly, and while running an unreadable/unparsable edit keeps the last
-good sections. Deleting the file resets every namespace to defaults, and a section
-whose plugin is not loaded is never dropped. UI writes are leaf-level YAML diffs, so
-comments, anchors and formatting survive on untouched nodes.
+**Hand-editing contract (0.1.7).** The document IS the profile-patch row
+`{ id: mcp-scope, name: dsh-chamber-mcp, config: … }` in
+`profiles/<profile>/cordis.patch.yml`. There is no watcher: the row is read and
+validated when the Loader creates the entry (boot, profile reload, HMR), and UI
+writes are the LIVE path — they commit volatile fields into the running fiber in
+place and the plugin reconciles only the affected servers, without a restart. A
+hand-edit that breaks the SCHEMA keeps its entry from activating at boot: the
+instance log names the error and the settings section reports unavailable (there
+is no in-place repair form). An edit the shape admits but the cross-field rules
+forbid (duplicate serverNames/env keys/header names) is canonicalized by
+`readDocument`/the editor's `validateDoc` gate rather than making the manager
+throw. UI writes are leaf-level YAML diffs, so comments, anchors and formatting
+survive on untouched nodes.
 
 ## 4. Host behavior
 
@@ -200,11 +205,10 @@ breaking a child's creation.
   deadline still bounds the fetch. The 1.x page-by-page loop and its repeated-cursor
   rejection are gone with that client.
 - **Context footprint**: registered definitions are ordinary request tool schemas, so the
-  host's context meter prices them under "Tool definitions". On 0.1.6+ the plugin also
-  publishes one literal `mcp:<serverName>` section per connected server (that server's
-  `initialize` instructions, attributed and capped at 32 KiB, `interpolate:false`); on
-  0.1.5 it publishes none, because that host renders every section through its
-  interpolator. See README §"What the model sees".
+  host's context meter prices them under "Tool definitions". The plugin also publishes
+  one literal `mcp:<serverName>` section per connected server (that server's
+  `initialize` instructions, attributed and capped at 32 KiB, `interpolate:false`).
+  See README §"What the model sees".
 
 ## 5. Host half — upstream contracts, mounting and deviations
 
@@ -212,21 +216,21 @@ breaking a child's creation.
 
 | File | Role |
 |---|---|
-| `src/tools.ts` | public name + ONE capability-gated, client-aggregated tool listing; definitions built by the official `createMcpToolDefinition` adapter when the host provides it, else by a verbatim port of that adapter (projection, validation, image admission, `finalizeContent`; runtime selection in `selectDefinitionBuilder`, parity asserted case by case) |
+| `src/tools.ts` | public name + ONE capability-gated, client-aggregated tool listing; definitions built by the official `createMcpToolDefinition` adapter (resolved through a memoized dynamic import in `definitionBuilder()`) |
 | `src/transport.ts` | async transport factory: env/headers resolved from credentials per attempt |
 | `src/workspace.ts` | canonical-cwd → workspace-id helper |
 | `src/server.ts` | per-server supervisor (official reconnect semantics, defs master state) |
 | `src/agents.ts` | per-agent scope injection gate (never registers globally) |
 | `src/manager.ts` | bridge orchestrator: handle lifecycle, credential events, applier ownership |
-| `src/schema.ts` | `DocumentSchema` (schemastery) — NEW module beyond the original list |
+| `src/schema.ts` | the entry's `Config` (schemastery, every field `.volatile()`) + `readDocument` — NEW module beyond the original list |
 | `src/routes.ts` | 0.0.3 runtime routes on the Connection carrier: `status` / `action` / `tools` (fixed host codes only; §(d)) |
 | `src/server-context.ts` | per-server publication of the `mcp:<serverName>` instructions section and the `mcpResources` provider (the official `registerServerContext` shape) |
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture on the 2.0 server packages (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe; publishes instructions, oversized under `FIXTURE_HUGE_INSTRUCTIONS=1`; serves one resource and one URI TEMPLATE so the resource provider's list/templates/read paths are exercised end to end) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (12 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`, `tests/delegation.spec.ts`; repo total 554 tests / 28 files) |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (12 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`, `tests/delegation.spec.ts`; repo total 531 tests / 28 files) |
 
 Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (554 tests / 28 files).
+`node node_modules/vitest/vitest.mjs run` — both fully green (531 tests / 28 files).
 
 ### (a) API signatures and runtime assumptions
 
@@ -254,34 +258,34 @@ Run: `npm run typecheck` (both tsconfigs) and
 2. **ToolRuntime mount**: `ToolRuntime` has `static inject = ['systemPrompt']`
    and its constructor calls `ctx.systemPrompt.tools(...)` unconditionally —
    the real `@deepseek-ai/dsh-system-prompt` must be mounted first
-   (added as a devDependency; the pin is the 0.1.5-rc.2 generation at HEAD;
+   (added as a devDependency, pinned to the `0.1.7-rc.2` generation at HEAD;
    official recipe `ctx.plugin(SystemPrompt)` then
    `ctx.plugin(ToolRuntime)`). `ctx.tools` only exists after that.
-3. **`SettingsProvider.installSection(owner, ns, schema, entry, hooks)`**
-   (present in both supported generations — re-checked in the pinned 0.1.5-rc.2
-   `dsh-settings` d.ts): `setSource` hands a **LIVE thunk** — `current: () => T`
-   — that must be *stored*, not called once: it returns the authoritative
-   value at every read. `onChange` fires after each committed change; the
-   `validate` hook throwing refuses the write (SettingsConflictError-style,
-   host-side). `installSection` attach fires `setSource` then `onChange`.
-   `entry` is the composition `base` typed `T` — pass `EMPTY_DOC`.
+3. **`SettingsForms` replaced the namespace seam (0.1.7).** There is no
+   `installSection`/`settingsScope` any more: a Loader entry's own exported
+   `Config` IS its settings form. Fields marked `.volatile()` are committed by
+   the loader into the RUNNING fiber's references in place (it emits
+   `loader/volatile-update` on the owning fiber; `Fiber.update` restarts the
+   plugin only for non-volatile paths), so the host half reads the resolved
+   references per operation and reconciles on that event. The browser half
+   binds `ctx.configForms.get('mcp-scope')`. `dsh-config-editor` persists a
+   form write to the profile's `cordis.patch.yml`, and the legacy
+   `settings.yaml` is imported once into the same-id entry.
 4. **dsh-tools layering**: `register()` calls
    `this.layers.effect(this.ctx, …)` — the layer is derived from the context
    the service was REACHED THROUGH (`agent.ctx.tools.register` ⇒ agent scope
    layer) and the disposer is owned by that context's fiber (dies with the
    agent scope ctx). `get(name, scopeKey?)` takes the scope key object
    (identity-compared) — the live Agent is its own key; omitted = global view.
-5. **dsh-settings-file mounting**: `FileSettingsProvider` needs
-   `dsh-atomic-write` and `dsh-home-paths` at runtime (installed as
-   devDependencies). A plain `npm install`/`npm ci` resolves the dev tree — no
-   peer relaxation. That was NOT true before the 0.1.5 migration: the devDep
-   matrix mixed version lines, first because `dsh-client-runtime@0.1.1-rc.2`
-   peered on an older `dsh-agent`, and (after that package left the release
-   train) because pinning the umbrella's `0.1.5-rc.1` while upstream's own
-   rc.1 peers resolve to rc.2 artifacts is internally inconsistent. Every
-   `@deepseek-ai/*` devDep is now pinned to the generation a `dsh@0.1.5-rc.1`
-   install actually resolves to (`0.1.5-rc.2`), which closes the conflict at
-   the source. `resolveSpec`/`Config` match the runtime.
+5. **Dev-tree consistency**: every `@deepseek-ai/*` devDependency is pinned to
+   the one resolved generation (`0.1.7-rc.2` on this line, with cordis 4.0.4,
+   schemastery `^3.18.4` and `@deepseek-ai/cordis-plugin-loader` for the
+   `loader/volatile-update` Events merge), so a plain `npm install`/`npm ci`
+   resolves the tree — no peer relaxation. The `dsh-settings-file` devDependency
+   is gone: 0.1.7 dropped that provider, and the settings live in the profile
+   patch. Pinning the umbrella's own version instead of the generation its
+   internals resolve to is what previously made the tree self-inconsistent.
+   `resolveSpec` matches the runtime.
 6. **SDK 1.30 high-level McpServer**: `registerTool` input schemas must be
    zod schemas or raw zod shapes — plain JSON-Schema objects throw
    (`inputSchema must be a Zod schema or raw shape`). Runtime
@@ -325,11 +329,14 @@ fixture: `command: process.execPath`, `args: [tests/fixture/mcp-fixture-server.m
 via `createTransport(def, resolver, warn)`; assertions poll `handle.state`
 (syncId/generation/connected) with a 20–25 ms waitFor; reconnect delays are
 shrunk via `reconnect: { initialDelayMs: 20–100, maxDelayMs: 60–500,
-maxAttempts: 3–5 }` for speed. Settings spec mounts the REAL
-`FileSettingsProvider({ path, watch: false })` on a temp `settings.yaml`
-(`ctx.plugin(FileSettingsProvider, cfg)` awaited), then
-`ctx.settings.installSection(ctx, 'mcp-scope', DocumentSchema, EMPTY_DOC,
-hooks)` and writes through `ctx.settings.update/mutate`.
+maxAttempts: 3–5 }` for speed. The Config/settings coverage lives in
+`tests/host/settings.spec.ts` (resolves `Config` from the legacy
+`mcp-scope:` section shape, asserts the resolved fields are live volatile
+references and that malformed input is refused, and pins the entry id the
+browser form and the legacy import both address) plus the entry-wiring cases in
+`tests/host/index.spec.ts` (volatile-update reconcile, auto-page suppression,
+route mount). The full profile-patch → volatile-commit → reconcile path is
+exercised by the M0 smoke on a real 0.1.7 anchor.
 
 Typecheck note: `tsc -p tsconfig.json` compiles the whole `src/` tree — the
 parallel client-half work under `src/client/` must stay error-free for the
@@ -338,10 +345,15 @@ flags and the full config is green at the time of writing.
 
 ### (c) Design deviations (and why)
 
-1. **`src/schema.ts` added** (not in the original file list): the document
-   schema needed to be importable by tests AND keep `src/index.ts` exports
+1. **`src/schema.ts` owns the Config** (not in the original file list): the
+   schema had to be importable by tests while `src/index.ts` keeps its exports
    exactly `name`/`inject`/`Config`/`apply` (namespace-plugin contract). The
-   entry imports `DocumentSchema` from it; no other export moved.
+   file exports `Config` (the entry's settings form: the three fields, each
+   `.volatile()`), `readDocument` (the manager-facing read of the resolved
+   references, delegating to the shared `canonicalDoc`) and the `ConfigField`
+   accessor helper. There is deliberately no second, non-volatile schema: on
+   0.1.7 the entry's Config IS the document, and a parallel document node would
+   only invite drift.
 2. **Definitions are never registered by tools.ts/server.ts** — official
    `syncTools` registers into the registry of its own ctx; here defs live in
    the supervisor's master state and `src/agents.ts` registers them
@@ -350,28 +362,27 @@ flags and the full config is green at the time of writing.
    bump `syncId`/`generation` + notify manager) is otherwise the official
    algorithm, including the 5 s failure-close discipline and the stability
    window reset (uptime ≥ `maxDelayMs`).
-3. **Rich content takes the same path on both generations.** 0.1.6+ runs the
-   official adapter; 0.1.5 runs this plugin's verbatim port of it (the export does
-   not exist there, but every service that path needs does — an `attachments`
-   store, `llm.resolveModelInfo`, the execution's agent route, and the
-   `finalizeContent` hook the 0.1.5 runtime invokes).
-   A definition's text projection, canonical `{content, structuredContent?}`
-   validation, `taskRequired` refusal and `isError` → throw are identical on both
-   paths (asserted case by case in `tests/tools.spec.ts`). An image block becomes a
-   durable attachment when the composition provides an `attachments` store AND
-   the current model route declares image input; every other case projects the
-   diagnostic `[image unavailable: <mime>; <reason>; raw image data remains
-   available to programmatic callers]` while the canonical value keeps the raw
-   blocks — base64 never reaches model history.
+3. **Rich content takes the official path.** Every definition is built by
+   `createMcpToolDefinition`; the plugin keeps only the naming contract, the
+   listing (capability gate, `MAX_SYNC_TOOLS`, duplicate-name refusal) and the
+   per-agent registration. The adapter owns canonical
+   `{content, structuredContent?}` validation, `taskRequired` refusal,
+   `isError` → throw and the text projection; `tests/tools.spec.ts` drives the
+   listing/call wiring and the durable image admission through it. An image
+   block becomes a durable attachment when the composition provides an
+   `attachments` store AND the current model route declares image input; every
+   other case projects the diagnostic `[image unavailable: <mime>; <reason>;
+   raw image data remains available to programmatic callers]` while the
+   canonical value keeps the raw blocks — base64 never reaches model history.
 4. **Client identity** on the wire is `{name: 'dsh-chamber-mcp', version:
    <package.json version>}` — `src/server.ts` derives both from the package
-   manifest (it reads `0.0.3` at HEAD); official sends `dsh-mcp-client`;
-   server-facing semantics
+   manifest; official sends `dsh-mcp-client`; server-facing semantics
    unchanged.
 5. **Reconnect policy is fixed at official defaults** (`500→30_000 ms`,
-   `maxAttempts: 10`) — the document schema has no reconnect fields
-   (`Config = z.object({})`); `resolveReconnectPolicy` still exists for
-   programmatic/test construction and mirrors official validation.
+   `maxAttempts: 10`) — the document schema has no reconnect fields (the entry
+   `Config` is the `servers`/`overrides`/`disabled` document only);
+   `resolveReconnectPolicy` still exists for programmatic/test construction and
+   mirrors official validation.
 6. **Enablement is read LIVE per push/reconcile** (never cached in the
    applier): the first implementation snapshotted `overrides` at attach and
    only refreshed on `reconcile()`, which made defs pushes judge stale
@@ -394,38 +405,34 @@ flags and the full config is green at the time of writing.
    fiber and die with it — verified by disposing the scope ctx in tests);
    disposers are only invoked while the agent is still live in the registry
    (`agents.get(id) === agent`).
-9. **Two host generations, selected at runtime.** The client layer is v2 on
-   every host (`@modelcontextprotocol/client@2.0.0` is this plugin's OWN
-   dependency, not a host surface), and the definition builder is chosen once per
-   process from what the host provides: 0.1.6+ → the official
+9. **One supported host generation: dsh 0.1.7.** The client layer is v2
+   (`@modelcontextprotocol/client@2.0.0` is this plugin's OWN dependency, not a
+   host surface), the definition build always goes through the official
    `createMcpToolDefinition` (canonical validation, durable image admission),
-   0.1.5 → the local text projection this plugin always shipped. Peers are
-   `^0.1.5-rc.2 || ^0.1.6-alpha.1`.
+   and the peers are `^0.1.7-rc.2`. The local text projection and the
+   runtime builder selection were removed with the old generation. Two host
+   facts are load-bearing:
 
-   The adapter MUST be read off a namespace import. At 0.1.5 the package exists
-   but exports only `{Config, apply, inject, name}`; a STATIC named import of a
-   missing export is an ESM link-time `SyntaxError` that fails the whole cordis
-   plugin tree — measured on the shipped 0.1.5-rc.2 anchor, where the dsh
-   instance exited 1 with `plugin tree failed to load ... does not provide an
-   export named 'createMcpToolDefinition'`. `@deepseek-ai/dsh-mcp-resources`
-   (absent before 0.1.6) is an optional peer: its absence only removes the shared
-   resource tools. The 2.0 client also deletes the hand-rolled `tools/list`
-   pagination, its repeated-cursor/page caps and the legacy `toolResult`
-   normalization — `listMaxPages` (default 64) is the non-converging-cursor
-   defence and a 2025-era frame cannot reach this path.
+   - The adapter is resolved through a memoized DYNAMIC import. The package is
+     an OPTIONAL peer and the entry must load without it; on the old generation
+     a static named import of the then-missing export was an ESM link-time
+     `SyntaxError` that failed the whole cordis plugin tree (measured on the
+     0.1.5-rc.2 anchor, where the instance exited 1 with `does not provide an
+     export named 'createMcpToolDefinition'`). An unavailable adapter now fails
+     the server's tool sync — reported once through the supervisor log — instead
+     of the plugin load, and the failed resolution is not memoized, so a later
+     sync retries it.
+   - 0.1.7 renamed the projection hook: `createMcpToolDefinition` installs
+     `projectContent` (run BEFORE `tools/post-execute` policies), not
+     `finalizeContent` (the later slot). `tests/tools.spec.ts` asserts the
+     installed hook and drives the listing/call wiring and the image admission
+     matrix through it.
 
-   The two builders are INTERCHANGEABLE. The fallback is a verbatim port of the
-   official implementation: same projection strings, same empty-value semantics
-   (an entirely empty result reports `(<tool> returned no model-visible content)`
-   while a text block that is itself empty stays empty), same `CallToolResult`
-   validation and failure text, same `taskRequired` refusal and `isError` →
-   throw, same canonical `{content, structuredContent?}` value, and the same
-   durable image admission with its `finalizeContent` weak-map swap — 0.1.5's
-   runtime invokes that hook too (`dsh-tools` reads `finalizeContent` from the
-   definition). The two differ only in which module's code executes.
-   `tests/tools.spec.ts` drives both builders through the same case matrix and
-   asserts each against the other AND against literal strings, so neither the
-   fallback nor a future adapter can drift unnoticed.
+   `@deepseek-ai/dsh-mcp-resources` is an optional peer: its absence only
+   removes the shared resource tools. The 2.0 client also deletes the
+   hand-rolled `tools/list` pagination, its repeated-cursor/page caps and the
+   legacy `toolResult` normalization — `listMaxPages` (default 64) is the
+   non-converging-cursor defence and a 2025-era frame cannot reach this path.
 10. **One bound was kept, not deleted.** `MAX_SYNC_TOOLS` (2000) caps the TOTAL
     listed tools per server, because `listMaxPages` bounds PAGES and not items:
     64 pages × 1000 tools would otherwise drive unbounded per-agent registration
@@ -446,14 +453,12 @@ flags and the full config is green at the time of writing.
     so it never overlaps the next generation.
 12. **Two optional consumers, published per server.** Every supervised server
     contributes a literal `mcp:<serverName>` system-prompt section at the
-    centrally allocated `MCP_SERVERS` order — but ONLY where the host allocates
-    that order and honours `interpolate:false`, i.e. 0.1.6+. 0.1.5 has neither
-    the key nor literal-section rendering: its renderer interpolates every
-    section, so a server instruction containing `{{...}}` would either abort
-    prompt assembly for the whole turn or be substituted with a host variable.
-    The allocation key is therefore the capability probe, and publishing nothing
-    there is exactly what 0.1.5 shipped. The section text is a LIVE read of the
-    connection's established-generation instruction snapshot.
+    centrally allocated `MCP_SERVERS` order. The allocation key doubles as the
+    capability probe (0.1.7 provides it and honours `interpolate:false`), so a
+    composition without it publishes nothing rather than letting the host
+    interpolate a server instruction containing `{{...}}` with its own
+    variables. The section text is a LIVE read of the connection's
+    established-generation instruction snapshot.
     Every server also contributes an `mcpResources` provider, so the
     service-owned `list_mcp_resources` / `list_mcp_resource_templates` /
     `read_mcp_resource` tools can reach it. Both ride `ctx.inject` and are
@@ -466,16 +471,18 @@ flags and the full config is green at the time of writing.
 
 ### Remaining risks
 
-- The full plugin `apply` (settings ns + manager inside one real composition
-  with the actual dsh-base service stack) is not exercised end-to-end here —
-  its pieces are (settings spec mounts the real provider + schema + hooks;
-  manager spec drives reconcile with real fixture servers; agents spec drives
-  the real gate). The M0/M1 smoke (anchor instance) remains the true
-  end-to-end gate.
-- `dsh-settings-file`/`dsh-atomic-write`/`dsh-home-paths`/`dsh-system-prompt`
-  were added to devDependencies under the old cross-line matrix, which is what
-  once required `--legacy-peer-deps`; the 0.1.5 migration pins the whole
-  `@deepseek-ai/*` set to one generation and the flag is gone.
+- The full plugin `apply` (Config + manager inside one real composition with
+  the actual dsh-base service stack) is not exercised by the unit suites alone —
+  its pieces are (settings spec resolves the Config schema and the live-field
+  contract; manager spec drives reconcile with real fixture servers; agents spec
+  drives the real gate). The M0/M1 smoke (real 0.1.7 anchor instance) remains
+  the true end-to-end gate, and M0 exercises the settings write → volatile
+  commit → reconcile → connect path through the real settings RPC.
+- `dsh-atomic-write`/`dsh-home-paths`/`dsh-system-prompt` were added to
+  devDependencies under the old cross-line matrix, which is what once required
+  `--legacy-peer-deps`; the tree now pins the whole `@deepseek-ai/*` set to
+  `0.1.7-rc.2` and the flag is gone. `dsh-settings-file` was dropped with the
+  0.1.7 move.
 - `tests/fixture/mcp-fixture-server.mjs` child processes rely on repo
   `node_modules` resolution (spawned with `process.execPath` from the repo
   cwd); moving the fixture would break the supervisor/manager specs.
@@ -678,7 +685,7 @@ written — through the platform's own seams rather than a new channel:
 
 ## 6. Browser half — section, forms and lane (overview)
 
-- Browser plugin exports `inject = ['slots','locale','remote','remote.credentials','settingsScope','workspaces','sessions']` + `apply(ctx)`; registers locale ns `mcp-scope.settings` ({en, zh}) then
+- Browser plugin exports `inject = ['slots','locale','remote','remote.credentials','configForms','workspaces','sessions']` + `apply(ctx)`; registers locale ns `mcp-scope.settings` ({en, zh}) then
   `ctx.slots.inject('settings.section', () => ctx.slots.register({ name:'settings.section',
   id:'mcp-scope', order: 25, label: t-thunk, locale: NS,
   inject: () => ({ ...face, hooks: { ...face.hooks, runtime }, refreshRuntime,
@@ -704,8 +711,9 @@ written — through the platform's own seams rather than a new channel:
   `dsh-client-ui-chat`, `dsh-client-ui-conversation`, `dsh-api-remotes`,
   `dsh-api-workspace-controller`); the provider of `ctx.sessions` is NOT named
   there because its module id is generation-dependent. Detail and evidence: §6.
-- Data: `ctx.settingsScope.bind<Doc>({ namespace:'mcp-scope', decode: decodeDoc })` → snapshot
-  {status, value, revision, writable}; workspaces via global `useWorkspaces`.
+- Data: `ctx.configForms.get<Doc>('mcp-scope')` — the Loader entry's own
+  Config form, whose snapshot carries {status, value, revision, writable};
+  workspaces via global `useWorkspaces`.
 - Views: server cards (name, transport, "on in N workspaces" / "not on in any
   workspace", edit, remove, per-workspace enable rows that are OFF by default),
   staged Add/Edit form (serverName + transport toggle +
@@ -920,7 +928,7 @@ derives, each traceable to source:
   `useDoc` (renderer converts `name` → `use<Capitalized>`). Our source is a
   plain `{ getSnapshot, subscribe }` observable (uSES-safe stable snapshot
   between publishes) — no `dsh-client-store` value dependency.
-- `inject = ['slots','locale','remote','remote.credentials','settingsScope',
+- `inject = ['slots','locale','remote','remote.credentials','configForms',
   'workspaces','sessions']` exactly as assigned — `sessions` was added by the 0.0.2
   transcript lane (`src/client/index.ts`; without it the lane stays off) (`connection` was dropped —
   grep-proven unused; `remote.credentials` is the real credentials gateway,
@@ -1069,9 +1077,9 @@ tag exist?" check has two failure modes that matter here:
   The last disposer removes the tag.
 
 Mirroring the primitive CSS rather than importing it also keeps the plugin
-working across the peer range (`^0.1.5-rc.2 || ^0.1.6-alpha.1`) without a
-compile-time dependency on the primitives' JS API — the geometry is copied
-from the pinned generation, which §9.3 pins property by property.
+working on the supported peer range (`^0.1.7-rc.2`) without a compile-time
+dependency on the primitives' JS API — the geometry is copied from the pinned
+generation, which §9.3 pins property by property.
 
 ### 9.2 What was replaced
 
@@ -1107,10 +1115,9 @@ byte-equal declaration.
 ### 9.4 Settings sidebar glyph (the one patch the shell forces)
 
 The settings nav row's mark is shell-owned: `navIcon(id)` hardcodes one per known
-section id (`models`, `agent-presets`, `plugins`, and `archived-sessions` on
-0.1.6) and falls back to the shipped settings gear for every other id — true in
-BOTH supported generations, which also give a registrant no `icon` option and no
-icon seat. Our row would therefore keep the gear, so `src/client/nav-icon.ts`
+section id (`models`, `agent-presets`, `plugins`, and `archived-sessions`) and
+falls back to the shipped settings gear for every other id — the 0.1.7 shell also
+gives a registrant no `icon` option and no icon seat. Our row would therefore keep the gear, so `src/client/nav-icon.ts`
 paints the plugin's own plug mark into it: the row is matched by the one fact the
 shell renders from our registration (the localized `nav` label) and accepted only
 in the shell's own shape (a button whose two element children are the glyph svg

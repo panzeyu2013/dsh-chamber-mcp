@@ -24,11 +24,11 @@ import type { SettingsPathOpView } from '@deepseek-ai/dsh-settings/types'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import {
   CREDENTIAL_REF_PATTERN,
-  EMPTY_DOC,
   MCP_SCOPE_NAMESPACE,
+  canonicalDoc,
   credentialRefsOf,
   isEnabled,
-  pruneDisabled,
+  pruneEmptyOverrideRows,
   removeServerDisabled,
   removeServerOverrides,
   renameDisabledKey,
@@ -45,51 +45,22 @@ import type { SettingsKey } from './locales.js'
 export { MCP_SCOPE_NAMESPACE }
 export type { CredentialInfo }
 
-/** Rows whose last explicit enable was toggled back off are dropped. */
-export function pruneEmptyOverrideRows(overrides: WorkspaceOverrides): WorkspaceOverrides {
-  // Rows land through `Object.fromEntries`: assigning a workspace literally named
-  // `__proto__` would set the prototype and silently drop the row. (The upstream
-  // schema resolver has the same shape, so such a workspace also needs a
-  // framework UUID in practice; this keeps the plugin's own paths honest.)
-  const rows = new Map<string, Record<string, true>>()
-  for (const [workspaceId, row] of Object.entries(overrides)) {
-    if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
-    const rest: Record<string, true> = {}
-    for (const [name, value] of Object.entries(row)) {
-      if (value === true) rest[name] = true
-    }
-    if (Object.keys(rest).length > 0) rows.set(workspaceId, rest)
-  }
-  return Object.fromEntries(rows) as WorkspaceOverrides
-}
+export { pruneEmptyOverrideRows }
 
 /**
  * Canonical shape of one bound-scope document. Host-side the value is already
- * schema-validated; this only guards structure (missing arrays, malformed
- * rows) so the UI never trips on an unexpected wire shape.
+ * schema-validated; this only guards structure (missing arrays, malformed rows,
+ * duplicate serverNames) so the UI never trips on an unexpected wire shape.
+ * Shares {@link canonicalDoc} with the host read path so every layer addresses
+ * one shape.
  */
 export function decodeDoc(raw: unknown): McpScopeDoc {
-  if (raw === null || typeof raw !== 'object') return EMPTY_DOC
-  const section = raw as Record<string, unknown>
-  const servers = Array.isArray(section.servers)
-    ? (section.servers as unknown[]).filter((s): s is ServerDef => s !== null && typeof s === 'object')
-    : []
-  const overridesRaw = section.overrides
-  const overrides =
-    overridesRaw !== null && typeof overridesRaw === 'object' && !Array.isArray(overridesRaw)
-      ? pruneEmptyOverrideRows(overridesRaw as WorkspaceOverrides)
-      : {}
-  const disabled = pruneDisabled(section.disabled as DisabledServers | undefined)
-  return { servers, overrides, disabled }
+  return canonicalDoc(raw)
 }
 
-/** Copy a doc into canonical shape (empty enable rows and non-true entries pruned). */
+/** Copy a doc into canonical shape (pruned rows/keys, resolved duplicates). */
 export function normalizeDoc(doc: McpScopeDoc): McpScopeDoc {
-  return {
-    servers: doc.servers,
-    overrides: pruneEmptyOverrideRows(doc.overrides),
-    disabled: pruneDisabled(doc.disabled),
-  }
+  return canonicalDoc(doc)
 }
 
 /** Stable structural equality for server lists (arrays: order matters). */
@@ -338,10 +309,6 @@ export function toggleOp(
 }
 
 /** Whether the staged document passes the shared host-side validation. */
-export function docErrors(doc: McpScopeDoc): string[] {
-  return validateDoc(doc)
-}
-
 /**
  * Classify a rejected settings write (revision fence or other).
  *
@@ -430,8 +397,15 @@ export type RemoteResultLike<T> =
   | { ok: true; value: T }
   | { ok: false; error: { code?: string; message?: string } }
 
-/** Structural subset of the rc.1 `SettingsScope<T>` the controller needs. */
-export interface SettingsScopePort {
+/**
+ * Structural subset of the settings form the controller needs. 0.1.7 binds a
+ * `ConfigForm<T>` (`ctx.configForms.get('mcp-scope')`); its `mutate` resolves
+ * `true` for Host acceptance and `false` for a refusal or skipped write
+ * instead of resolving void, which is why the port accepts any settlement —
+ * the landed-document comparison in {@link McpScopeController} stays the
+ * single source of truth for "did the write land".
+ */
+export interface ConfigFormPort {
   getSnapshot(): {
     status: 'loading' | 'ready' | 'unavailable'
     value: McpScopeDoc | undefined
@@ -439,7 +413,7 @@ export interface SettingsScopePort {
     writable: boolean
   }
   subscribe(listener: () => void): () => void
-  mutate(ops: readonly SettingsPathOpView[], expectedRevision?: number): Promise<void>
+  mutate(ops: readonly SettingsPathOpView[], expectedRevision?: number): Promise<unknown>
 }
 
 /** Structural subset of the rc.1 `remote.credentials` namespace. */
@@ -509,7 +483,7 @@ const EMPTY_CREDENTIALS: Readonly<Record<string, CredentialInfo>> = Object.freez
  * effect (returns its disposer) so teardown is fiber-owned.
  */
 export class McpScopeController {
-  private readonly scope: SettingsScopePort
+  private readonly scope: ConfigFormPort
   private readonly credentials: CredentialsGateway
   private snapshot: McpStoreSnapshot
   private readonly listeners = new Set<() => void>()
@@ -518,7 +492,7 @@ export class McpScopeController {
   /** Bumped at every describe start; stale runs must not publish (FE-6). */
   private credentialsGeneration = 0
 
-  constructor(scope: SettingsScopePort, credentials: CredentialsGateway) {
+  constructor(scope: ConfigFormPort, credentials: CredentialsGateway) {
     this.scope = scope
     this.credentials = credentials
     this.snapshot = this.derive()
@@ -778,7 +752,7 @@ export class McpScopeController {
     next: McpScopeDoc,
     secrets: readonly SecretWrite[],
   ): Promise<SaveOutcome> {
-    if (docErrors(next).length > 0) return { ok: false, reason: 'invalid' }
+    if (validateDoc(next).length > 0) return { ok: false, reason: 'invalid' }
     const dirty: SecretWrite[] = secrets.filter((s) => s.value.length > 0)
     for (const secret of dirty) {
       if (!CREDENTIAL_REF_PATTERN.test(secret.ref)) return { ok: false, reason: 'invalid' }
@@ -851,13 +825,14 @@ export class McpScopeController {
   /**
    * One atomic, revision-fenced scope mutation with LANDED verification.
    *
-   * This runtime's scope.mutate RESOLVES even when the Host refuses the
-   * write (the refusal triggers an internal mirror reload and a silent
-   * return), so a resolved promise alone cannot report success. After the
-   * mutation settles we re-read the scope snapshot and compare the doc
-   * against the intended one (both normalized); anything but an exact match
-   * means the write did not land and must surface as a conflict — never as
-   * ok (FE-1). The catch branch covers local/transport faults only.
+   * A settled mutation alone cannot report success: 0.1.7's `ConfigForm`
+   * resolves `false` for a refusal (reloading Host state internally), and
+   * earlier generations resolved void even when the Host refused (a silent
+   * mirror reload). After the mutation settles we re-read the scope snapshot
+   * and compare the doc against the intended one (both normalized); anything
+   * but an exact match means the write did not land and must surface as a
+   * conflict — never as ok (FE-1). The catch branch covers local/transport
+   * faults only.
    */
   private async applyOps(
     ops: readonly SettingsPathOpView[],

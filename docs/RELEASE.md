@@ -151,49 +151,42 @@ Compatibility notes for consumers:
 - Peers (`@deepseek-ai/dsh-*`, cordis) are resolved from the dsh install's
   fallback farm; only `@modelcontextprotocol/client`, `@deepseek-ai/schemastery`
   and `zod` are real dependencies installed by pnpm.
-- Support window: **`^0.1.5-rc.2 || ^0.1.6-alpha.1`**, both verified live.
-  The pinned devDependency set and the CI guard are `0.1.6-alpha.1`. On 0.1.6+
-  the host provides `createMcpToolDefinition` (official canonical validation +
-  durable image admission) and `ctx.mcpResources`, so tool results take the
-  official path and the resource tools can reach this plugin's servers; on 0.1.5
-  neither exists and the plugin uses its own text projection. A dsh upgrade that
-  changes the typed surface triggers a compat release; CI typecheck against the
-  installed dsh set is the guard.
-- **What each generation publishes.** Prompt instructions are attached to a
-  literal `mcp:<server>` system-prompt section on 0.1.6+ only. 0.1.5 has no
-  literal-section rendering — its renderer interpolates every section, so a
-  server instruction containing `{{...}}` would either abort the turn or be
-  substituted with a host variable — so the plugin publishes nothing there,
-  which is exactly what the 0.1.5 host shipped.
+- Support window: **`^0.1.7-rc.2`** — the 0.1.7 generation only, verified
+  live. The pinned devDependency set and the CI guard are `0.1.7-rc.2` with
+  cordis 4.0.4 and schemastery `^3.18.4`. 0.1.7 owns the Config/volatile
+  settings model (forms derived from each Loader entry's own `Config`,
+  persisted by `dsh-config-editor` into the profile patch) and the official
+  `createMcpToolDefinition` adapter, whose projection hook is
+  `projectContent` (0.1.6's `finalizeContent` was renamed for the
+  pre-policy slot). The 0.1.5/0.1.6 generation — the shared settings
+  namespace (`installSection`/`settingsScope`) and the plugin's own text
+  projection — is no longer supported. A dsh upgrade that changes the typed
+  surface triggers a compat release; CI typecheck against the installed dsh
+  set is the guard.
+- **What the generation publishes.** Prompt instructions are attached to a
+  literal `mcp:<server>` system-prompt section, and `ctx.mcpResources` is
+  provided so the official resource tools can reach this plugin's servers.
 - **The live smoke runs against an anchor in the support window.** Point
-  `DSH_ANCHOR_CLI` at the chamber anchor (dsh 0.1.5-rc.2, exercising the
-  fallback) or at a separately installed 0.1.6-alpha.1 anchor (exercising the
-  official adapter); each transcript records the version it used. Note that the
-  M1 driver installs through `dsh plugin add`, which delegates to pnpm inside
-  the profile directory: on a checkout whose `package.json` declares
-  `packageManager`, corepack's strict mode can refuse the install: use the
-  scratch `pnpm` shim documented in `docs/status.md` §"How to re-verify" (or
-  export `COREPACK_ENABLE_STRICT=0`). M0, the plugin-lifecycle driver, is
-  unaffected either way.
-- **The low-generation path has an executable check.** `npm run
-  verify:low-generation` copies the built host half into a scratch tree whose
-  `@deepseek-ai/dsh-mcp-client` and `@deepseek-ai/dsh-attachment` resolve to the
-  LOW-generation install, asserts the production selection lands on the fallback
-  (not the adapter), and drives an image result through admission and
-  `finalizeContent`. The vitest suite is pinned to the newer devDependency
-  generation, so it structurally cannot reach that path — run this alongside the
-  live smoke before a release. `DSH_LOW_GENERATION_ROOT` points it at another
-  low-generation install.
-- **Do not reintroduce a STATIC import of a generation-specific export.**
-  Measured on 2026-09-16: with a static `import { createMcpToolDefinition } from
-  '@deepseek-ai/dsh-mcp-client'`, installing into the shipped 0.1.5-rc.2 chamber
-  anchor succeeded silently and then the whole plugin tree failed to load
-  (`does not provide an export named 'createMcpToolDefinition'`) and the dsh
-  instance exited 1. The bridge therefore reaches that adapter through a
-  NAMESPACE import and selects the local fallback when the property is absent,
-  which is what keeps the two-generation peer range honest. The same rule applies
-  to any future generation-specific surface: reach it through a namespace/service
-  lookup, never a static named import.
+  `DSH_ANCHOR_CLI` at a 0.1.7-generation CLI (for a local run,
+  `npm install @deepseek-ai/dsh@0.1.7-rc.2` in a scratch directory and point at
+  its `@deepseek-ai/dsh/lib/bin.js`); each transcript records the version it
+  used. Note that the M1 driver installs through `dsh plugin add`, which
+  delegates to pnpm inside the profile directory: on a checkout whose
+  `package.json` declares `packageManager`, corepack's strict mode can refuse
+  the install: use the scratch `pnpm` shim documented in `docs/status.md`
+  §"How to re-verify" (or export `COREPACK_ENABLE_STRICT=0`). M0, the
+  plugin-lifecycle driver, is unaffected either way.
+- **Do not reintroduce a STATIC import of `@deepseek-ai/dsh-mcp-client`.**
+  Measured on 2026-09-16 on the 0.1.5 chamber anchor: a static
+  `import { createMcpToolDefinition } from '@deepseek-ai/dsh-mcp-client'`
+  installed silently and then the whole plugin tree failed to load (`does not
+  provide an export named 'createMcpToolDefinition'`) and the dsh instance
+  exited 1. The package is an OPTIONAL peer and the entry must still load
+  without it, so the bridge resolves the adapter through a memoized dynamic
+  import and reports an unavailable adapter through the server's tool-sync
+  path instead of failing the plugin load. The same rule applies to any
+  optional or generation-specific surface: reach it through a dynamic import
+  or a service lookup, never a static named import.
 - Auditing a new upstream line (the 0.1.5 migration, CHANGELOG 0.0.2): diff
   `src/` of the peer packages between the two release tags (`dsh-v<old>`..
   `dsh-v<new>` in the harness checkout), bump the devDependency pins, typecheck

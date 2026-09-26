@@ -13,6 +13,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > only and ignores this one — an entry left here ships in the tree but never
 > appears in the release notes.
 
+## [0.2.0] - 2026-09-25
+
+### Changed (breaking)
+
+- **dsh 0.1.7 generation only.** Peer ranges are now `^0.1.7-rc.2`; the
+  0.1.5/0.1.6 generation is no longer supported. The dev tree pins
+  `0.1.7-rc.2` with cordis 4.0.4 and schemastery `^3.18.4` (the first line
+  with `.volatile()`), and the plugin's verbatim port of the official tool
+  adapter was removed: the host now requires `@deepseek-ai/dsh-mcp-client`'s
+  `createMcpToolDefinition`, whose 0.1.7 projection hook is `projectContent`
+  (it was `finalizeContent` in 0.1.6).
+- **Settings moved from the shared settings namespace onto the plugin's own
+  Loader entry Config.** 0.1.7 replaced `dsh-settings`'s
+  `installSection`/`settingsScope` seams with schema-derived forms
+  (`SettingsForms` / `ctx.configForms`) persisted to the profile's
+  `cordis.patch.yml`. The host half now exports `Config` = the `mcp-scope`
+  document (`servers`/`overrides`/`disabled`, every field `.volatile()`),
+  reads the resolved volatile references per operation, reconciles on the
+  loader's `loader/volatile-update` event (no remount, so untouched servers
+  keep their connection), and suppresses the schema-derived auto page with
+  `settings.configure({ auto: false }, ctx.fiber)` so the custom
+  `settings.section` page stays the entry's only editor. The browser half
+  binds `ctx.configForms.get('mcp-scope')` instead of `ctx.settingsScope`.
+  Existing `settings.yaml` sections are imported once by `SettingsForms` into
+  the same-id profile entry, so configured servers and overrides survive the
+  upgrade. The bridge also runs an activation-time reconcile: 0.1.7 applies an
+  entry's Config by CREATING its fiber, so a boot, profile reload or HMR with
+  servers already in the patch emits no `loader/volatile-update` — without that
+  first pass the configured servers would stay unstarted until a later settings
+  write. The M0 smoke now restarts the instance after configuring and re-asserts
+  the tool listing with no write in between.
+
+### Removed
+
+- `npm run verify:low-generation` and `scripts/smoke/low-generation-fallback.mjs`
+  (the low generation is no longer supported).
+- The duplicate `WorkspaceOverridesAlias` type export (it aliased
+  `WorkspaceOverrides`), and devDependencies left behind by the removed
+  `dsh-settings-file` provider (`dsh-atomic-write`, `dsh-home-paths`,
+  `dsh-http-proxy`, `dsh-llm`, `@modelcontextprotocol/node`).
+
 ## [0.1.1] - 2026-09-16
 
 ### Added

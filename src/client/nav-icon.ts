@@ -75,10 +75,9 @@ function plugGlyph(doc: Document, size: number, className: string | null): Eleme
 }
 
 /**
- * The scan scope: the settings panel when it is on the page (both generations
- * render it as `[role="dialog"]`), else the whole document. Scoping keeps the
- * sweep off the chat DOM and stops a same-labelled control elsewhere from
- * matching.
+ * The scan scope: the settings panel when it is on the page (it renders as
+ * `[role="dialog"]`), else the whole document. Scoping keeps the sweep off the
+ * chat DOM and stops a same-labelled control elsewhere from matching.
  */
 function navScope(doc: Document): ParentNode {
   return doc.querySelector('[role="dialog"]') ?? doc

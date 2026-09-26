@@ -16,7 +16,7 @@ import {
   serverDefEqual,
   toggleOp,
   type CredentialsGateway,
-  type SettingsScopePort,
+  type ConfigFormPort,
 } from '../../src/client/controller.js'
 import { isEnabled, removeServerOverrides, type McpScopeDoc, type ServerDef, type WorkspaceOverrides } from '../../src/shared/model.js'
 
@@ -382,7 +382,7 @@ class FakeCredentials implements CredentialsGateway {
   }
 }
 
-class FakeScope implements SettingsScopePort {
+class FakeScope implements ConfigFormPort {
   mirror: McpScopeDoc
   revision = 1
   writable = true

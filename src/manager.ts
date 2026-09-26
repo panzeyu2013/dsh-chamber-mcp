@@ -44,7 +44,6 @@ import type {} from '@deepseek-ai/dsh-credentials'
 
 /** Durable storage-domain identity of the workspace registry (dsh-workspace). */
 export const WORKSPACE_DOMAIN_NAME = 'workspace'
-export const WORKSPACE_TABLE_NAME = 'workspaces'
 
 /** Logger surface for manager + supervisor + applier (ctx.logger-compatible). */
 export type ManagerLogger = ApplierLogger
@@ -268,7 +267,9 @@ export function createManager(options: ManagerOptions): ManagerHandle {
       list: () => [...ctx.workspaceRegistry.list()] as Workspace[],
     },
     overrides: () => options.getDoc().overrides,
-    isDisabled: (serverName) => isServerDisabled(options.getDoc(), serverName),
+    // ONE document read per pass: the applier gets a disabled SNAPSHOT next to
+    // the overrides snapshot instead of a lookup that re-reads per serverName.
+    disabled: () => options.getDoc().disabled ?? {},
   })
 
   const enqueue = (work: () => Promise<void>): void => {
@@ -428,8 +429,9 @@ export function createManager(options: ManagerOptions): ManagerHandle {
       // coalescing set by design). The chain serializes them and the later
       // start resolves credentials per attempt, so the double cycle always
       // converges — accepted by design.
-      const affected = options.getDoc().servers.filter(
-        (server) => !isServerDisabled(options.getDoc(), server.serverName) && credentialRefsOf(server).includes(ref),
+      const doc = options.getDoc()
+      const affected = doc.servers.filter(
+        (server) => !isServerDisabled(doc, server.serverName) && credentialRefsOf(server).includes(ref),
       )
       for (const server of affected) {
         // Log only when the restart is actually queued (a same-tick second

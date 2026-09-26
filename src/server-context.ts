@@ -64,12 +64,12 @@ export function registerServerContext(
   }
   try {
     contain(ctx.inject(['systemPrompt'], (inner) => {
-      // The allocation key doubles as the capability probe. 0.1.5 has no
-      // MCP_SERVERS slot AND no literal-section rendering: its renderer always
-      // interpolates, so a server instruction containing "{{...}}" would either
-      // abort prompt assembly for the whole turn or be substituted with a host
-      // variable. Publishing nothing there is what 0.1.5 shipped, so the
-      // compatibility path stays safe by construction.
+      // The allocation key doubles as the capability probe: without the
+      // MCP_SERVERS slot there is no safe place for a literal `mcp:<server>`
+      // section, and a host that always interpolates section text could either
+      // abort prompt assembly for a server instruction containing "{{...}}" or
+      // substitute it with a host variable. Publishing nothing when the key is
+      // absent keeps the contribution safe by construction.
       const order = inner.systemPrompt.getSectionOrder('MCP_SERVERS')
       if (order === undefined) return
       inner.systemPrompt.section({

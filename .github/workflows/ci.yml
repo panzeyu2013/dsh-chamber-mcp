@@ -41,14 +41,13 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        # No --legacy-peer-deps: after the 0.1.5 migration every @deepseek-ai
-        # devDep is pinned to the SAME generation (0.1.5-rc.2, the one a
-        # `dsh@0.1.5-rc.1` install actually resolves to), so the peer graph is
-        # internally consistent and npm resolves it unaided. Pinning the
-        # umbrella's rc.1 while upstream's own rc.1 peers pull rc.2 artifacts
-        # is what used to force the relaxed resolution. A future pin that
-        # reopens the conflict will fail here loudly — fix the pins, not the
-        # flag.
+        # No --legacy-peer-deps: since the 0.2.0 generation move every
+        # @deepseek-ai devDep is pinned to the SAME generation (0.1.7-rc.2), so
+        # the peer graph is internally consistent and npm resolves it unaided.
+        # Mixing a generation's umbrella with another generation's internals
+        # (the old cross-line matrix) is what used to force the relaxed
+        # resolution. A future pin that reopens the conflict will fail here
+        # loudly — fix the pins, not the flag.
         run: npm ci --no-audit --no-fund
 
       # npm ci is inherently frozen (errors on package.json/lockfile drift and
