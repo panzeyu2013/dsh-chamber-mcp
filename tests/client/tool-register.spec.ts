@@ -257,6 +257,54 @@ describe('session window observer', () => {
     expect(sink.order).toEqual([])
     stop()
   })
+
+  it('degrades without throwing when the runtime has no binding accessor', () => {
+    // The 0.1.5 line's session service keeps a staged-id scalar but exposes no
+    // window accessor. Calling into it would throw inside the framework's list
+    // publish (this lane's subscriptions run there), so the lane must probe the
+    // seam, stay off, and say so once.
+    const sink = registrar()
+    const registry = createToolCardRegistry({ host: sink.host, servers: () => SERVERS })
+    const list = source<{ current?: unknown }>({ current: 's1' })
+    const unsupported = vi.fn()
+    const sessions = { list } as unknown as SessionsLike
+    const stop = startToolCardObserver({ sessions, registry, onUnsupported: unsupported })
+    expect(() => list.publish({ current: 's2' })).not.toThrow()
+    expect(unsupported).toHaveBeenCalledTimes(1)
+    expect(String(unsupported.mock.calls[0]?.[0])).toContain('binding')
+    expect(sink.order).toEqual([])
+    expect(list.listenerCount()).toBe(0)
+    stop()
+  })
+
+  it('tolerates a service that throws from binding or the window accessor', () => {
+    const sink = registrar()
+    const registry = createToolCardRegistry({ host: sink.host, servers: () => SERVERS })
+    const list = source<{ current?: unknown }>({ current: 's1' })
+    const sessions: SessionsLike = {
+      list,
+      binding: () => {
+        throw new Error('unsupported generation')
+      },
+    }
+    const stop = startToolCardObserver({ sessions, registry })
+    expect(() => list.publish({ current: 's1' })).not.toThrow()
+    expect(sink.order).toEqual([])
+    stop()
+    expect(list.listenerCount()).toBe(0)
+  })
+
+  it('reports a service whose list is not observable instead of calling into it', () => {
+    const sink = registrar()
+    const registry = createToolCardRegistry({ host: sink.host, servers: () => SERVERS })
+    const unsupported = vi.fn()
+    const sessions = { list: { getSnapshot: () => ({ current: 's1' }) } } as unknown as SessionsLike
+    const stop = startToolCardObserver({ sessions, registry, onUnsupported: unsupported })
+    expect(unsupported).toHaveBeenCalledTimes(1)
+    expect(String(unsupported.mock.calls[0]?.[0])).toContain('observable list')
+    expect(sink.order).toEqual([])
+    stop()
+  })
 })
 
 describe('observable source typing', () => {

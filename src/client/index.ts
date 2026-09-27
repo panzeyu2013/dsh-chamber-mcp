@@ -276,6 +276,7 @@ export function apply(ctx: Context): void {
     let refused = false
     let registrationFailed = false
     let reconcileFailed = false
+    let unsupported = false
     const registry = createToolCardRegistry({
       host: {
         register(identity) {
@@ -334,6 +335,17 @@ export function apply(ctx: Context): void {
     const stop = startToolCardObserver({
       sessions: (ctx as unknown as { sessions?: SessionsLike }).sessions,
       registry,
+      onUnsupported: (reason) => {
+        // The lane and the runtime disagree about the session service: nothing
+        // registers and every MCP row stays generic. That is the documented
+        // fallback, but it must not be INVISIBLE — report once so an unsupported
+        // generation is diagnosable from the browser console.
+        if (unsupported) return
+        unsupported = true
+        logger?.warn(
+          `mcp-scope: the sessions service cannot feed the MCP tool-row lane — MCP calls keep the generic row: ${reason}`,
+        )
+      },
     })
     // A settings commit can re-shape an identity (server renamed, transport
     // switched, server removed): re-run the diff against the new document

@@ -195,7 +195,14 @@ export interface SessionListLike {
 /** The slice of `ctx.sessions` this lane reads. */
 export interface SessionsLike {
   list: SnapshotSource<SessionListLike>
-  binding(id: string): { eventSource: SnapshotSource<{ entries?: readonly unknown[] }> } | undefined
+  /**
+   * Borrow the staged session's live event window. ABSENT on a generation whose
+   * session service predates this shape (the 0.1.5/0.1.6 line has no such
+   * accessor), so the lane probes for it instead of calling through: this lane
+   * runs inside framework publish paths, and a call into a method that is not
+   * there throws INTO them.
+   */
+  binding?(id: string): { eventSource: SnapshotSource<{ entries?: readonly unknown[] }> } | undefined
   /** Per-session retain observable (0.1.7); absent on older generations. */
   retainInfo?(id: string): SnapshotSource<unknown> | undefined
 }
@@ -205,6 +212,14 @@ export interface ToolCardObserverOptions {
   /** The client session service, when the composition provides it. */
   sessions: SessionsLike | undefined
   registry: ToolCardRegistry
+  /**
+   * Called ONCE when the sessions service exists but its shape cannot be used
+   * (a generation the lane does not know). The lane then stays off — every MCP
+   * call keeps the shipped generic row — and this is the only signal that the
+   * deployment and the lane disagree, so an unsupported runtime is diagnosable
+   * instead of silently generic.
+   */
+  onUnsupported?: (reason: string) => void
 }
 
 /**
@@ -220,6 +235,27 @@ export interface ToolCardObserverOptions {
 export function startToolCardObserver(options: ToolCardObserverOptions): () => void {
   const { sessions, registry } = options
   if (sessions === undefined) return () => {}
+  const noop = () => {}
+  // This lane runs inside framework publish paths (a session-window mutation, a
+  // settings commit) and degrades by design, so every seam of the service is
+  // PROBED before it is called: an accessor a generation does not have would
+  // otherwise throw into that publish path and take the transcript or the
+  // settings UI with it. A shape the lane cannot use leaves every MCP call on
+  // the shipped generic row and reports once.
+  const list = sessions.list
+  if (
+    list === undefined ||
+    list === null ||
+    typeof list.getSnapshot !== 'function' ||
+    typeof list.subscribe !== 'function'
+  ) {
+    options.onUnsupported?.('the sessions service exposes no observable list snapshot')
+    return noop
+  }
+  if (typeof sessions.binding !== 'function') {
+    options.onUnsupported?.('the sessions service exposes no binding(id) window accessor')
+    return noop
+  }
   let offEvents: (() => void) | undefined
   let offRetain: (() => void) | undefined
   let boundId: string | undefined
@@ -230,11 +266,33 @@ export function startToolCardObserver(options: ToolCardObserverOptions): () => v
   // when its window no longer reaches the request that first named the tool.
   const seen = new Set<string>()
 
+  /** Borrow one window; a throwing or absent accessor degrades to "no window". */
+  const borrow = (id: string) => {
+    try {
+      return sessions.binding?.(id)
+    } catch {
+      return undefined
+    }
+  }
+
+  const listSnapshot = (): SessionListLike | undefined => {
+    try {
+      return list.getSnapshot() as SessionListLike | undefined
+    } catch {
+      return undefined
+    }
+  }
+
   const readBound = (id: string) => {
-    const binding = sessions.binding(id)
+    const binding = borrow(id)
     if (binding === undefined) return
-    const entries = binding.eventSource.getSnapshot().entries ?? []
-    const names = mcpToolNamesOf(entries)
+    let window: { entries?: readonly unknown[] } | undefined
+    try {
+      window = binding.eventSource?.getSnapshot?.()
+    } catch {
+      return
+    }
+    const names = mcpToolNamesOf(window?.entries ?? [])
     if (names.length === 0) return
     let added = false
     for (const name of names) {
@@ -254,7 +312,7 @@ export function startToolCardObserver(options: ToolCardObserverOptions): () => v
    * shell holds.
    */
   const stagedId = (): string | undefined => {
-    const snapshot = sessions.list.getSnapshot() as SessionListLike | undefined
+    const snapshot = listSnapshot()
     if (snapshot === undefined || snapshot === null) return undefined
     if (typeof snapshot.current === 'string') return snapshot.current
     const rows = snapshot.byId
@@ -275,7 +333,7 @@ export function startToolCardObserver(options: ToolCardObserverOptions): () => v
     if (Array.isArray(snapshot.ids)) {
       for (const id of snapshot.ids) {
         if (typeof id !== 'string') continue
-        if (sessions.binding(id) !== undefined) return id
+        if (borrow(id) !== undefined) return id
       }
     }
     return undefined
@@ -304,19 +362,33 @@ export function startToolCardObserver(options: ToolCardObserverOptions): () => v
       offRetain?.()
       offRetain = undefined
       retainedId = nextId
-      offRetain = sessions.retainInfo?.(nextId)?.subscribe(() => bindStaged())
+      try {
+        offRetain = sessions.retainInfo?.(nextId)?.subscribe(() => bindStaged())
+      } catch {
+        offRetain = undefined
+      }
     }
-    const binding = sessions.binding(nextId)
+    const binding = borrow(nextId)
     if (binding === undefined) return
-    offEvents = binding.eventSource.subscribe(() => readBound(nextId))
+    try {
+      offEvents = binding.eventSource?.subscribe?.(() => readBound(nextId))
+    } catch {
+      offEvents = undefined
+    }
     readBound(nextId)
   }
 
-  const offList = sessions.list.subscribe(bindStaged)
-  bindStaged()
+  let offList: (() => void) | undefined
+  try {
+    offList = list.subscribe(bindStaged)
+    bindStaged()
+  } catch (error) {
+    options.onUnsupported?.(String(error))
+    return noop
+  }
   return () => {
     disposed = true
-    offList()
+    offList?.()
     offEvents?.()
     offEvents = undefined
     offRetain?.()

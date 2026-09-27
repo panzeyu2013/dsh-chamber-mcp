@@ -707,7 +707,14 @@ written — through the platform's own seams rather than a new channel:
   subscription as the switch signal (the legacy scalar and a catalog id with a
   live binding remain as fallbacks). A lane that reads only `current` discovers
   NOTHING on the pinned generation and silently returns every MCP call to the
-  shipped generic row — v0.2.0 shipped exactly that way. Detail and evidence: §6.
+  shipped generic row — v0.2.0 shipped exactly that way. Every seam of that
+  service is PROBED rather than called through (`list.getSnapshot`,
+  `list.subscribe`, `binding(id)`, `retainInfo`, `eventSource`): the lane's
+  subscriptions run inside framework publish paths, so an accessor a runtime
+  does not have would throw there instead of degrading, and a service shape the
+  lane cannot use reports once through the observer's `onUnsupported` hook
+  rather than rendering every MCP call as the generic row without a word.
+  Detail and evidence: §6.
   The lane therefore needs
   **no host API and no new bundle dependency**; server identity comes from the
   settings document (longest configured `serverName` prefix), the view set is

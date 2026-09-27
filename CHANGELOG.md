@@ -13,6 +13,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > only and ignores this one — an entry left here ships in the tree but never
 > appears in the release notes.
 
+### Fixed
+
+- **The MCP tool-row lane can no longer throw into a framework publish path.**
+  It borrowed the staged session's event window by calling `sessions.binding(id)`
+  directly, but the 0.1.5/0.1.6 line's session service has no such accessor — on
+  such a runtime that call threw inside the session-list publish (where this
+  lane's subscriptions run) instead of degrading to the shipped generic row.
+  Every seam the lane touches (`list.getSnapshot`, `list.subscribe`,
+  `binding(id)`, `retainInfo`, `eventSource`) is now probed, and a service shape
+  the lane cannot use is reported ONCE through a new `onUnsupported` hook, so an
+  unsupported runtime shows up in the browser console instead of silently
+  rendering every MCP call as the generic row.
+
 ## [0.2.1] - 2026-09-27
 
 ### Fixed
