@@ -4,16 +4,23 @@ Current release, compatibility and verification state. Refreshed 2026-09-27.
 
 ## Release state
 
-- **`v0.2.1` is prepared on `main` but NOT tagged** — `package.json` /
-  `package-lock.json` version `0.2.1`, dated CHANGELOG section
-  `## [0.2.1] - 2026-09-27` carrying two Fixed entries (the ON-state switch
-  hit-area fix, and the 0.1.7 staged-session discovery fix that had silently
-  returned every MCP call to the shipped generic row), and the full gate green
-  (`npm run check`: typecheck, 532 tests, build, `verify:package` including the
-  client-artifact lane, whose session fake now encodes the 0.1.7 shape). The
-  local web profile is reinstalled from the packed `0.2.1` tgz and awaits one
-  instance restart. Do not describe it as released — `v0.2.0` below is still
-  the newest published release.
+- **Published release: `v0.2.1`** — tag `v0.2.1` on `main` (`231acad`),
+  GitHub Release published 2026-09-27 with `dsh-chamber-mcp-0.2.1.tgz`
+  (164,717 bytes, sha256
+  `8e998d2d6351d6c947a0968f8f2d3ab01898e830ebb16ed35a5150fba1cf46e9`) + its
+  matching `.sha256` sidecar; notes composed from the dated CHANGELOG section
+  `## [0.2.1] - 2026-09-27`. CI and Release both ran green on the tag (push
+  runs completed 2026-09-27 08:08Z; the Release job re-ran the full gate:
+  typecheck, 532 tests, build, `verify:package`). The published tarball's 47
+  packed files are byte-identical to the locally gated pack (only the gzip
+  container differs by environment: local 164,722 bytes, sha256
+  `4c3a28b0382e4888df00118171a814a1af13959b876fc366e27969e81fd3eb8a`). Two
+  Fixed entries on top of `v0.2.0`: the settings switch's ON-state hit area
+  (a checked thumb repainted above the transparent checkbox and swallowed the
+  click), and the 0.1.7 staged-session discovery that had silently returned
+  every MCP call to the shipped generic row. The local web profile is on this
+  build: reinstalled from the packed `0.2.1` tgz and restarted through the
+  gateway's own `runtime/restart` action (pid 2761298, ready 3s later).
 - **Published release: `v0.2.0`** — tag `v0.2.0` on `main` (`eec844e`),
   GitHub Release published 2026-09-25 with `dsh-chamber-mcp-0.2.0.tgz`
   (162,898 bytes, sha256
