@@ -1,9 +1,19 @@
 # Status — dsh-chamber-mcp
 
-Current release, compatibility and verification state. Refreshed 2026-09-25.
+Current release, compatibility and verification state. Refreshed 2026-09-27.
 
 ## Release state
 
+- **`v0.2.1` is prepared on `main` but NOT tagged** — `package.json` /
+  `package-lock.json` version `0.2.1`, dated CHANGELOG section
+  `## [0.2.1] - 2026-09-27` carrying two Fixed entries (the ON-state switch
+  hit-area fix, and the 0.1.7 staged-session discovery fix that had silently
+  returned every MCP call to the shipped generic row), and the full gate green
+  (`npm run check`: typecheck, 532 tests, build, `verify:package` including the
+  client-artifact lane, whose session fake now encodes the 0.1.7 shape). The
+  local web profile is reinstalled from the packed `0.2.1` tgz and awaits one
+  instance restart. Do not describe it as released — `v0.2.0` below is still
+  the newest published release.
 - **Published release: `v0.2.0`** — tag `v0.2.0` on `main` (`eec844e`),
   GitHub Release published 2026-09-25 with `dsh-chamber-mcp-0.2.0.tgz`
   (162,898 bytes, sha256

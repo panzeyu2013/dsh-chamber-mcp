@@ -146,8 +146,18 @@ const ctx = {
   },
   workspaces: source(() => ({ items: [], state: 'idle', phase: 'ready' })),
   sessions: {
-    list: source(() => ({ current: 's1' })),
+    // The pinned generation's shape: selection lives in the catalog ROWS
+    // (`retainedBy.mainView`), there is no list-level `current` scalar, and the
+    // retain observable is what reports a stage switch. A lane that reads only
+    // `current` registers nothing and must fail this gate.
+    list: source(() => ({
+      ids: ['s1'],
+      byId: { s1: { retainedBy: { mainView: 1 } } },
+      phase: 'ready',
+      projectionsBySession: {},
+    })),
     binding: (id) => (id === 's1' ? { eventSource: source(() => ({ entries })) } : undefined),
+    retainInfo: () => source(() => ({ retainedBy: { mainView: 1 } })),
   },
   /**
    * Optional-service seam. The tool lane registers through

@@ -14,7 +14,11 @@
  *   scan of the slot's entries, so an unbounded set would tax every tool row
  *   in the transcript);
  * - {@link startToolCardObserver} — the source. Watches the staged session's
- *   event window for `request/header` tools and feeds the diff. A missing
+ *   event window for `request/header` tools and feeds the diff. The staged
+ *   session is selected through the session list — the legacy scalar on the
+ *   0.1.5/0.1.6 line, or the 0.1.7 catalog row the main view retains
+ *   (`retainedBy.mainView`) — so a generation that moves selection does not
+ *   silently switch every MCP row back to the shipped generic one. A missing
  *   session service is not an error: the feature simply stays off and the
  *   shipped generic row renders.
  *
@@ -162,10 +166,38 @@ export interface SnapshotSource<Snapshot> {
   subscribe(listener: () => void): () => void
 }
 
+/** One catalog row, narrowed to the ownership counts this lane reads. */
+interface SessionListRowLike {
+  /** Local reference counts by source; `mainView` marks the session on screen. */
+  readonly retainedBy?: Readonly<Record<string, number>> | undefined
+}
+
+/**
+ * The list snapshot across the supported generations.
+ *
+ * The 0.1.5/0.1.6 line published the staged session as `current`; the 0.1.7
+ * line dropped that scalar and moved selection into each catalog row's
+ * `retainedBy` counts (the conversation shell retains the session it shows
+ * under `mainView`, and the shipped UI selects it the same way). A lane that
+ * only reads `current` therefore discovers NOTHING on the pinned generation:
+ * no registration, no custom row, every MCP call back on the shipped generic
+ * row — silently, because this lane is degrades-by-design.
+ */
+export interface SessionListLike {
+  /** Staged session id on the 0.1.5/0.1.6 line (absent on 0.1.7). */
+  readonly current?: unknown
+  /** Catalog rows keyed by session id (0.1.7). */
+  readonly byId?: Readonly<Record<string, SessionListRowLike | undefined>> | undefined
+  /** Catalog order; a last-resort scan when no row carries a main-view retain. */
+  readonly ids?: readonly unknown[] | undefined
+}
+
 /** The slice of `ctx.sessions` this lane reads. */
 export interface SessionsLike {
-  list: SnapshotSource<{ current?: unknown }>
+  list: SnapshotSource<SessionListLike>
   binding(id: string): { eventSource: SnapshotSource<{ entries?: readonly unknown[] }> } | undefined
+  /** Per-session retain observable (0.1.7); absent on older generations. */
+  retainInfo?(id: string): SnapshotSource<unknown> | undefined
 }
 
 /** Construction deps of the observer. */
@@ -189,15 +221,17 @@ export function startToolCardObserver(options: ToolCardObserverOptions): () => v
   const { sessions, registry } = options
   if (sessions === undefined) return () => {}
   let offEvents: (() => void) | undefined
+  let offRetain: (() => void) | undefined
   let boundId: string | undefined
+  let retainedId: string | undefined
+  let disposed = false
   // Names accumulate across sessions: a registration stays valid for the life
   // of the page, so rows in a revisited session keep their custom view even
   // when its window no longer reaches the request that first named the tool.
   const seen = new Set<string>()
 
-  const syncBound = () => {
-    if (boundId === undefined) return
-    const binding = sessions.binding(boundId)
+  const readBound = (id: string) => {
+    const binding = sessions.binding(id)
     if (binding === undefined) return
     const entries = binding.eventSource.getSnapshot().entries ?? []
     const names = mcpToolNamesOf(entries)
@@ -211,28 +245,81 @@ export function startToolCardObserver(options: ToolCardObserverOptions): () => v
     if (added) registry.sync([...seen])
   }
 
-  const bindCurrent = () => {
-    const current = sessions.list.getSnapshot().current
-    const nextId = typeof current === 'string' ? current : undefined
+  /**
+   * The staged session, resolved across the generations: the legacy scalar
+   * (`current`) when the list still publishes it, else the catalog row the
+   * main view retains (`retainedBy.mainView > 0` — the shipped UI's own
+   * selector), else the first catalog id that already holds a live binding, so
+   * a generation that renames the ownership source still finds the session the
+   * shell holds.
+   */
+  const stagedId = (): string | undefined => {
+    const snapshot = sessions.list.getSnapshot() as SessionListLike | undefined
+    if (snapshot === undefined || snapshot === null) return undefined
+    if (typeof snapshot.current === 'string') return snapshot.current
+    const rows = snapshot.byId
+    if (rows !== undefined && rows !== null && typeof rows === 'object') {
+      // Prefer the session already bound while it still carries the retain: a
+      // handover can briefly leave two rows retained, and flapping between them
+      // would detach/re-attach windows for no reason (the shipped UI keeps its
+      // current id for the same reason).
+      if (boundId !== undefined) {
+        const held = rows[boundId]?.retainedBy?.['mainView']
+        if (typeof held === 'number' && held > 0) return boundId
+      }
+      for (const [id, row] of Object.entries(rows)) {
+        const retained = row?.retainedBy?.['mainView']
+        if (typeof retained === 'number' && retained > 0) return id
+      }
+    }
+    if (Array.isArray(snapshot.ids)) {
+      for (const id of snapshot.ids) {
+        if (typeof id !== 'string') continue
+        if (sessions.binding(id) !== undefined) return id
+      }
+    }
+    return undefined
+  }
+
+  const bindStaged = () => {
+    if (disposed) return
+    const nextId = stagedId()
     if (nextId === boundId) {
-      syncBound()
+      if (nextId !== undefined) readBound(nextId)
       return
     }
     offEvents?.()
     offEvents = undefined
     boundId = nextId
-    if (nextId === undefined) return
+    if (nextId === undefined) {
+      offRetain?.()
+      offRetain = undefined
+      retainedId = undefined
+      return
+    }
+    // The main-view retain is released BEFORE the next session gains it, so
+    // watching the bound session's retain is what makes a stage switch
+    // observable even when the catalog snapshot itself does not republish.
+    if (retainedId !== nextId) {
+      offRetain?.()
+      offRetain = undefined
+      retainedId = nextId
+      offRetain = sessions.retainInfo?.(nextId)?.subscribe(() => bindStaged())
+    }
     const binding = sessions.binding(nextId)
     if (binding === undefined) return
-    offEvents = binding.eventSource.subscribe(syncBound)
-    syncBound()
+    offEvents = binding.eventSource.subscribe(() => readBound(nextId))
+    readBound(nextId)
   }
 
-  const offList = sessions.list.subscribe(bindCurrent)
-  bindCurrent()
+  const offList = sessions.list.subscribe(bindStaged)
+  bindStaged()
   return () => {
+    disposed = true
     offList()
     offEvents?.()
     offEvents = undefined
+    offRetain?.()
+    offRetain = undefined
   }
 }

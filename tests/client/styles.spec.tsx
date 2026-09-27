@@ -352,8 +352,22 @@ describe('mcp-scope stylesheet', () => {
     expect(ruleOf('.mcpScope_cardHead')).toMatch(/min-height:\s*28px/)
     // ...and a WRAPPING container keeps its lines further apart than the slop.
     expect(ruleOf('.mcpScope_cardHead')).toMatch(/row-gap:\s*10px/)
-    // The keyboard ring draws the hit box, not the bare track.
-    expect(ruleOf('.mcpScope_switchInput:focus-visible + .mcpScope_switch')).toMatch(/outline-offset:\s*4px/)
+    // The keyboard ring's OUTER edge lands exactly on the hit box, not on the
+    // bare track: a 2px offset plus the ring's own width equals the 4px slop.
+    expect(ruleOf('.mcpScope_switchInput:focus-visible + .mcpScope_switch')).toMatch(/outline-offset:\s*2px/)
+    // The track and thumb are decoration. jsdom cannot hit-test, so this pins
+    // the fix that stops the ON-state thumb — promoted into the positioned
+    // paint layer by its checked `transform`, and later in DOM order than the
+    // input — from swallowing every click on the knob; the geometry itself is
+    // verified in a real browser.
+    expect(ruleOf('.mcpScope_switch')).toMatch(/pointer-events:\s*none/)
+    // ...and no 4x28 dead column is left beside a live switch: the hit box ends
+    // at track+40, so both labels reach back 4px over that band (the padding
+    // puts the text back where it was).
+    for (const label of ['.mcpScope_wsLabel', '.mcpScope_toggleLabel']) {
+      expect(ruleOf(label), label + ' must cover the switch hit-box band').toMatch(/margin-left:\s*-4px/)
+      expect(ruleOf(label)).toMatch(/padding-left:\s*4px/)
+    }
     expect(ruleOf('.mcpScope_rowInput')).toMatch(/min-width:\s*0/)
     expect(ruleOf('.mcpScope_cardHead')).toMatch(/flex-wrap:\s*wrap/)
   })

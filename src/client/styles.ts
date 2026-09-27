@@ -829,6 +829,10 @@ export const css = `
 }
 
 .mcpScope_toggleLabel {
+  /* The same 4px dead column as the workspace row: the switch's hit box ends at
+     track+40, the label's box starts at track+44. Cover the band, move nothing. */
+  margin-left: -4px;
+  padding-left: 4px;
   font-size: 13px;
   line-height: 20px;
   font-weight: 500;
@@ -957,6 +961,13 @@ export const css = `
   /* Stretch to the row's 28px: otherwise the text run is 20px tall and the row
      keeps a 4px dead strip above and below it, right next to a live switch. */
   align-self: stretch;
+  /* The 8px flex gap leaves a 4x28 dead column: the switch's -4px hit slop
+     reaches track+40 while the label's border box starts at track+44, so a
+     click in that band hits the row background. Pull the box back by the slop
+     and push the text back out — the label covers its half of the gap and
+     nothing moves. */
+  margin-left: -4px;
+  padding-left: 4px;
   gap: 8px;
   font-size: 13px;
   line-height: 20px;
@@ -1006,9 +1017,18 @@ export const css = `
   cursor: default;
 }
 
+/* The track and its thumb are DECORATION: the hit target is the absolutely
+   positioned input above. pointer-events: none is load-bearing, not polish —
+   the ON-state thumb carries a transform (see the :checked rule below), which
+   makes it a stacking context painted in the positioned layer, and it follows
+   the input in DOM order, so a hit test over the knob lands on the thumb instead
+   of the input and the click goes nowhere. Measured in a real browser:
+   elementFromPoint at the knob's centre returned the thumb while checked, and a
+   real click there left the checkbox unchanged; this line restores it. */
 .mcpScope_switch {
   box-sizing: border-box;
   display: block;
+  pointer-events: none;
   width: 36px;
   height: 20px;
   padding: 2px;
@@ -1024,9 +1044,9 @@ export const css = `
 
 .mcpScope_switchInput:focus-visible + .mcpScope_switch {
   outline: 2px solid var(--dsw-alias-state-business-primary);
-  /* 4px = the hit slop: the ring draws exactly the clickable box (36+4+4 by
-     20+4+4), so what the keyboard shows is what the pointer hits. */
-  outline-offset: 4px;
+  /* 2px offset + the ring's own 2px puts its OUTER edge exactly on the hit box
+     (36+4+4 by 20+4+4), so what the keyboard shows is what the pointer hits. */
+  outline-offset: 2px;
 }
 
 .mcpScope_switchInput:disabled + .mcpScope_switch {

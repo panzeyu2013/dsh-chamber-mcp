@@ -8,6 +8,7 @@ import {
   DEFAULT_TOOL_VIEW_LIMIT,
   createToolCardRegistry,
   startToolCardObserver,
+  type SessionListLike,
   type SessionsLike,
   type SnapshotSource,
 } from '../../src/client/tool-card/register.ts'
@@ -188,6 +189,51 @@ describe('session window observer', () => {
     list.publish({ current: 'missing' })
     expect(second.listenerCount()).toBe(0)
     expect(registry.size()).toBe(3)
+
+    stop()
+    expect(list.listenerCount()).toBe(0)
+  })
+
+  it('finds the staged session through the 0.1.7 catalog rows (no list.current)', () => {
+    const sink = registrar()
+    const registry = createToolCardRegistry({ host: sink.host, servers: () => SERVERS })
+    const first = source({ entries: [headerEntry(['mcp__github__search'])] })
+    const second = source({ entries: [headerEntry(['mcp__fixture__greet'])] })
+    const firstRetain = source<{ retainedBy: Record<string, number> }>({ retainedBy: { mainView: 1 } })
+    // The pinned generation's list snapshot: a catalog plus per-row retain
+    // counts and NO list-level `current`. Reading only `current` here discovers
+    // nothing, which is exactly how every MCP row silently fell back to the
+    // shipped generic row.
+    const list = source<SessionListLike>({
+      ids: ['s1', 's2'],
+      byId: {
+        s1: { retainedBy: { mainView: 1 } },
+        s2: { retainedBy: {} },
+      },
+    })
+    const sessions: SessionsLike = {
+      list,
+      binding: (id) => (id === 's1' ? { eventSource: first } : id === 's2' ? { eventSource: second } : undefined),
+      retainInfo: (id) => (id === 's1' ? firstRetain : undefined),
+    }
+    const stop = startToolCardObserver({ sessions, registry })
+    expect(sink.order).toEqual(['+mcp__github__search'])
+
+    // The main view moves to s2: the catalog rows name the new stage, and the
+    // stage switch detaches the old window.
+    list.publish({
+      ids: ['s1', 's2'],
+      byId: { s1: { retainedBy: {} }, s2: { retainedBy: { mainView: 1 } } },
+    })
+    expect(sink.order).toEqual(['+mcp__github__search', '+mcp__fixture__greet'])
+    expect(first.listenerCount()).toBe(0)
+
+    // Losing the last main-view retain keeps the registered set (rows in
+    // history stay custom) and detaches the window.
+    firstRetain.publish({ retainedBy: {} })
+    list.publish({ ids: ['s1', 's2'], byId: { s1: { retainedBy: {} }, s2: { retainedBy: {} } } })
+    expect(second.listenerCount()).toBe(0)
+    expect(registry.size()).toBe(2)
 
     stop()
     expect(list.listenerCount()).toBe(0)

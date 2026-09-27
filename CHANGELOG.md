@@ -13,6 +13,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > only and ignores this one — an entry left here ships in the tree but never
 > appears in the release notes.
 
+## [0.2.1] - 2026-09-27
+
+### Fixed
+
+- **Settings: the ON-state switch knob is clickable again.** A checked switch
+  moves its thumb with `transform: translateX(16px)`, and the transform
+  promotes the thumb into the positioned paint layer *after* the absolutely
+  positioned checkbox in DOM order, so a real browser hit-tested the knob to
+  the decoration and the click did nothing: the switch could be turned ON from
+  its knob but not OFF, at all three sites (card head, workspace row, staged
+  form). The decorative track is now `pointer-events: none`, so every pixel of
+  the 44x28 target reaches the input. Alongside it: the focus ring's outer edge
+  now traces that hit box (`outline-offset: 2px`), and both switch labels reach
+  4px back over the gap between the hit box and the label text (`margin-left:
+  -4px; padding-left: 4px`), closing a 4x28 dead column that swallowed clicks.
+
+- **The MCP transcript row is back on the pinned generation.** dsh 0.1.7 moved
+  the staged-session selection out of the session list's `current` scalar and
+  into each catalog row's `retainedBy` counts, while this lane still read only
+  `current`: it discovered no MCP names at all, registered no keyed
+  `tool.call.toolview` views, and every `mcp__…` call silently fell back to the
+  shipped generic row (no plug glyph, no server·tool title, no argument
+  summary). The observer now selects the staged session the way the shipped UI
+  does — the catalog row with `retainedBy.mainView > 0`, preferring the id it
+  already bound — and watches that session's `retainInfo` for the switch. The
+  legacy `current` scalar still works, and a catalog id holding a live binding
+  is the last-resort fallback. The session fakes in the unit test and in the
+  `verify:package` artifact gate now encode the 0.1.7 shape, so this class of
+  drift cannot stay silent again.
+
 ## [0.2.0] - 2026-09-25
 
 ### Changed (breaking)
