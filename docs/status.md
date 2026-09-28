@@ -1,21 +1,26 @@
 # Status — dsh-chamber-mcp
 
 Current release, compatibility and verification state. Refreshed 2026-09-28
-(the 0.2.0-line adaptation below is prepared for the `v0.2.2` release on
-`main`; the published releases and their verification records stand unchanged
-until that tag is pushed).
+(the 0.2.0-line adaptation below shipped in `v0.2.2`, published 2026-09-28).
 
 ## Release state
 
-- **Prepared release: `v0.2.2`** — version bumped
-  (`package.json` = `package-lock.json` = `0.2.2`) and the CHANGELOG dated
-  (`## [0.2.2] - 2026-09-28`) on `main`, tag `v0.2.2` created locally. Pushing
-  the tag runs CI + Release and publishes `dsh-chamber-mcp-0.2.2.tgz`; this
-  bullet becomes the publication record (asset size/sha256, workflow runs) once
-  that run is green. Contents: the 0.2.0-generation adaptation (peer union,
-  dev-tree/CI repin, dual-anchor live smoke), the tool-row lane's
-  sessions-service probe, the per-generation compat typecheck job, and the
-  documentation/test-count corrections from the four-way review.
+- **Published release: `v0.2.2`** — tag `v0.2.2` on `main` (`3ccbec7`),
+  GitHub Release published 2026-09-28 with `dsh-chamber-mcp-0.2.2.tgz`
+  (165,272 bytes, sha256
+  `1aa1e4997eb4ccf84900092dffafd41c91e34e781e083e52498cd4d45f4a285c`) + its
+  matching `.sha256` sidecar; notes composed from `## [0.2.2] -
+  2026-09-28`. CI and Release both ran green on the push (completed
+  2026-09-28 15:51Z; the Release job re-ran the full gate, and the two CI runs
+  — branch + tag — include the new per-generation `compat` typecheck job). The
+  published tarball's 47 packed files are byte-identical to the locally gated
+  pack (only the gzip container differs by environment: local 165,278 bytes,
+  sha256
+  `822d8c7554914a2085ed59a68490f27c209288081292926ff865fe531b132c50`).
+  Contents: the 0.2.0-generation adaptation (peer union, dev-tree/CI repin,
+  dual-anchor live smoke), the tool-row lane's sessions-service probe, the
+  per-generation compat typecheck job, and the documentation/test-count
+  corrections from the four-way review.
 - **Published release: `v0.2.1`** — tag `v0.2.1` on `main` (`231acad`),
   GitHub Release published 2026-09-27 with `dsh-chamber-mcp-0.2.1.tgz`
   (164,717 bytes, sha256
@@ -107,7 +112,7 @@ until that tag is pushed).
   and the peers declare the generations this plugin was verified against. Do not
   mix generations in the dev tree, and do not pin the umbrella's own version
   when its internals resolve past it.
-- **Upstream 0.2.0-line adaptation (prepared for `v0.2.2`).** The
+- **Upstream 0.2.0-line adaptation (shipped in `v0.2.2`).** The
   `0.2.0-rc.1` tarballs (registry `next`, GitHub `dsh-v0.2.0-rc.1`,
   2026-09-28) changed no surface this plugin consumes: of the 35 packages it
   touches, 24 ship byte-identical `lib/` code (incl. `dsh-tools`,
@@ -235,7 +240,7 @@ until that tag is pushed).
 
 ## Verification state
 
-- **0.2.0-line adaptation (prepared for `v0.2.2`; no behavior change):**
+- **0.2.0-line adaptation (shipped in `v0.2.2`; no behavior change):**
   `npm run check` PASS on the repinned `0.2.0-rc.1` dev tree — `tsc` ×2,
   **535 tests / 28 files**, 47 packed entries, `verify-client-artifact` PASS,
   determinism (43 files), `verify:package` PASS. Live smoke on a scratch

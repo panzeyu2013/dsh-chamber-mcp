@@ -46,9 +46,10 @@ Prerequisites:
 
 Releases ship as a GitHub Release whose asset is the packed tarball
 (`npm publish` is temporarily disabled). The **newest published release is
-`v0.2.1`** (published 2026-09-27, tgz + `.sha256`) — two fixes on top of
-`v0.2.0`: the settings switch's ON-state hit area, and the staged-session
-discovery that restores the custom MCP tool row on the 0.1.7 generation.
+`v0.2.2`** (published 2026-09-28, tgz + `.sha256`) — dsh 0.2.0-generation
+support (the peer ranges widen to `^0.1.7-rc.2 || ^0.2.0-rc.1`) plus the
+tool-row lane's sessions-service probe; the `v0.2.1` settings and tool-row
+fixes carry forward.
 Pick it from the
 [Releases page](https://github.com/panzeyu2013/dsh-chamber-mcp/releases) and
 install it per instance:
