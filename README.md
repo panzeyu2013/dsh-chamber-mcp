@@ -274,9 +274,9 @@ scopes (`docs/design.md`).
 
 | | Version | Notes |
 |---|---|---|
-| Compile-time anchor & CI guard | dsh **0.1.7-rc.2** | every `@deepseek-ai/dsh-*` devDependency is pinned to that generation and `npm run typecheck` + tests run against it |
-| Live-verified | dsh **0.1.7-rc.2** | `npm run test:smoke` installs and boots the packed tarball through whichever anchor CLI `DSH_ANCHOR_CLI` points at, and each transcript records the version it used |
-| Peer range | `^0.1.7-rc.2` | the 0.1.7 generation (the only supported one): it owns the Config/volatile settings model (`SettingsForms` / `ctx.configForms`) and the official `createMcpToolDefinition` adapter, whose projection hook is `projectContent` |
+| Compile-time anchor & CI guard | dsh **0.2.0-rc.1** | every `@deepseek-ai/dsh-*` devDependency is pinned to that generation and `npm run typecheck` + tests run against it |
+| Live-verified | dsh **0.2.0-rc.1** and **0.1.7-rc.2** | `npm run test:smoke` installs and boots the packed tarball through whichever anchor CLI `DSH_ANCHOR_CLI` points at (one run per supported generation), and each transcript records the version it used |
+| Peer range | `^0.1.7-rc.2 \|\| ^0.2.0-rc.1` | the 0.1.7 and the 0.2.0 generation: both own the Config/volatile settings model (`SettingsForms` / `ctx.configForms`) and the official `createMcpToolDefinition` adapter, whose projection hook is `projectContent`; 0.1.7 stays in range while the 0.2.0 line is still a release candidate |
 
 - Requirement model: every configured server is **off for every workspace** of
   this dsh until an explicit per-workspace record turns the pair on (the record's
@@ -342,12 +342,12 @@ scopes (`docs/design.md`).
 ```sh
 npm install            # dev deps (all @deepseek-ai/* pinned to one dsh generation)
 npm run typecheck      # src + tests
-npm test               # vitest suite (531 tests, 28 files)
+npm test               # vitest suite (535 tests, 28 files)
 npm run check          # full gate: typecheck + tests + build + package verify
 npm run verify:package # pack → contents whitelist → consumer d.ts → built host entry import → bundle purity → MCP-row artifact check → determinism
 npm run verify:client-artifact # drive the BUILT client bundle in jsdom (MCP row + registered-tools notice registration/render/expand, incl. the PTC prompt-only source)
 npm run pack:tgz       # build + .smoke/dsh-chamber-mcp-<ver>.tgz
-npm run test:smoke     # live M0/M1 smoke (needs a 0.1.7-generation dsh CLI in DSH_ANCHOR_CLI; see docs/RELEASE.md)
+npm run test:smoke     # live M0/M1 smoke (needs a 0.1.7- or 0.2.0-generation dsh CLI in DSH_ANCHOR_CLI; see docs/RELEASE.md)
 npm run verify:workflows # action pins + release-structure invariants
 ```
 
@@ -373,8 +373,8 @@ run of `release.yml` before the tag.
 | `docs/RELEASE.md` | CI + release mechanics, smoke runner, rollback |
 
 Smoke drivers under `scripts/smoke/` boot scratch instances from the anchor CLI
-named by `DSH_ANCHOR_CLI` — a **0.1.7-generation** CLI (the only supported
-peer range; the chamber anchor must be updated first) — install the tarball
+named by `DSH_ANCHOR_CLI` — a CLI of one of the **supported generations**
+(`0.1.7` or `0.2.0`; the run should cover each of them) — install the tarball
 freshly packed from the working tree, and drive the real RPC surface. Each
 transcript records the version it used, and M0 asserts through
 `/api/mcp-scope.tools` that the supervisor actually listed the fixture

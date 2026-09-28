@@ -1,17 +1,41 @@
 // dsh-chamber-mcp smoke driver: boot a SCRATCH dsh instance from the anchor CLI
-// DSH_ANCHOR_CLI names — which must be a 0.1.7-generation CLI (the plugin's peer
-// range since 0.2.0; the default path is the chamber gateway's anchor, read at
-// run time with cliVersion() rather than assumed) — and drive its HTTP RPC
-// surface. boot() fails fast when the CLI is older. Wire generation used below:
+// DSH_ANCHOR_CLI names — which must satisfy the plugin's declared
+// `@deepseek-ai/dsh-*` PEER RANGE (the peers are the support contract; the
+// default path is the chamber gateway's anchor, read at run time with
+// cliVersion() rather than assumed) — and drive its HTTP RPC surface. boot()
+// fails fast, naming the range it evaluated, for a CLI the peers do not cover.
+// Wire generation used below:
 // slash typert endpoints (/api/settings/describe etc.), payloads {args:{...}}
 // inside the client-request envelope, launch-token cookie auth.
 import { execFileSync, spawn } from 'node:child_process'
 import { mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import semver from 'semver'
 
 export const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..')
 export const SMOKE = join(ROOT, '.smoke')
+
+/**
+ * The generation range every `@deepseek-ai/dsh-*` peer declares. The driver
+ * gates on the DECLARED range rather than a hand-kept list of generations, so
+ * it can never refuse a CLI the runtime itself accepts (or wave through one the
+ * runtime refuses): `0.2.1` must pass while `0.1.7-alpha.2` must fail, and the
+ * manifest stays the one place that decides.
+ *
+ * @throws when the dsh peers stop sharing one range — the gate would then be
+ *   ambiguous, and the manifest should be fixed rather than guessed around.
+ */
+export const PEER_RANGE = (() => {
+  const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+  const ranges = [...new Set(Object.entries(manifest.peerDependencies ?? {})
+    .filter(([name]) => String(name).startsWith('@deepseek-ai/dsh-'))
+    .map(([, range]) => String(range)))]
+  if (ranges.length !== 1) {
+    throw new Error(`@deepseek-ai/dsh-* peers must share one generation range, found: ${ranges.join(' | ')}`)
+  }
+  return ranges[0]
+})()
 
 export const ANCHOR_CLI =
   process.env.DSH_ANCHOR_CLI ??
@@ -89,14 +113,17 @@ export class Instance {
 
   /** Boot dsh web headless against a scratch DSH_HOME. Resolves once the URL line appears. */
   async boot(timeoutMs = 60_000, extraEnv = {}) {
-    // Peer range of the plugin under test: an older anchor cannot activate its
-    // entry at all (0.1.7 moved settings into each entry's own Config), so fail
-    // with the fix instead of a confusing entry-activation error.
+    // Peer range of the plugin under test: a CLI outside it is refused by the
+    // runtime's own compatibility preflight at install and activation time, and
+    // an older one cannot activate the entry at all (0.1.7 moved settings into
+    // each entry's own Config), so fail with the range instead of a confusing
+    // entry-activation error. `includePrerelease` mirrors the runtime's own
+    // evaluation: the release candidates inside the range are supported ones.
     const anchorVersion = cliVersion(ANCHOR_CLI)
-    if (!anchorVersion.startsWith('0.1.7')) {
+    if (!semver.satisfies(anchorVersion, PEER_RANGE, { includePrerelease: true })) {
       throw new Error(
-        `anchor CLI is dsh@${anchorVersion} (${ANCHOR_CLI}); dsh-chamber-mcp 0.2.0 requires the 0.1.7 generation — ` +
-        'point DSH_ANCHOR_CLI at a dsh@0.1.7-rc.2 CLI (see docs/status.md "How to re-verify")',
+        `anchor CLI is dsh@${anchorVersion} (${ANCHOR_CLI}); dsh-chamber-mcp declares its @deepseek-ai/dsh-* peers as "${PEER_RANGE}" — ` +
+        'point DSH_ANCHOR_CLI at a CLI inside that range (see docs/status.md "How to re-verify")',
       )
     }
     const env = {

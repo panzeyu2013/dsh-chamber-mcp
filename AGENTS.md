@@ -16,14 +16,15 @@ state: `docs/status.md`.
 
 Upstream generation: the `@deepseek-ai/dsh-*` devDependencies pin **one resolved
 generation** — the compile-time API surface and the CI guard — and the peer
-ranges declare the generations this plugin was verified against. Since 0.2.0
-that is the 0.1.7 line only (`0.1.7-rc.2` in the dev tree, peers
-`^0.1.7-rc.2`), which owns the Config/volatile settings model and the
-`createMcpToolDefinition` adapter. Do not mix generations in the dev tree, and
-do not pin the umbrella's own version when its internals resolve past it. The
-live smoke installs and boots through the anchor CLI `DSH_ANCHOR_CLI` names,
-read at run time (it must be a 0.1.7-generation CLI). Migration recipe:
-`docs/RELEASE.md`.
+ranges declare the generations this plugin was verified against. Since the
+0.2.0-line adaptation that is `0.2.0-rc.1` in the dev tree with peers
+`^0.1.7-rc.2 || ^0.2.0-rc.1`: both lines own the Config/volatile settings model
+and the `createMcpToolDefinition` adapter this plugin consumes, and the 0.1.7
+line stays supported while the 0.2.0 line is still a release candidate. Do not
+mix generations in the dev tree, and do not pin the umbrella's own version when
+its internals resolve past it. The live smoke installs and boots through the
+anchor CLI `DSH_ANCHOR_CLI` names, read at run time (it must be a CLI of one of
+the supported generations). Migration recipe: `docs/RELEASE.md`.
 
 ## Where things live
 
@@ -91,5 +92,6 @@ read at run time (it must be a 0.1.7-generation CLI). Migration recipe:
 `npm run check` (typecheck + tests + build + verify:package),
 `node scripts/release-notes.mjs <version>`, `node
 scripts/verify-workflow-action-pins.mjs`, then the live smoke
-(`npm run test:smoke`, with `DSH_ANCHOR_CLI` pointing at a 0.1.7-generation
-CLI) on the smoke machine. Full runbook: `docs/RELEASE.md`.
+(`npm run test:smoke`) **once per declared generation** — `DSH_ANCHOR_CLI`
+pointing at a 0.1.7-generation and at a 0.2.0-generation CLI — on the smoke
+machine. Full runbook: `docs/RELEASE.md`.

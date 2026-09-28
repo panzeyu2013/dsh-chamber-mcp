@@ -70,8 +70,8 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        # No --legacy-peer-deps: since the 0.2.0 generation move every
-        # @deepseek-ai devDep is pinned to the SAME generation (0.1.7-rc.2), so
+        # No --legacy-peer-deps: every @deepseek-ai devDep is pinned to the
+        # SAME resolved generation (0.2.0-rc.1), so
         # npm resolves the peer graph unaided — the release gate must resolve
         # exactly like the CI gate in ci.yml (see its comment for the rationale).
         run: npm ci --no-audit --no-fund

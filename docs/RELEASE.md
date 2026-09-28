@@ -57,7 +57,13 @@ npm ci --no-audit --no-fund && npm run check
 node scripts/release-notes.mjs "$(node -p "require('./package.json').version")"   # notes compose
 node scripts/verify-workflow-action-pins.mjs                                      # pins + release structure
 
-# 3. recommended: live smoke on the smoke machine
+# 3. live smoke on the smoke machine — ONE RUN PER DECLARED GENERATION. The
+#    peers ARE the support window, so a declared line without a run is an
+#    unverified claim. The driver itself gates on the declared peer range and
+#    names it when an anchor is outside it.
+export DSH_ANCHOR_CLI=<scratch>/dsh@0.1.7-rc.2/node_modules/@deepseek-ai/dsh/lib/bin.js
+npm run test:smoke
+export DSH_ANCHOR_CLI=<scratch>/dsh@0.2.0-rc.1/node_modules/@deepseek-ai/dsh/lib/bin.js
 npm run test:smoke
 
 # 4. what the remote actually has (never quote a released version from memory)
@@ -151,25 +157,30 @@ Compatibility notes for consumers:
 - Peers (`@deepseek-ai/dsh-*`, cordis) are resolved from the dsh install's
   fallback farm; only `@modelcontextprotocol/client`, `@deepseek-ai/schemastery`
   and `zod` are real dependencies installed by pnpm.
-- Support window: **`^0.1.7-rc.2`** — the 0.1.7 generation only, verified
-  live. The pinned devDependency set and the CI guard are `0.1.7-rc.2` with
-  cordis 4.0.4 and schemastery `^3.18.4`. 0.1.7 owns the Config/volatile
-  settings model (forms derived from each Loader entry's own `Config`,
-  persisted by `dsh-config-editor` into the profile patch) and the official
-  `createMcpToolDefinition` adapter, whose projection hook is
-  `projectContent` (0.1.6's `finalizeContent` was renamed for the
-  pre-policy slot). The 0.1.5/0.1.6 generation — the shared settings
-  namespace (`installSection`/`settingsScope`) and the plugin's own text
-  projection — is no longer supported. A dsh upgrade that changes the typed
-  surface triggers a compat release; CI typecheck against the installed dsh
-  set is the guard.
+- Support window: **`^0.1.7-rc.2 || ^0.2.0-rc.1`** — the 0.1.7 and the
+  0.2.0 generation, each verified live. The pinned devDependency set and the
+  CI guard are `0.2.0-rc.1` with cordis 4.0.4 (schemastery `^3.18.4` is a
+  runtime dependency, not a dev one; `semver` is the smoke driver's gate).
+  Both lines own the Config/volatile settings model (forms derived from each
+  Loader entry's own `Config`, persisted by `dsh-config-editor` into the
+  profile patch) and the official `createMcpToolDefinition` adapter, whose
+  projection hook is `projectContent` (0.1.6's `finalizeContent` was
+  renamed for the pre-policy slot). The 0.1.5/0.1.6 generation — the shared
+  settings namespace (`installSection`/`settingsScope`) and the plugin's
+  own text projection — is no longer supported. A dsh upgrade that changes
+  the typed surface triggers a compat release; CI typecheck against the
+  installed dsh set is the guard. Note that the installed set is ONE
+  generation: widening a peer range is what declares the other line, and
+  every declared line needs its own live smoke run.
 - **What the generation publishes.** Prompt instructions are attached to a
   literal `mcp:<server>` system-prompt section, and `ctx.mcpResources` is
   provided so the official resource tools can reach this plugin's servers.
-- **The live smoke runs against an anchor in the support window.** Point
-  `DSH_ANCHOR_CLI` at a 0.1.7-generation CLI (for a local run,
-  `npm install @deepseek-ai/dsh@0.1.7-rc.2` in a scratch directory and point at
-  its `@deepseek-ai/dsh/lib/bin.js`); each transcript records the version it
+- **The live smoke runs against an anchor in the support window — one run
+  per supported generation.** Point `DSH_ANCHOR_CLI` at a 0.1.7- or
+  0.2.0-generation CLI (for a local run, `npm install
+  @deepseek-ai/dsh@0.1.7-rc.2` and `npm install @deepseek-ai/dsh@0.2.0-rc.1`
+  in separate scratch directories and point at their
+  `@deepseek-ai/dsh/lib/bin.js`); each transcript records the version it
   used. Note that the M1 driver installs through `dsh plugin add`, which
   delegates to pnpm inside the profile directory: on a checkout whose
   `package.json` declares `packageManager`, corepack's strict mode can refuse
@@ -212,6 +223,20 @@ Compatibility notes for consumers:
      browser half calls** (that is the upstream convention, e.g.
      `dsh-client-locale`). It is load-bearing for boot-graph factory arrival
      and entry composition, not decoration.
+  5. **A compatible typed surface is NOT a compatible install.** The runtime
+     has evaluated every `@deepseek-ai/dsh-*` peer of a profile bundle
+     against its own version since the 0.1.7 line
+     (`evaluatePluginCompatibility`, prerelease-inclusive; the function is
+     byte-identical in 0.1.7-rc.2 and 0.2.0-rc.1) and REFUSES an out-of-range
+     bundle: `dsh plugin add` exits 1 with `installation rejected …
+     incompatible …`, and the boot-time profile preflight denies the row.
+     What a new upstream line changes is only the runtime version the declared
+     range is compared against. Measured on 2026-09-28 with
+     `dsh@0.2.0-rc.1` and the then-current `0.2.1` peers
+     (`^0.1.7-rc.2`): typecheck and the full 535-test suite were clean
+     against the 0.2.0 dependency set — the refusal came from the declared
+     range alone. Widen or bump the peers as part of the new-line audit, and
+     run the smoke on the new anchor as the proof.
 
 ## Smoke — what the self-hosted job runs
 

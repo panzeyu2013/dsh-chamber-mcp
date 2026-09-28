@@ -1,9 +1,21 @@
 # Status — dsh-chamber-mcp
 
-Current release, compatibility and verification state. Refreshed 2026-09-27.
+Current release, compatibility and verification state. Refreshed 2026-09-28
+(the 0.2.0-line adaptation below is prepared for the `v0.2.2` release on
+`main`; the published releases and their verification records stand unchanged
+until that tag is pushed).
 
 ## Release state
 
+- **Prepared release: `v0.2.2`** — version bumped
+  (`package.json` = `package-lock.json` = `0.2.2`) and the CHANGELOG dated
+  (`## [0.2.2] - 2026-09-28`) on `main`, tag `v0.2.2` created locally. Pushing
+  the tag runs CI + Release and publishes `dsh-chamber-mcp-0.2.2.tgz`; this
+  bullet becomes the publication record (asset size/sha256, workflow runs) once
+  that run is green. Contents: the 0.2.0-generation adaptation (peer union,
+  dev-tree/CI repin, dual-anchor live smoke), the tool-row lane's
+  sessions-service probe, the per-generation compat typecheck job, and the
+  documentation/test-count corrections from the four-way review.
 - **Published release: `v0.2.1`** — tag `v0.2.1` on `main` (`231acad`),
   GitHub Release published 2026-09-27 with `dsh-chamber-mcp-0.2.1.tgz`
   (164,717 bytes, sha256
@@ -86,15 +98,54 @@ Current release, compatibility and verification state. Refreshed 2026-09-27.
 
 ## Compatibility
 
-- Node ≥ 24; a dsh instance of the **0.1.7 generation** (peers
-  **`^0.1.7-rc.2`**). The 0.1.5/0.1.6 generation is no longer supported: 0.2.0
-  removed the local tool-adapter port, `verify:low-generation` and the
-  low-generation smoke with it.
+- Node ≥ 24; a dsh instance of the **0.1.7 or the 0.2.0 generation** (peers
+  **`^0.1.7-rc.2 || ^0.2.0-rc.1`**). The 0.1.5/0.1.6 generation is no longer
+  supported: 0.2.0 removed the local tool-adapter port,
+  `verify:low-generation` and the low-generation smoke with it.
 - The `@deepseek-ai/dsh-*` devDependencies pin one resolved generation — the
-  compile-time API surface and the CI guard (**`0.1.7-rc.2`** on this line) —
-  and the peers declare the generation this plugin was verified against. Do not
+  compile-time API surface and the CI guard (**`0.2.0-rc.1`** on this line) —
+  and the peers declare the generations this plugin was verified against. Do not
   mix generations in the dev tree, and do not pin the umbrella's own version
   when its internals resolve past it.
+- **Upstream 0.2.0-line adaptation (prepared for `v0.2.2`).** The
+  `0.2.0-rc.1` tarballs (registry `next`, GitHub `dsh-v0.2.0-rc.1`,
+  2026-09-28) changed no surface this plugin consumes: of the 35 packages it
+  touches, 24 ship byte-identical `lib/` code (incl. `dsh-tools`,
+  `dsh-mcp-client`, `dsh-settings`, `dsh-client-ui-settings`,
+  `dsh-client-ui-renderer`, `dsh-client-ui-slots`, `dsh-mcp-resources`,
+  `dsh-agent`, `dsh-credentials`, `dsh-client-connection`,
+  `dsh-api-gateway`); the client service/slot catalog's 97 keys are identical
+  and our three slot blocks are byte-identical; `dsh-client-ui-tool` changed
+  only the generic row's shimmer; `dsh-config-editor`'s rewritten
+  `configuration()` was proven equivalent over five row shapes. The tree as a
+  whole has 59 packages with code changes (e.g. `dsh-agent-loop`,
+  `dsh-api-session-controller`, `dsh-cordis-client-runner`,
+  `dsh-terminal-bash`, `dsh-workflow-ptc`), none touching a contract this
+  plugin calls — the session service's diff is one optional `onCreated`
+  parameter on `fork` (seam-by-seam table: `docs/design.md` §5(c)(9)). What
+  DID break is the install gate, not an API: the runtime has compared every
+  `@deepseek-ai/dsh-*` peer against its own version since the 0.1.7 line
+  (`evaluatePluginCompatibility`, byte-identical in both lines), so the old
+  range was refused purely by version (`dsh: installation rejected …
+  peerDependencies ^0.1.7-rc.2 …` on `dsh@0.2.0-rc.1`). The peers are now
+  `^0.1.7-rc.2 || ^0.2.0-rc.1` and the dev tree is repinned to `0.2.0-rc.1`.
+  The 0.1.7 line stays declared (and live-verified) while the 0.2.0 line is a
+  release candidate; drop it when upstream retires it. No plugin behavior
+  changed — the edit is `package.json` peers/devDeps (the smoke driver now
+  gates on that declared range via `semver`) plus docs and one stale
+  `src/tools.ts` comment.
+- **Known cosmetic drift on the 0.2.0 line (deliberately not patched yet).**
+  Two upstream defaults moved: `dsh-client-ui-chat`'s transcript-view default
+  is now `detailed` (more process detail visible by default, where the
+  injected row lives), and `dsh-client-ui-primitives`' switch paints the OFF
+  thumb with `--dsw-alias-switch-thumb` — a token the 0.1.7 theme does not
+  declare (light `neutral-bluish-00`, dark `neutral-bluish-400`). This
+  plugin's switch still mirrors the 0.1.7 sheet
+  (`--dsw-alias-label-primary-foreground`) because the style seat forbids
+  token fallbacks (S4), so on a 0.2.0 host in dark theme the OFF knob keeps
+  the 0.1.7 colour until 0.1.7 leaves the peer range and the token can be
+  switched outright. Cosmetic; the browser half was not visually re-checked on
+  0.2.0 (the smoke is headless).
 - Each Loader entry's own exported `Config` IS its settings form: this
   plugin's document (`servers`/`overrides`/`disabled`) lives in the profile
   patch row `{ id: mcp-scope, name: dsh-chamber-mcp, config: … }`, every field
@@ -117,13 +168,18 @@ Current release, compatibility and verification state. Refreshed 2026-09-27.
   (1.x) is no longer a dependency at all.
 - The live smoke installs *and* boots through the anchor CLI `DSH_ANCHOR_CLI`
   names, reading its `dsh` version at run time and recording it in the
-  transcript; the anchor must be a 0.1.7-generation CLI (the driver fails fast
-  otherwise). The chamber gateway's anchor must be upgraded to 0.1.7 before this
-  release can be installed there.
-- **Upstream dist-tags (measured 2026-09-25):** `@deepseek-ai/dsh`
-  `latest` = `0.1.5-rc.3`, `next` = `0.1.7-rc.2`, `alpha` =
-  `0.1.7-alpha.2`. This line targets `next`; re-check the peer range when
-  `latest` moves to the 0.1.7 line.
+  transcript; the driver gates on the plugin's DECLARED `@deepseek-ai/dsh-*`
+  peer range and fails fast with that range when the anchor is outside it (see
+  `docs/RELEASE.md` §Auditing a new upstream line). Every declared peer line
+  gets its own run. The
+  chamber gateway's anchor must be upgraded to a supported generation before a
+  new release can be installed there.
+- **Upstream dist-tags (measured 2026-09-28):** `@deepseek-ai/dsh`
+  `latest` = `0.1.7-rc.2`, `next` = `0.2.0-rc.1`, `alpha` =
+  `0.1.7-alpha.2`. There is no stable `0.2.0` on the registry yet — the
+  0.2.0 line exists only as the `dsh-v0.2.0-rc.1` release candidate. This
+  line targets `next` and still declares `latest`; re-check the peer range
+  when `latest` moves to the 0.2.0 line.
 - **What 0.1.7 provides and this plugin consumes:** the per-entry
   `Config` settings model with `dsh-config-editor` persistence and volatile
   in-place commits; `SettingsForms`/`ConfigForms`; `createMcpToolDefinition`
@@ -178,6 +234,33 @@ Current release, compatibility and verification state. Refreshed 2026-09-27.
 - Internal Loader entry id (settings form + legacy import target): `mcp-scope`.
 
 ## Verification state
+
+- **0.2.0-line adaptation (prepared for `v0.2.2`; no behavior change):**
+  `npm run check` PASS on the repinned `0.2.0-rc.1` dev tree — `tsc` ×2,
+  **535 tests / 28 files**, 47 packed entries, `verify-client-artifact` PASS,
+  determinism (43 files), `verify:package` PASS. Live smoke on a scratch
+  `npm i @deepseek-ai/dsh@0.2.0-rc.1` anchor (`DSH_ANCHOR_CLI` → its
+  `lib/bin.js`): the peers-widened tarball **installs** (M0 exit 0), while
+  the same tree packed with its peers still at `^0.1.7-rc.2` is REFUSED on
+  the same anchor with `installation rejected … incompatible …` — both facts
+  measured — the row reads `fiberPhase: "active"`, `settings/describe`
+  serves the `mcp-scope` form (`revision=0
+  value={"servers":[],"overrides":{},"disabled":{}}`), a `settings/mutate`
+  lands as `revision=1`, the stale-revision write is refused,
+  `/api/mcp-scope.tools` lists `mcp__fixture__echo` /
+  `mcp__fixture__env_report` and re-asserts that listing after an instance
+  RESTART with no settings write in between (the activation-time reconcile);
+  **M1 exit 0** with `R3-live-capture: not-captured` (the same
+  headless-anchor limitation as on 0.1.7). The same `test:smoke` pair was
+  re-run on the chamber's `0.1.7-rc.2` anchor: **M1 + M0 exit 0** (install +
+  activation + listing + restart reconcile), so both declared generations are
+  live-verified on this tree.
+  Earlier, on the unmodified tree, typecheck (src + tests) and the full 535-test
+  suite already passed against the `0.2.0-rc.1` dependency set — the install
+  gate, not the API, was the blocker. The smoke driver's generation gate is now
+  the DECLARED peer range evaluated with `semver` (`includePrerelease`), so a
+  future `0.2.1`/`0.1.8` anchor passes while `0.1.7-alpha.2` / `0.2.0-beta.1`
+  fail, matching the runtime's own evaluation instead of a version-prefix test.
 
 - **0.2.0 (published `v0.2.0`, tag `eec844e`; migrated to the 0.1.7 generation):**
   `npm run check` PASS — `tsc` ×2, **531 tests / 28 files**, 47 packed entries,
@@ -302,8 +385,8 @@ Current release, compatibility and verification state. Refreshed 2026-09-27.
   either way: the driver reports the verdict without failing on it.
 - **The 0.1.5/0.1.6 generation is unsupported as of 0.2.0.** The plugin's
   verbatim port of the official tool adapter (and its parity suite) was removed
-  with that generation, and so was `npm run verify:low-generation`; 0.1.7 is the
-  only peer range.
+  with that generation, and so was `npm run verify:low-generation`; the peer
+  ranges are 0.1.7 and 0.2.0.
 - **`npm run test:smoke` packs `lib/`, not `src/`.** Run `npm run build` (or
   the full `npm run check`) first, or the smoke silently exercises the PREVIOUS
   build — a stale `lib/tools.js` once kept the static adapter import and
@@ -346,13 +429,13 @@ Current release, compatibility and verification state. Refreshed 2026-09-27.
 
 ```sh
 npm run check                                    # typecheck + tests + build + pack surface
-node scripts/release-notes.mjs 0.2.0             # the dated CHANGELOG section (before tagging)
+node scripts/release-notes.mjs "$(node -p "require('./package.json').version")"  # dated CHANGELOG section
 npm run verify:workflows                         # action pins + release structure
-# Live smoke on the ONLY supported generation (0.1.7): the chamber anchor must
-# be a 0.1.7 CLI before `npm run test:smoke` can pass. For a local run:
+# Live smoke on EVERY supported generation — one run per anchor. For a local run:
 #   mkdir -p .scratch/anchor-017 && (cd .scratch/anchor-017 && npm i --no-audit @deepseek-ai/dsh@0.1.7-rc.2)
-#   export DSH_ANCHOR_CLI="$PWD/.scratch/anchor-017/node_modules/@deepseek-ai/dsh/lib/bin.js"
-#   npm run test:smoke
+#   mkdir -p .scratch/anchor-020 && (cd .scratch/anchor-020 && npm i --no-audit @deepseek-ai/dsh@0.2.0-rc.1)
+#   export DSH_ANCHOR_CLI="$PWD/.scratch/anchor-017/node_modules/@deepseek-ai/dsh/lib/bin.js" && npm run test:smoke
+#   export DSH_ANCHOR_CLI="$PWD/.scratch/anchor-020/node_modules/@deepseek-ai/dsh/lib/bin.js" && npm run test:smoke
 # pnpm EAGAIN workaround: some sandboxes fail pnpm's store→profile copy
 # (`EAGAIN ... copyfile`). Pin the import method to hardlink in the scratch
 # home's .npmrc (store and profile both live under .smoke, same filesystem):
@@ -363,12 +446,13 @@ npm run verify:workflows                         # action pins + release structu
 #   mkdir -p .smoke/bin && ln -sf "$(command -v node)" .smoke/bin/node
 #   printf '#!/bin/sh\nexec node /Applications/dsh-chamber.app/Contents/Resources/pnpm/bin/pnpm.cjs "$@"\n' > .smoke/bin/pnpm
 #   chmod +x .smoke/bin/pnpm
-# then point the driver at it and at a 0.1.7-generation anchor CLI:
+# then point the driver at it and at a supported-generation anchor CLI:
 #   export DSH_SMOKE_NODE="$PWD/.smoke/bin/node"
 #   export DSH_SMOKE_NODE_BIN_DIR="$PWD/.smoke/bin"
-#   export DSH_ANCHOR_CLI="$PWD/.smoke/anchor-017/node_modules/@deepseek-ai/dsh/lib/bin.js"
-#     (install `npm i @deepseek-ai/dsh@0.1.7-rc.2` into a scratch dir and point at
-#      its node_modules/@deepseek-ai/dsh/lib/bin.js)
+#   export DSH_ANCHOR_CLI="$PWD/.smoke/anchor-020/node_modules/@deepseek-ai/dsh/lib/bin.js"
+#     (install `npm i @deepseek-ai/dsh@0.1.7-rc.2` and/or
+#      `npm i @deepseek-ai/dsh@0.2.0-rc.1` into scratch dirs and point at the
+#      one under test's node_modules/@deepseek-ai/dsh/lib/bin.js)
 #   npm run test:smoke
 git ls-remote --tags origin                      # what is actually released
 ```

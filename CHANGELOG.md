@@ -13,6 +13,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > only and ignores this one — an entry left here ships in the tree but never
 > appears in the release notes.
 
+## [0.2.2] - 2026-09-28
+
+### Added
+
+- **dsh 0.2.0-generation support.** Peer ranges are now
+  `^0.1.7-rc.2 || ^0.2.0-rc.1`, so both the 0.1.7 line and the 0.2.0 line
+  install; the dev tree and the CI guard move to the resolved `0.2.0-rc.1`
+  generation (cordis 4.0.4; `schemastery` `^3.18.4` unchanged). The blocker
+  was never the API: the runtime has compared every `@deepseek-ai/dsh-*` peer
+  of a profile bundle against its own version since the 0.1.7 line
+  (`evaluatePluginCompatibility`, prerelease-inclusive, byte-identical in both
+  lines), so the previous `^0.1.7-rc.2` range was refused purely by version —
+  on a real `dsh@0.2.0-rc.1` instance, `dsh plugin --profile web add` exited 1
+  with `installation rejected: Plugin dsh-chamber-mcp@0.2.1 is incompatible
+  with dsh 0.2.0-rc.1: peerDependencies {… "^0.1.7-rc.2" …}`, and the
+  boot-time preflight denies the row the same way. The consumed surface is
+  unchanged: 24 of the 35 packages this plugin touches ship byte-identical
+  `lib/` code, the slot/service key catalog is identical, `dsh-client-ui-tool`
+  differs only in the generic row's shimmer, and `dsh-config-editor`'s
+  rewritten `configuration()` was proven equivalent — the tree-wide diff (59
+  packages with code changes) touches no contract this plugin calls. No
+  production code changed (one stale comment synced). The live smoke driver's
+  generation gate now evaluates the DECLARED peer range with `semver` rather
+  than a version prefix, so `0.2.1`/`0.1.8` anchors pass while
+  `0.1.7-alpha.2`/`0.2.0-beta.1` fail exactly as the runtime decides; the
+  M1 + M0 pair runs green on a `0.2.0-rc.1` anchor and on the chamber's
+  `0.1.7-rc.2` anchor.
+
 ### Fixed
 
 - **The MCP tool-row lane can no longer throw into a framework publish path.**

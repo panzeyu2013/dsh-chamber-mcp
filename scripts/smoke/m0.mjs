@@ -1,6 +1,7 @@
 // M0 smoke for dsh-chamber-mcp against a scratch instance booted from the
-// DSH_ANCHOR_CLI anchor, which must be a 0.1.7-generation CLI (the run
-// transcript records the version it actually used; boot() fails fast otherwise).
+// DSH_ANCHOR_CLI anchor, which must be a CLI of a supported generation (the
+// 0.1.7 or the 0.2.0 line; the run transcript records the version it actually
+// used; boot() fails fast otherwise).
 // Phases: setup (workspaces/creds/baseline), install (dsh plugin add tgz + restart),
 // plugin (namespace R/W + revision conflict), gate (server add → spawn → sessions in
 // two workspaces with ws-b off → apply/revoke log evidence).

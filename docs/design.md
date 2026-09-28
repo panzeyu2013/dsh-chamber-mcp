@@ -258,7 +258,7 @@ Run: `npm run typecheck` (both tsconfigs) and
 2. **ToolRuntime mount**: `ToolRuntime` has `static inject = ['systemPrompt']`
    and its constructor calls `ctx.systemPrompt.tools(...)` unconditionally —
    the real `@deepseek-ai/dsh-system-prompt` must be mounted first
-   (added as a devDependency, pinned to the `0.1.7-rc.2` generation at HEAD;
+   (added as a devDependency, pinned to the `0.2.0-rc.1` generation at HEAD;
    official recipe `ctx.plugin(SystemPrompt)` then
    `ctx.plugin(ToolRuntime)`). `ctx.tools` only exists after that.
 3. **`SettingsForms` replaced the namespace seam (0.1.7).** There is no
@@ -278,7 +278,7 @@ Run: `npm run typecheck` (both tsconfigs) and
    agent scope ctx). `get(name, scopeKey?)` takes the scope key object
    (identity-compared) — the live Agent is its own key; omitted = global view.
 5. **Dev-tree consistency**: every `@deepseek-ai/*` devDependency is pinned to
-   the one resolved generation (`0.1.7-rc.2` on this line, with cordis 4.0.4,
+   the one resolved generation (`0.2.0-rc.1` on this line, with cordis 4.0.4,
    schemastery `^3.18.4` and `@deepseek-ai/cordis-plugin-loader` for the
    `loader/volatile-update` Events merge), so a plain `npm install`/`npm ci`
    resolves the tree — no peer relaxation. The `dsh-settings-file` devDependency
@@ -405,11 +405,21 @@ flags and the full config is green at the time of writing.
    fiber and die with it — verified by disposing the scope ctx in tests);
    disposers are only invoked while the agent is still live in the registry
    (`agents.get(id) === agent`).
-9. **One supported host generation: dsh 0.1.7.** The client layer is v2
-   (`@modelcontextprotocol/client@2.0.0` is this plugin's OWN dependency, not a
-   host surface), the definition build always goes through the official
+9. **Two supported host generations: dsh 0.1.7 and 0.2.0.** The client layer is
+   v2 (`@modelcontextprotocol/client@2.0.0` is this plugin's OWN dependency,
+   not a host surface), the definition build always goes through the official
    `createMcpToolDefinition` (canonical validation, durable image admission),
-   and the peers are `^0.1.7-rc.2`. The local text projection and the
+   and the peers are `^0.1.7-rc.2 || ^0.2.0-rc.1`. The two lines do not differ
+   on any surface this plugin touches (measured 2026-09-28: 24 of the 35
+   packages in the touched set ship byte-identical `lib/` code, the client
+   slot/service key catalog is identical with our three slot blocks
+   byte-identical, `dsh-client-ui-tool` changed only the generic row's
+   shimmer, and `dsh-config-editor`'s rewritten `configuration()` is
+   equivalent over five row shapes — audit recipe in `docs/RELEASE.md`
+   §Auditing a new upstream line), but they are NOT interchangeable at install
+   time: the runtime's profile preflight evaluates the peer range against its
+   own version and refuses an out-of-range bundle (`installation rejected …
+   incompatible …`), so each declared line needs its own live smoke run. The local text projection and the
    runtime builder selection were removed with the old generation. Two host
    facts are load-bearing:
 
@@ -1093,9 +1103,18 @@ tag exist?" check has two failure modes that matter here:
   The last disposer removes the tag.
 
 Mirroring the primitive CSS rather than importing it also keeps the plugin
-working on the supported peer range (`^0.1.7-rc.2`) without a compile-time
-dependency on the primitives' JS API — the geometry is copied from the pinned
-generation, which §9.3 pins property by property.
+working on the supported peer ranges (`^0.1.7-rc.2 || ^0.2.0-rc.1`) without a
+compile-time dependency on the primitives' JS API — the geometry is copied from
+the pinned generation, which §9.3 pins property by property.
+
+One sheet moved on the 0.2.0 line and is deliberately NOT followed while 0.1.7
+is declared: the official switch paints the OFF-state thumb with
+`--dsw-alias-switch-thumb` (absent from the 0.1.7 theme; light
+`neutral-bluish-00`, dark `neutral-bluish-400`), while this sheet keeps the
+0.1.7 `--dsw-alias-label-primary-foreground`. A `var(--new, var(--old))`
+fallback would follow the 0.2.0 theme automatically, but the style gate's S4
+forbids colour fallbacks on tokens (a fallback silently defeats the token when
+it goes missing). Switch the token outright when 0.1.7 leaves the peer range.
 
 ### 9.2 What was replaced
 

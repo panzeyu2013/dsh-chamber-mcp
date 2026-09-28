@@ -41,8 +41,8 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        # No --legacy-peer-deps: since the 0.2.0 generation move every
-        # @deepseek-ai devDep is pinned to the SAME generation (0.1.7-rc.2), so
+        # No --legacy-peer-deps: every @deepseek-ai devDep is pinned to the
+        # SAME resolved generation (0.2.0-rc.1), so
         # the peer graph is internally consistent and npm resolves it unaided.
         # Mixing a generation's umbrella with another generation's internals
         # (the old cross-line matrix) is what used to force the relaxed
@@ -76,6 +76,30 @@ jobs:
           if-no-files-found: error
         if: always()
 
+  # The generations the peers declare besides the dev tree's own. The dev tree
+  # (0.2.0-rc.1) is covered by `check`; this job compiles the same src + tests
+  # against each other declared line, so a peer claim is never wider than an
+  # actual compile on that generation. Add the next line here on a generation
+  # move, in lockstep with the package.json peer range.
+  compat:
+    name: compat typecheck (@deepseek-ai/dsh-* 0.1.7-rc.2)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        generation: ['0.1.7-rc.2']
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Setup Node 24
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Typecheck against ${{ matrix.generation }}
+        run: node scripts/verify-generation.mjs ${{ matrix.generation }}
+
   # Optional live smoke against a real dsh instance (manual dispatch only).
   # Requires a SELF-HOSTED runner tagged `dsh-smoke` that has the
   # chamber-anchored dsh CLI (see docs/RELEASE.md §smoke); label registered
@@ -99,5 +123,29 @@ jobs:
       - name: Build & pack
         run: npm run build && mkdir -p .smoke && npm run pack:tgz
 
-      - name: Run M0/M1 live smoke
-        run: npm run test:smoke
+      # One run per declared generation (AGENTS.md "What must pass before
+      # tagging"). DSH_SMOKE_ANCHORS is an optional comma-separated list of
+      # anchor CLI paths set as a repository variable; unset reproduces the
+      # historical single run against the driver's own default anchor (the
+      # chamber gateway's). The driver refuses an anchor outside the declared
+      # peer range, so every entry must be a supported-generation CLI; each run
+      # gets its own ports so sequential runs cannot collide.
+      - name: Run M0/M1 live smoke (one run per declared generation)
+        env:
+          DSH_SMOKE_ANCHORS: ${{ vars.DSH_SMOKE_ANCHORS }}
+        run: |
+          anchors="${DSH_SMOKE_ANCHORS:-}"
+          if [ -z "$anchors" ]; then
+            echo "DSH_SMOKE_ANCHORS is not set - running the driver's default anchor only."
+            npm run test:smoke
+            exit 0
+          fi
+          IFS=',' read -r -a list <<< "$anchors"
+          i=0
+          for cli in "${list[@]}"; do
+            cli="${cli//[[:space:]]/}"
+            [ -n "$cli" ] || continue
+            i=$((i + 1))
+            echo "=== live smoke run $i: $cli ==="
+            DSH_ANCHOR_CLI="$cli" DSH_SMOKE_PORT_M0=$((32140 + i * 10)) DSH_SMOKE_PORT_M1=$((32145 + i * 10)) npm run test:smoke
+          done

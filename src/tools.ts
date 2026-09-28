@@ -10,7 +10,7 @@
  * thing ever sent in `tools/call`; public names are never parsed back.
  *
  * The definition BUILD is the OFFICIAL `createMcpToolDefinition` from
- * `@deepseek-ai/dsh-mcp-client` — the only supported generation (dsh 0.1.7+).
+ * `@deepseek-ai/dsh-mcp-client` — the supported generations (dsh 0.1.7 / 0.2.0).
  * It owns canonical result validation, `taskRequired` refusal, `isError` →
  * throw and DURABLE IMAGE ADMISSION: an image block becomes an attachment when
  * the composition provides an attachment store and the current model route
