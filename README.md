@@ -4,386 +4,134 @@
 [![Release](https://img.shields.io/github/v/release/panzeyu2013/dsh-chamber-mcp?display_name=tag)](https://github.com/panzeyu2013/dsh-chamber-mcp/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 
-**MCP servers, per workspace, from the dsh Settings UI.** A standalone
-third-party [dsh](https://github.com/deepseek-ai/deepseek-harness) plugin:
-declare MCP servers once (stdio or Streamable HTTP), then decide **per
-workspace** — with a switch — whether that workspace's sessions see their
-tools.
+**简体中文** ｜ [English](docs/README.en.md)
 
-- **Settings-native management.** *Settings → MCP servers* (`MCP 服务器`) adds,
-  edits and removes servers; no `cordis.patch.yml` editing and no instance
-  restart to change what runs.
-- **Per-workspace tool scopes, off by default.** A server reaches a
-  workspace's model-visible tool set only after that workspace is explicitly
-  enabled for it — a new server, a new workspace and a fresh session carry no
-  MCP tools until then — and switching it off removes
-  `mcp__<serverName>__*` from that workspace's sessions at the injection layer,
-  not merely at execution time.
-- **Credential refs, not secrets.** The settings document stores ref names
-  only; values are write-only, live in the dsh credentials domain, and never
-  ride a settings document, an API response or a log line.
-- **Official bridge contract.** Naming (`mcp__<serverName>__<tool>`), result
-  mapping, env scrubbing, generation swap on `tools/list_changed` and the
-  backoff reconnect policy mirror `@deepseek-ai/dsh-mcp-client`.
-- **Hand-editing works, with a clear split.** UI writes commit live into the
-  running plugin's volatile Config (only the affected servers cycle); a
-  hand-edit of the profile patch row is read at the next boot, where the loader
-  validates it before the plugin runs.
+> **MCP 服务器，按工作区，从 dsh 设置界面管理。**
+> 声明一次服务器（stdio 或 Streamable HTTP），再用开关决定 **哪些工作区** 的会话能看见它的工具。默认：一个都不给。
 
-All state lives in the dsh settings domain of the instance the plugin is
-installed into; nothing is shared across dsh instances. **dsh-chamber itself
-never seeds, bundles or special-cases this plugin** — it is an ordinary
-`dsh plugin` install.
+独立的第三方 [dsh](https://github.com/deepseek-ai/deepseek-harness) 插件，一次普通的 `dsh plugin` 安装——dsh-chamber 不预置、不捆绑、不特判。
 
-## Install
+## 为什么需要它
 
-Prerequisites:
+dsh 自带的 `@deepseek-ai/dsh-mcp-client` 负责把 MCP **桥**进模型，但不负责"管"：
 
-- a dsh instance of the supported generation (see [Compatibility](#compatibility));
-- `dsh` on `PATH`, plus **pnpm** and **Node ≥ 24** — the toolchain the `dsh
-  plugin` CLI uses to install the package (not a runtime requirement of the
-  plugin itself, which is loaded by the dsh host).
+- 一台服务器 = 补丁配置里的一行，增删改都要手编 `cordis.patch.yml`；
+- 密钥以字面量（或 `!!js process.env.X`）写在同一个文件里；
+- 工具注册在"组合它的那个上下文"里——宿主行落在 **全局层**，于是**每个**会话都背着全部 MCP 工具：既烧上下文，也可能误调。
 
-Releases ship as a GitHub Release whose asset is the packed tarball
-(`npm publish` is temporarily disabled). The **newest published release is
-`v0.2.2`** (published 2026-09-28, tgz + `.sha256`) — dsh 0.2.0-generation
-support (the peer ranges widen to `^0.1.7-rc.2 || ^0.2.0-rc.1`) plus the
-tool-row lane's sessions-service probe; the `v0.2.1` settings and tool-row
-fixes carry forward.
-Pick it from the
-[Releases page](https://github.com/panzeyu2013/dsh-chamber-mcp/releases) and
-install it per instance:
+上游也没有可复用的替代面：*设置 → 插件 → 插件配置*只为"Config 暴露了可编辑字段"的 entry 渲染表单（官方 MCP 客户端一个字段都没有），插件列表只读，`dsh-workspace` 只做项目分组、不注册任何工具——**没有现成机制把"工作区"映射到"一组工具"**。
+
+本插件补的正是这两块：**管理面**（设置界面）和**作用域**（按工作区注入的能力门）。
+
+## 核心优点
+
+| 优点 | 具体表现 |
+| --- | --- |
+| **设置界面原生管理** | *设置 → MCP 服务器* 里增删改查，不碰 `cordis.patch.yml`；UI 写入提交到**正在运行**的插件上，只重启受影响的服务器，不重启实例 |
+| **按工作区注入，默认全关** | 新服务器对**每个**工作区都是关的；新工作区、新会话不会凭空多出 MCP 工具。关掉某工作区 = 从该工作区会话的**工具表**里撤销 `mcp__<serverName>__*`——模型可见层面的变化，不只是执行时拦截 |
+| **凭据引用，不是密钥** | 设置文档里只有 ref 名；值存在 dsh 凭据域、**只写不可读**，永远不出现在设置文档、API 响应或日志行里 |
+| **MCP 专用转录行** | 调用渲染为插件通过 keyed `tool.call.toolview` 槽注册的 MCP 行：插头标记、`server · tool` 标题、传输标签、运行/成功/失败/中断状态，可展开参数与结果——而不是官方通用卡片 |
+| **官方桥接契约** | 命名 `mcp__<serverName>__<tool>`、结果与图像映射、子进程环境清洗、`tools/list_changed` 世代切换、500ms→30s 退避重连，全部对齐官方客户端；MCP **资源**也经官方 `mcpResources` provider 可达 |
+| **手改与 UI 分工清晰** | UI 写入 = 实时、叶子级 YAML diff（注释/锚点/格式保留）；手改补丁行 = 下次启动生效，loader 先校验再运行 |
+
+## 30 秒上手
+
+前置：一个受支持代际的 dsh 实例；`dsh` 在 PATH 上；Node ≥ 24 与 pnpm（`dsh plugin` 的安装工具链，不是插件的运行时要求——插件由 dsh 宿主加载）。
 
 ```sh
-# into the web profile of one dsh instance (per-instance management)
+# 从 GitHub Release 资产安装（npm 发布暂时关闭；<version> 见 Releases 页）
 dsh plugin --profile web add \
   https://github.com/panzeyu2013/dsh-chamber-mcp/releases/download/v<version>/dsh-chamber-mcp-<version>.tgz
 
-# or build and install the local package
+# 或本地打包安装
 npm run pack:tgz
 dsh plugin --profile web add file:./.smoke/dsh-chamber-mcp-<version>.tgz
 
-# restart the instance afterwards (the profile bundle list changed)
+# 装完重启一次实例（profile 的 bundle 列表变了）
 ```
 
-Once npm publishing is re-enabled, `dsh plugin --profile web add dsh-chamber-mcp`
-installs the same content from the registry.
+1. 打开 *设置 → MCP 服务器* → **添加服务器**。两种传输：**stdio**（名称、命令、参数、可选工作目录、环境变量键）与 **Streamable HTTP**（URL、请求头行）。支持粘贴导入（整条命令行、`.env` 行、请求头行）与单服务器 JSON 导入。
+2. 新服务器**对每个工作区都是关的**。点卡片上的 **管理工作区 (N 开)** 展开全部工作区逐个打开——这一步就是"这对（服务器 × 工作区）生效"的全部含义；工作区多于一个时还有 **全部开启 / 全部关闭**。服务器名旁的开关是**全局**开关：停用即不启动、哪里都不注册工具，配置留在盘上。
+3. 每张卡片带实时状态（connected / connecting / reconnecting / failed / stopped / disabled / unknown）、**连接** / **断开** / **测试**，以及 **工具 (N)**（展开已同步的工具名）；**编辑** 重开表单，**移除** 到处停掉并清掉不再被引用的凭据 ref。分区头有名称过滤与 **刷新状态**。
 
-What the install does:
+## 一次会话能拿到什么
 
-- the package's `dsh.bundle` patch inserts one loader row (`mcp-scope`); the
-  browser half is discovered through the package's `dsh.client` declaration;
-- the settings section appears at nav order 25, after
-  智能体预设 / Agent presets. The first boot right after install may race the
-  client-module scan — **restart once** if it is missing;
-- data is bound to that instance's `$DSH_HOME`: the plugin's own Loader entry
-  config in `profiles/<profile>/cordis.patch.yml` holds the `mcp-scope`
-  document (an installation upgrading from the old generation imports its
-  `settings.yaml` section once); secret values live only in
-  `.credentials.yaml` and are never returned by any API.
+| 会话 | 拿到 MCP 工具？ |
+| --- | --- |
+| 工作区根会话，且该工作区对这台的开关为开 | 是——`mcp__<serverName>__<rawName>` |
+| 工作区根会话，但开关是关 | 否——定义被从该 agent 的 scope 撤销 |
+| cwd 不在任何已注册工作区的会话 | 否 |
+| 子代理 / 委派子会话 | 继承父会话的工作区（`continuable` 再受 `toolFilter` 收窄） |
 
-## Use
+- **工具就是请求里的普通 tool schema**：计入输入框旁上下文环的 **工具定义** 一项（上下文环只在模型报告过用量后显示）；服务器发布 `instructions` 时另加一段 `### MCP server: <name>` 提示段。
+- **名字会归一化**：`mcp__<serverName>__<rawName>` 裁到 ≤64 字符的 `[A-Za-z0-9_-]`；有损归一化时追加 12 位 SHA-256 身份后缀，两个不同 MCP 工具永远不会塌成同一个名字；`tools/call` 里发的是原始 MCP 名。
+- **列表有界**：官方 `listMaxPages`(64) + 插件每台 2000 工具上限；不收敛或超限 → 同步失败并保留上一代工具；调用 60s 超时，随 run 的 signal 中止。
 
-1. Open *Settings → MCP servers* and choose **Add server**. Two transports:
-   - **stdio** — server name, command, arguments (passed verbatim, `shell:
-     false`), optional working directory, and env-key rows. Each key names a
-     credential ref whose resolved value is injected into the child env; the
-     row's value input is write-only.
-   - **Streamable HTTP** — URL and header rows (name + write-only credential
-     ref).
-2. A new server is **off in every workspace** of this dsh; the card lists the
-   **enabled** workspaces only — the ones explicitly switched on — and shows
-   nothing in their place when there are none (the switches are the state: no
-   note line restates it). **Manage
-   workspaces (N on)** reveals every workspace row — switching one on/off drops
-   `mcp__<serverName>__*` from that workspace's sessions — plus **All on /
-   All off** once more than one workspace exists. The switch beside the server
-   name is the **global** enable: a disabled server is not started and exposes no
-   tools anywhere, while its configuration stays on disk.
-3. Each card also carries its live **runtime status** (connected / connecting /
-   reconnecting / failed / stopped / disabled / unknown), a localized failure line,
-   **Connect** / **Disconnect** and **Test**. Disconnect is a real stop and
-   survives unrelated settings edits; editing the definition or pressing
-   Connect brings it back (including after the reconnect budget is exhausted).
-   Test uses a throwaway connection unless the server is already connected, and
-   the section header carries a **Refresh status** action.
-4. **Tools (N)** discloses the synced tool names of a connected server.
-5. **Edit** reopens the staged form (enable switch and per-server timeout
-   included); **Remove** stops the server everywhere and clears credential refs
-   that no remaining server references. The form guards unsaved changes, and
-   accepts clipboard pastes (a full command line, `.env` lines, header lines)
-   plus a single-server JSON import.
-6. The section header has a name filter once servers exist.
+## 配置在哪里
 
-Servers connect when the plugin starts (host activation lifecycle, like the
-official client) and reconnect with the official backoff policy — the Connect
-step never blocks dsh boot. The runtime status/actions ride the same `/api`
-Connection surface the rest of the GUI uses, so a remote/authenticated
-deployment (including the chamber gateway proxy) needs no extra configuration;
-if that surface is absent the section degrades to "runtime status unavailable"
-and every document feature keeps working.
-
-## What the model sees
-
-The plugin is an **injection gate**, not a permission filter. Tools are
-registered into the *tool scope of each live agent* whose session is a
-workspace root session in an enabled workspace — never into a global registry.
-
-| Session | Gets MCP tools? |
-|---|---|
-| Workspace root session, server on for that workspace | Yes — `mcp__<serverName>__<rawName>` |
-| Workspace root session, workspace switched off for that server | No — the definitions are revoked from that agent's scope |
-| Session whose cwd is outside every registered workspace | No |
-| Delegation / subagent child (`origin: 'subagent'`) | Yes — it inherits the parent's workspace, minus the names a `continuable` child's delegator `toolFilter` excludes (`docs/design.md` §4) |
-
-Consequences worth knowing:
-
-- **Disabling a workspace is a model-visible change**: the tools disappear from
-  the tool list the model is offered, not just from what it may execute.
-  Live sessions are updated on the next reconcile (a settings commit or a
-  server re-sync), and the change lands in the next request's tool list.
-- **The tools are part of the context.** MCP definitions are ordinary tool
-  schemas on the request, so they appear in the composer's context meter (the
-  ring beside the send button) under **工具定义 / Tool definitions**, priced
-  heuristically from the request's tool array. A server that publishes
-  `instructions` additionally contributes a literal `### MCP server: <name>`
-  prompt section (not counted by the tool-definition line). The meter itself
-  renders only after the model has reported usage for the session.
-- **A call renders as an MCP row, not the generic card.** The plugin owns how
-  its calls render through the keyed `tool.call.toolview` slot: the leading mark
-  is a plug, the title is `serverName · toolName` with a `stdio` / `Streamable HTTP`
-  transport tag, and the row expands to the raw arguments and the rendered
-  result. A **running** call carries the sweep treatment and a primary title
-  and reports `aria-busy`; a **settled** call drops the animation and shows its
-  duration; a **failed** call yields the leading mark to the shipped red status
-  dot and puts the failure's first line on the summary in the error colour; an
-  **interrupted** call shows the amber dot. The disclosure behaviour is the
-  shipped one too: click or Enter/Space expands, and the leading glyph swaps to
-  the chevron on hover or while open. The view set is derived
-  from the session's own event stream — every tool the request header offered
-  plus every call the transcript actually shows — so a call outside that set, or
-  a tool past the registration cap, falls back to the shipped generic card
-  instead of breaking the transcript.
-- **Names are normalized, never colliding.** A public name is
-  `mcp__<serverName>__<rawName>` trimmed to the DeepSeek function-name contract
-  (≤ 64 chars of `[A-Za-z0-9_-]`); when normalization is lossy, a 12-hex
-  SHA-256 identity suffix is appended so two distinct MCP tools can never
-  collapse into one name. The raw MCP name is what is sent in `tools/call`.
-- **Rich content is the official adapter's.** An image block becomes a durable
-  attachment when the composition provides an attachment store and the current
-  model route declares image input; otherwise it projects a diagnostic line
-  (`[image unavailable: …]`) while the canonical value keeps the raw block —
-  base64 never reaches model history. Audio and embedded resources project as
-  diagnostics.
-- **Tool calls time out after 60 s** (official default) and are aborted with
-  the run's signal. A listing that does not converge (the client's own
-  `listMaxPages`, 64) or that exceeds the plugin's 2000-tool cap fails the sync
-  and keeps its previous tool generation.
-
-## Where the configuration lives
-
-The document IS the plugin's own Loader entry config: one row in the active
-profile's user patch, `$DSH_HOME/profiles/<profile>/cordis.patch.yml`. Every
-field is volatile, so the host commits a settings write into the **running**
-plugin in place (no remount, and untouched servers keep their connection).
+配置就是插件自己的 Loader entry Config——profile 用户补丁 `$DSH_HOME/profiles/<profile>/cordis.patch.yml` 里的一行：
 
 ```yaml
 - id: mcp-scope
   name: dsh-chamber-mcp
   config:
-    servers:                        # one entry per server; serverName is the identity
+    servers:                        # serverName 是身份
       - serverName: github
-        transport: streamable-http  # or stdio: command/args/cwd/envKeys
+        transport: streamable-http  # 或 stdio：command/args/cwd/envKeys
         url: https://mcp.example.com/x
         headers:
           - name: Authorization
-            ref: GITHUB_TOKEN       # a credential REF, never a value
-    overrides:                      # presence = that workspace is ON (default off)
+            ref: GITHUB_TOKEN       # 凭据引用，绝不是值
+    overrides:                      # 存在 = 该工作区为开（默认关）
       ws-2f1c:
         github: true
 ```
 
-- Credential **values** never ride this document — only ref names. The values
-  live in the credentials domain (default on-machine provider:
-  `$DSH_HOME/.credentials.yaml`), written write-only from the UI.
-- An installation upgrading from the 0.1.5/0.1.6 generation keeps its data: on
-  first boot the host imports the old `settings.yaml` `mcp-scope:` section
-  into that row and renames the file `settings.yaml.imported`.
-- **Where the document lives:** the row `{ id: mcp-scope, name:
-  dsh-chamber-mcp, config: … }` in the profile's
-  `profiles/<profile>/cordis.patch.yml`. Writes made through the UI are
-  leaf-level YAML diffs, so comments, anchors and formatting survive on every
-  untouched node.
-- **UI writes are live; hand edits apply at boot.** A form write commits the
-  volatile fields into the running fiber in place, so adding or removing a
-  server, or flipping an override, starts/stops/restarts only the affected
-  servers — no instance restart. The file is NOT watched: a hand edit takes
-  effect at the next boot/restart, where the loader validates the whole Config
-  before the plugin runs.
-- A hand-edit must satisfy the same rules the UI enforces: a unique
-  `serverName` (`[A-Za-z0-9_-]{1,32}`, and not `__proto__` / `constructor` /
-  `prototype`), a required `command` (stdio) or `url` (http), no duplicate env
-  keys or header names, credential refs matching `[A-Za-z_][A-Za-z0-9_]*`, and
-  `overrides` values of exactly `true`. The schema enforces shape plus the
-  name/ref contracts; the cross-field rules (duplicates) are enforced by the UI
-  before a write.
-- An edit that breaks the *schema* keeps its entry from activating at boot: the
-  instance log names the error and the section reports unavailable until the row
-  is fixed (there is no in-place repair form). Everything the schema shape still
-  admits (non-object rows, duplicate serverNames, non-`true` enable bits) is
-  canonicalized by the host read path.
+- **服务器身份** = `serverName`；`overrides` 的值必须恰好是 `true`；跨字段唯一性（重名服务器 / 重复 env 键 / 重复请求头名）由编辑器在写入前拦截，schema 只管形状与命名契约。
+- **凭据值**只在凭据域（默认 `$DSH_HOME/.credentials.yaml`）。
+- 从 0.1.5/0.1.6 代际升级：首次启动把旧 `settings.yaml` 的 `mcp-scope:` 段导入一次，并把文件改名为 `settings.yaml.imported`。
+- 手改若破坏 schema，该 entry 启动时**不激活**：日志点名错误，设置分区显示不可用（没有就地修复表单）。
 
-## Uninstall
+## 兼容性
+
+| | 版本 |
+| --- | --- |
+| 编译期锚点 / CI 守卫 | dsh **0.2.0-rc.1** |
+| 实机验证 | dsh **0.2.0-rc.1** 与 **0.1.7-rc.2** |
+| peer 范围 | `^0.1.7-rc.2 \|\| ^0.2.0-rc.1` |
+
+0.2.0 线仍是 RC 期间同时保留 0.1.7 线；两条线都提供本插件依赖的 Config/volatile 设置模型与官方 `createMcpToolDefinition` 适配器。
+
+## 排障
+
+| 现象 | 处理 |
+| --- | --- |
+| 设置里没有 *MCP 服务器* 分区 | 装完的客户端模块扫描竞态——重启一次实例 |
+| 分区在，但提示设置不可用 | 宿主半边没加载（profile 补丁里的 `mcp-scope` 行）或连接只读；检查该行后重启 profile |
+| 工具一直不出现 | 依次确认：会话 cwd 是**已注册工作区**；这台服务器对该工作区是**开**；服务器已连接且列出过工具（实例日志 `mcp-scope(...)`） |
+| 手改补丁没生效 | schema 非法会让整个 entry 不激活（分区不可用 + 日志点名）；改用 UI，或修好那一行 |
+| 崩过一次后服务器不工作 | 退避重连 500ms→30s、每次中断 10 次；放弃后重载插件或重启实例 |
+| 密钥输入框保存后看着是空的 | 设计如此：值只写。徽标只显示 *已配置 / 未配置 / 状态未知* |
+| 想临时关掉插件又不卸载 | 用 `dsh web --patch <file>` 覆盖该行：`- id: mcp-scope` 下写 `disabled: true` |
+
+## 卸载
 
 ```sh
-dsh plugin --profile web remove dsh-chamber-mcp   # + restart the instance
+dsh plugin --profile web remove dsh-chamber-mcp   # 之后重启实例
 ```
 
-Removing the package stops the servers and drops the settings section. The
-configured data remains in the profile's `cordis.patch.yml` row
-(`- id: mcp-scope`) — delete that row to remove it, and the related refs from
-`$DSH_HOME/.credentials.yaml` (manual, documented; values are write-only, so the
-UI cannot read them back). A `settings.yaml` left from the 0.1.5/0.1.6
-generation was imported once and renamed `settings.yaml.imported`; it is inert.
+卸载会停掉服务器并移除设置分区；数据仍留在 profile 补丁的 `- id: mcp-scope` 行里（删掉该行即清除），相关 ref 需从 `$DSH_HOME/.credentials.yaml` 手工删除（值只写，UI 读不回来）。
 
-## Relationship to the official dsh MCP client
+## 文档
 
-dsh already ships `@deepseek-ai/dsh-mcp-client`, and this plugin deliberately
-mirrors its bridge contract. It exists because the official client covers only
-part of what "manage MCP servers for this dsh" means:
-
-| | official `dsh-mcp-client` | this plugin |
-|---|---|---|
-| Where servers are configured | the Cordis composition (`cordis.patch.yml`, `dsh web --patch`) — one loader row per server | the dsh **Settings UI**, written to the plugin's own loader row in the profile patch |
-| Secret handling | literals (or `!!js process.env.X`) in that config file | **credential refs**; values live in the credentials domain and never ride the settings document or any API response |
-| Who sees the tools | whatever context the row is composed in — host-level rows land in the **global layer**, so every agent/session sees them | **only the tool scopes of enabled workspaces**; disabling a workspace removes the server's tools from that workspace's model-visible set |
-| Enable/disable, add/remove | edit the config file and reload | per-workspace switches + add/remove in the UI (live); the profile-patch row remains hand-editable and applies at boot |
-| MCP capabilities bridged | tools only | tools, **plus resources** (the plugin contributes the `mcpResources` provider, so the official resource tools can reach its servers) |
-| Naming / env scrub / reconnect / generation swap | `mcp__<serverName>__<tool>`, scrubbed child env, backoff reconnect, `tools/list_changed` re-sync | the same contract, verified against it |
-| The call's row in the transcript | whatever the shipped tool row renders (generic card, title = tool name) | an **MCP row** owned through the keyed `tool.call.toolview` slot: plug mark, `server · tool` title, transport tag, shipped state marks (red/amber dots) and disclosure behaviour, expandable arguments + result |
-| Image results | bridged to attachments when the model accepts images | the same bridge through the official `createMcpToolDefinition` adapter, with its durable image admission and diagnostics |
-
-Stock dsh has no MCP management surface to reuse: the Plugins → *Plugin
-configuration* tab renders a form only for an entry whose Config exposes
-editable fields (the official client exposes none), the plugin list is
-read-only, and `dsh-workspace` is a project-grouping registry that registers no
-tools — so no upstream mechanism maps a workspace to a tool set; this plugin
-supplies one through its own Loader-entry settings form and per-agent tool
-scopes (`docs/design.md`).
-
-## Compatibility
-
-| | Version | Notes |
-|---|---|---|
-| Compile-time anchor & CI guard | dsh **0.2.0-rc.1** | every `@deepseek-ai/dsh-*` devDependency is pinned to that generation and `npm run typecheck` + tests run against it |
-| Live-verified | dsh **0.2.0-rc.1** and **0.1.7-rc.2** | `npm run test:smoke` installs and boots the packed tarball through whichever anchor CLI `DSH_ANCHOR_CLI` points at (one run per supported generation), and each transcript records the version it used |
-| Peer range | `^0.1.7-rc.2 \|\| ^0.2.0-rc.1` | the 0.1.7 and the 0.2.0 generation: both own the Config/volatile settings model (`SettingsForms` / `ctx.configForms`) and the official `createMcpToolDefinition` adapter, whose projection hook is `projectContent`; 0.1.7 stays in range while the 0.2.0 line is still a release candidate |
-
-- Requirement model: every configured server is **off for every workspace** of
-  this dsh until an explicit per-workspace record turns the pair on (the record's
-  own-property presence IS the enable; see
-  [Where the configuration lives](#where-the-configuration-lives)).
-- Sessions outside any registered workspace (plain cwd sessions) never receive
-  MCP tools. Delegation/subagent children inherit their parent's workspace, so they
-  receive the workspace's enabled servers too. A **continuable** child is further
-  restricted by the `toolFilter` its delegator persisted in the child's own
-  `subagent/descriptor`; a one-shot child has no such durable record (upstream
-  writes its descriptor after adoption, without the filter), so a `toolFilter`
-  configured on a one-shot delegation cannot be mirrored by any plugin — the child
-  gets the workspace's servers, nothing more. A child can never widen its own
-  surface beyond the workspace it inherits.
-- Out of scope by design: no file/CLI management surface, no toolPolicy
-  allow/ask/deny, no custom naming (`docs/acceptance.md`, cut list C1–C2/C6).
-  The 0.0.3 line deliberately supersedes the original pause/status/on-demand
-  connect cuts (C3–C5) with the global enable switch, the runtime status
-  surface and manual Connect/Disconnect/Test — see the extended matrix E1–E8.
-
-## Security & trust model
-
-- **A configured MCP server is code you chose to run.** stdio servers execute
-  as the dsh instance's user with the instance's filesystem access; streamable
-  HTTP servers receive whatever their headers carry. Configure only servers you
-  trust, and treat their tool output as untrusted input.
-- **Credentials are write-only.** Values are resolved per (re)connect from the
-  credentials domain; missing and empty refs are omitted with a warning, and
-  resolved values containing CR/LF/NUL are rejected at the transport boundary
-  so they can neither inject headers/env nor forge log lines. Warnings name the
-  ref, never the value.
-- **Child environments are scrubbed.** stdio children inherit neither `DSH_*`
-  nor credential-shaped ambient variables — only the keys you declare
-  explicitly; spawn is `shell: false` (no shell interpolation).
-- **Remote input is bounded.** `tools/list` aggregation is capped by the
-  client itself (`listMaxPages`, 64 — the non-converging-cursor defence), the
-  plugin caps the TOTAL listed tools at `MAX_SYNC_TOOLS` = 2000 per server, and
-  invalid results fail closed to the previous tool generation. Input schemas pass
-  through unchanged. An advertised output schema is compiled by the MCP client
-  (`@modelcontextprotocol/client@2.0.0`) and enforced on the result, so a server
-  whose schema rejects its own payload fails the call instead of degrading to an
-  unconstrained result.
-- **A failed connection stops being dangerous.** After 10 consecutive failed
-  reconnect attempts the supervisor gives up and **unregisters the server's
-  tools** rather than leaving half-dead entries; reconnect resumes on plugin
-  reload / instance restart.
-
-## Troubleshooting
-
-| Symptom | Cause / fix |
-|---|---|
-| No *MCP servers* section in Settings | The post-install client-module scan raced. Restart the instance once; verify with `dsh plugin --profile web list` that the bundle is installed. |
-| Section renders, but says settings are unavailable | The client is read-only or the entry's settings form is not served to this connection — check that the host half loaded (loader row `mcp-scope`) and the profile was restarted. |
-| A tool never appears in a session | Check, in order: the session's cwd is a **registered workspace** (roots AND delegation children inherit it); the server is **on** for that workspace (not switched off); the server is connected and listed tools (see the instance log for `mcp-scope(...)`). A narrowed delegation child only gets the names its own durable `toolFilter` admits — for a one-shot child that filter is not observable, so nothing is withheld there. |
-| A hand-edited profile patch had no effect | An invalid value keeps the whole entry from activating (the loader validates the Config before it runs), so the section reports unavailable and the instance log names the error. Fix the row, or edit through the UI, which validates first. A `settings.yaml` left from the old generation is imported once and renamed `.imported`; edits after that are ignored. |
-| A server stopped working after a crash | The supervisor reconnects with 500 ms → 30 s backoff, 10 attempts per outage. After giving up, reload the plugin or restart the instance. |
-| Secret input looks empty after saving | By design: values are write-only. The badge shows *Configured* / *Not configured* / *Status unknown*; only the stored ref name is in the settings document. |
-| I want to switch the plugin off without uninstalling it | Compose a patch over the profile (`dsh web --patch <file>`) that disables the loader row: under `- id: mcp-scope`, set `disabled: true` (the row is visible in `dsh --dump-config`). The servers stop and the settings section disappears; the profile-patch row (and its config) stays on disk. |
-| I want to know whether the MCP tools count toward context | Yes — they are ordinary tool schemas in the request. Open the context meter beside the composer's send button and read **工具定义 / Tool definitions** (see [What the model sees](#what-the-model-sees)). |
-
-## Development
-
-```sh
-npm install            # dev deps (all @deepseek-ai/* pinned to one dsh generation)
-npm run typecheck      # src + tests
-npm test               # vitest suite (535 tests, 28 files)
-npm run check          # full gate: typecheck + tests + build + package verify
-npm run verify:package # pack → contents whitelist → consumer d.ts → built host entry import → bundle purity → MCP-row artifact check → determinism
-npm run verify:client-artifact # drive the BUILT client bundle in jsdom (MCP row + registered-tools notice registration/render/expand, incl. the PTC prompt-only source)
-npm run pack:tgz       # build + .smoke/dsh-chamber-mcp-<ver>.tgz
-npm run test:smoke     # live M0/M1 smoke (needs a 0.1.7- or 0.2.0-generation dsh CLI in DSH_ANCHOR_CLI; see docs/RELEASE.md)
-npm run verify:workflows # action pins + release-structure invariants
-```
-
-CI (`.github/workflows/ci.yml`, Node 24 on push/tags/PR + dispatch) runs the full
-gate and uploads the tarball; releases are tag-driven (`v*` →
-`.github/workflows/release.yml` → GitHub Release whose asset is the packed
-`dsh-chamber-mcp-<version>.tgz` plus its `.sha256`; npm publish is temporarily
-disabled). See `docs/RELEASE.md` for the release checklist and smoke-runner
-requirements.
-
-Contributing: every change that alters behaviour needs a `CHANGELOG.md` entry
-(releases compose their notes from the dated section), a passing `npm run check`,
-and — for workflow or release-mechanics changes — one `workflow_dispatch` dry
-run of `release.yml` before the tag.
-
-## Documentation
-
-| Doc | Contents |
-|---|---|
-| `docs/design.md` | Architecture and decisions, upstream contracts and deliberate deviations, the style seat and the UI layout reference |
-| `docs/acceptance.md` | Requirement/cut matrix (R1–R4, E1–E8, C1–C6) |
-| `docs/status.md` | Current release/verification state and known limitations |
-| `docs/RELEASE.md` | CI + release mechanics, smoke runner, rollback |
-
-Smoke drivers under `scripts/smoke/` boot scratch instances from the anchor CLI
-named by `DSH_ANCHOR_CLI` — a CLI of one of the **supported generations**
-(`0.1.7` or `0.2.0`; the run should cover each of them) — install the tarball
-freshly packed from the working tree, and drive the real RPC surface. Each
-transcript records the version it used, and M0 asserts through
-`/api/mcp-scope.tools` that the supervisor actually listed the fixture
-server's tools on that anchor.
+| 文档 | 内容 |
+| --- | --- |
+| [`docs/README.en.md`](docs/README.en.md) | 本 README 的英文版 |
+| [`docs/design.md`](docs/design.md) | 架构：宿主机/浏览器两半、监管器与注入模型、设置文档、上游契约与刻意偏离、UI 布局参考 |
+| [`docs/acceptance.md`](docs/acceptance.md) | 需求与裁剪矩阵（R1–R4 / E1–E8 / C1–C6） |
+| [`docs/status.md`](docs/status.md) | 当前发布与验证状态、已知限制 |
+| [`docs/RELEASE.md`](docs/RELEASE.md) | 发布与 CI 运行手册 |
 
 ## License
 
-[MIT](LICENSE). Tool-naming, sync/generation-swap, executor and transport
-semantics mirror the reference implementation
-`@deepseek-ai/dsh-mcp-client` (Copyright © 2026 DeepSeek, MIT); see `LICENSE`
-for the attribution notice.
+[MIT](LICENSE)。工具命名、同步/世代切换、执行器与传输语义对齐官方参考实现 `@deepseek-ai/dsh-mcp-client`（Copyright © 2026 DeepSeek, MIT）；署名声明见 `LICENSE`。

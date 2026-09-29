@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > only and ignores this one — an entry left here ships in the tree but never
 > appears in the release notes.
 
+### Changed
+
+- **README restructured around positioning.** The root `README.md` is now
+  Chinese and reader-first: what the plugin is, why the official MCP client is
+  not enough, six core advantages, a 30-second quick start, and a compact
+  reference for session behaviour, context cost, configuration and
+  troubleshooting. `docs/README.en.md` is the English mirror and
+  `docs/README.md` links both. No code or behaviour change.
+
 ## [0.2.2] - 2026-09-28
 
 ### Added

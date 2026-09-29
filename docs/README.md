@@ -1,11 +1,12 @@
 # dsh-chamber-mcp — docs index
 
 Design, status, decisions and process for this repository. Start with the root
-[`README.md`](../README.md) for what the plugin is and how to install and use
-it.
+[`README.md`](../README.md) (Chinese) for what the plugin is and how to install
+and use it; [`README.en.md`](README.en.md) is the English mirror.
 
 | Doc | Contents |
 |---|---|
+| [`README.en.md`](README.en.md) | English README: positioning, core advantages, quick start, configuration, compatibility, troubleshooting |
 | [`design.md`](design.md) | Architecture: host/browser halves, supervisor and injection model, settings document, runtime routes; plus upstream contracts, deliberate deviations, the style seat and the UI layout reference (wireframe: [`mcp-desktop-layout.svg`](mcp-desktop-layout.svg)) |
 | [`acceptance.md`](acceptance.md) | Requirement/cut matrix: the locked scope, the extended line (E1–E8, re-based on 0.1.0 by the default flip) and the cut list |
 | [`status.md`](status.md) | Current release/verification state, compatibility window, known limitations, re-verify commands |
