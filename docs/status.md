@@ -5,12 +5,17 @@ Current release, compatibility and verification state. Refreshed 2026-10-28
 
 ## Release state
 
-- **Prepared, NOT tagged: `v0.2.3`** (2026-10-28). Version identity is set in
-  `package.json`, `package-lock.json` (`packages[""]`) and the dated CHANGELOG
-  section `## [0.2.3] - 2026-10-28`; the full gate, `release-notes.mjs 0.2.3`,
-  `verify-workflow-action-pins` and the live smoke on both declared anchors are
-  green on this tree. No tag and no GitHub Release exist for it: do not describe
-  it as released.
+- **Published release: `v0.2.3`** — tag `v0.2.3` on `main` (`4cf24d0`),
+  GitHub Release published 2026-10-28T06:14Z with `dsh-chamber-mcp-0.2.3.tgz`
+  (162,197 bytes, sha256
+  `8165c7b72efa3dba10a6d9c784029747f82cf0d0bf0e159e6004a2a8674dd7fa`) + its
+  matching `.sha256` sidecar; notes composed from `## [0.2.3] - 2026-10-28`.
+  The Release workflow (run `40642500045`) re-ran the full gate (536/536,
+  47 packed entries, `verify:package`), the tag/version sanity check, the notes
+  composition, the sha256 sidecar and the asset upload; the CI runs on `main`
+  (`40642532614`) and on the tag (`40642500040`) are both green. Contents: the
+  MCP resource-list capability gate, the `@modelcontextprotocol/client`
+  `^2.2.0` security floor, the README restructure and the 0.2.2-alpha.2 audit.
 - **Published release: `v0.2.2`** — tag `v0.2.2` on `main` (`3ccbec7`),
   GitHub Release published 2026-09-28 with `dsh-chamber-mcp-0.2.2.tgz`
   (165,272 bytes, sha256
