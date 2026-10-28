@@ -708,14 +708,22 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
         async request(request: McpResourceRequest, exec: ToolExecution): Promise<JsonValue> {
           const generation = client
           if (generation === undefined || !connected) throw new Error(`${label}: server is disconnected`)
+          // Capability gate: the same shape as the tools sync gate
+          // (src/tools.ts) and the official connection plugin's (dsh-mcp-client
+          // 0.2.1-rc.4+). No DECLARED resources capability → empty page with no
+          // client call; 'resources/read' keeps its own error path, since an
+          // undeclared capability is not a promise that a URI does not exist.
+          const listable = generation.getServerCapabilities()?.resources !== undefined
           const callOptions = { signal: exec.signal, timeout: toolCallTimeoutMs }
           switch (request.method) {
             case 'resources/list':
+              if (!listable) return { resources: [] }
               return await generation.listResources(
                 request.cursor === undefined ? undefined : { cursor: request.cursor },
                 callOptions,
               ) as JsonValue
             case 'resources/templates/list':
+              if (!listable) return { resourceTemplates: [] }
               return await generation.listResourceTemplates(
                 request.cursor === undefined ? undefined : { cursor: request.cursor },
                 callOptions,

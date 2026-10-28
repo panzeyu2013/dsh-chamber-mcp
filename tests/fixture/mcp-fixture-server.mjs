@@ -25,11 +25,16 @@ const INSTRUCTIONS = process.env.FIXTURE_HUGE_INSTRUCTIONS === '1'
   ? 'x'.repeat(33_000)
   : 'Fixture guidance for MCP tools: call add before greet.'
 
+// FIXTURE_NO_RESOURCES makes the fixture DECLARE no resources capability and
+// register no resource/template at all: the host's capability gate then has to
+// answer both list methods with an empty page instead of reaching the wire.
+const RESOURCES = process.env.FIXTURE_NO_RESOURCES !== '1'
+
 function createFixtureServer() {
   const server = new McpServer(
     { name: 'fixture-server', version: '1.0.0' },
     {
-      capabilities: { tools: { listChanged: true }, resources: {} },
+      capabilities: { tools: { listChanged: true }, ...(RESOURCES ? { resources: {} } : {}) },
       instructions: INSTRUCTIONS,
     },
   )
@@ -124,23 +129,25 @@ function createFixtureServer() {
   // A resource TEMPLATE (URI template): the host-half provider's template list
   // path has to surface it, and reading an EXPANDED uri has to reach the server
   // — which is the entire point of a template.
-  server.registerResource(
-    'greeting',
-    new ResourceTemplate('fixture:///greeting/{who}', { list: undefined }),
-    { title: 'Fixture greeting', mimeType: 'text/plain' },
-    async (uri, variables) => ({
-      contents: [{ uri: uri.href, mimeType: 'text/plain', text: `fixture greeting for ${String(variables.who)}` }],
-    }),
-  )
+  if (RESOURCES) {
+    server.registerResource(
+      'greeting',
+      new ResourceTemplate('fixture:///greeting/{who}', { list: undefined }),
+      { title: 'Fixture greeting', mimeType: 'text/plain' },
+      async (uri, variables) => ({
+        contents: [{ uri: uri.href, mimeType: 'text/plain', text: `fixture greeting for ${String(variables.who)}` }],
+      }),
+    )
 
-  // A real resource so the host-half resource provider has something to route
-  // to; the provider test asserts the BODY, not merely "no error".
-  server.registerResource('readme', 'file:///fixture-readme.txt', {
-    title: 'Fixture resource',
-    mimeType: 'text/plain',
-  }, async (uri) => ({
-    contents: [{ uri: uri.href, mimeType: 'text/plain', text: 'fixture resource body' }],
-  }))
+    // A real resource so the host-half resource provider has something to route
+    // to; the provider test asserts the BODY, not merely "no error".
+    server.registerResource('readme', 'file:///fixture-readme.txt', {
+      title: 'Fixture resource',
+      mimeType: 'text/plain',
+    }, async (uri) => ({
+      contents: [{ uri: uri.href, mimeType: 'text/plain', text: 'fixture resource body' }],
+    }))
+  }
 
   return server
 }

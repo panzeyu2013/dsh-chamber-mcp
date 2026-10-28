@@ -53,6 +53,13 @@ grep -n "^## \[$(node -p "require('./package.json').version")\] - " CHANGELOG.md
 # 1. full gate (same chain as CI; installs are frozen npm ci, never bare install)
 npm ci --no-audit --no-fund && npm run check
 
+# 1a. after any dependency-surface change, refresh the lock IN PLACE. Never
+#     delete it and regenerate beside node_modules: the hidden lock
+#     (node_modules/.package-lock.json) becomes the virtual-tree base and npm
+#     copies its missing resolved/integrity into the tracked lock, which
+#     verify:package now rejects and npm ci would install unpinned.
+npm install --package-lock-only --no-audit --no-fund
+
 # 2. release mechanics
 node scripts/release-notes.mjs "$(node -p "require('./package.json').version")"   # notes compose
 node scripts/verify-workflow-action-pins.mjs                                      # pins + release structure
@@ -237,6 +244,28 @@ Compatibility notes for consumers:
      against the 0.2.0 dependency set — the refusal came from the declared
      range alone. Widen or bump the peers as part of the new-line audit, and
      run the smoke on the new anchor as the proof.
+   6. **Pinning the 0.2.2 line needs three framework pins, not a source
+      change.** The 26 `@deepseek-ai/dsh-*` deps move to `0.2.2-alpha.2` and
+      `@deepseek-ai/cordis` to `4.0.6-alpha.1`, `cordis-plugin-loader` to
+      `1.0.7-alpha.1`, `@deepseek-ai/schemastery` to `~3.18.6-alpha.1`;
+      without the schemastery move the install fails ERESOLVE (0.2.2 packages
+      peer on `~3.18.6-alpha.1` and the root dependency wins). The measurement
+      and its clean-tree evidence live in `docs/status.md` §Verification state
+      (2026-10-28) — do not restate them here. To audit the line before moving
+      the pin, pass those three explicitly; the guard keeps the install EXACT,
+      so the closure is complete and the framework types are exercised:
+      `node scripts/verify-generation.mjs 0.2.2-alpha.2 --pin
+      @deepseek-ai/cordis@4.0.6-alpha.1 --pin
+      @deepseek-ai/cordis-plugin-loader@1.0.7-alpha.1 --pin
+      @deepseek-ai/schemastery@~3.18.6-alpha.1`. CI passes no pins, so a future
+      pin that reopens a peer conflict still fails there loudly. The live smoke
+      against a `0.2.2-alpha.2` anchor is green; the dev tree deliberately
+      stays on `0.2.0-rc.1` until that line reaches rc. When it does move, put
+      the previous pin into the `compat` matrix (`.github/workflows/ci.yml`) so
+      both declared lines keep a compile gate, and add a `~4.0.6-alpha.1` branch
+      to the `@deepseek-ai/cordis` peer range: `^4.0.4` does not match a
+      prerelease in plain semver even though the runtime gate is
+      prerelease-inclusive.
 
 ## Smoke — what the self-hosted job runs
 

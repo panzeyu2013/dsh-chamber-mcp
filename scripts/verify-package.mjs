@@ -62,16 +62,19 @@ if (drifted.length > 0) {
     'package-lock root ' + drifted.join(' / ') + ' drifted from package.json — regenerate the lockfile',
   )
 }
-// Every entry that records a tarball URL must also pin its bytes: a lock can be
-// regenerated from a partial hidden lockfile with resolved-but-unpinned entries,
-// which would install unverified content.
+// Every non-link entry must pin the bytes it installs. A lock regenerated next
+// to node_modules/.package-lock.json copies that hidden lock's missing
+// resolved+integrity straight through (npm fills the entry from the tree's
+// package.json), which would install unverified content from whatever registry
+// is configured — so this rejects an absent integrity too, not just an
+// unpinned resolved URL.
 const unpinned = Object.entries(lock.packages ?? {}).filter(([key, entry]) => (
-  key !== '' && typeof entry.resolved === 'string' && entry.integrity === undefined
+  key !== '' && entry.link !== true && entry.integrity === undefined
 ))
 if (unpinned.length > 0) {
   throw new Error(
-    String(unpinned.length) + ' package-lock entries have a resolved URL but no integrity (e.g. '
-    + unpinned[0][0] + ') — regenerate the lockfile from a clean tree',
+    String(unpinned.length) + ' package-lock entries have no integrity (e.g. '
+    + unpinned[0][0] + ') — refresh the lockfile with `npm install --package-lock-only`',
   )
 }
 const scratch = join(root, '.smoke', 'verify')

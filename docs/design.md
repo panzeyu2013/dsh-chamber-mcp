@@ -226,11 +226,11 @@ breaking a child's creation.
 | `src/routes.ts` | 0.0.3 runtime routes on the Connection carrier: `status` / `action` / `tools` (fixed host codes only; §(d)) |
 | `src/server-context.ts` | per-server publication of the `mcp:<serverName>` instructions section and the `mcpResources` provider (the official `registerServerContext` shape) |
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
-| `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture on the 2.0 server packages (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe; publishes instructions, oversized under `FIXTURE_HUGE_INSTRUCTIONS=1`; serves one resource and one URI TEMPLATE so the resource provider's list/templates/read paths are exercised end to end) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (12 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`, `tests/delegation.spec.ts`; repo total 531 tests / 28 files) |
+| `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture on the 2.0 server packages (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe; publishes instructions, oversized under `FIXTURE_HUGE_INSTRUCTIONS=1`; serves one resource and one URI TEMPLATE so the resource provider's list/templates/read paths are exercised end to end; `FIXTURE_NO_RESOURCES=1` declares no resources capability and registers none) |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (12 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`, `tests/delegation.spec.ts`; repo total 536 tests / 28 files) |
 
 Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (531 tests / 28 files).
+`node node_modules/vitest/vitest.mjs run` — both fully green (536 tests / 28 files).
 
 ### (a) API signatures and runtime assumptions
 
@@ -406,7 +406,7 @@ flags and the full config is green at the time of writing.
    disposers are only invoked while the agent is still live in the registry
    (`agents.get(id) === agent`).
 9. **Two supported host generations: dsh 0.1.7 and 0.2.0.** The client layer is
-   v2 (`@modelcontextprotocol/client@2.0.0` is this plugin's OWN dependency,
+   v2 (`@modelcontextprotocol/client@^2.2.0` is this plugin's OWN dependency,
    not a host surface), the definition build always goes through the official
    `createMcpToolDefinition` (canonical validation, durable image admission),
    and the peers are `^0.1.7-rc.2 || ^0.2.0-rc.1`. The two lines do not differ
@@ -471,7 +471,12 @@ flags and the full config is green at the time of writing.
     established-generation instruction snapshot.
     Every server also contributes an `mcpResources` provider, so the
     service-owned `list_mcp_resources` / `list_mcp_resource_templates` /
-    `read_mcp_resource` tools can reach it. Both ride `ctx.inject` and are
+    `read_mcp_resource` tools can reach it. The two list methods gate on the
+    DECLARED capability first (official 0.2.1-rc.4 behaviour): a server that
+    never advertised `resources` answers with an empty page and the provider
+    never asks the client, whose own fallback would log on every call.
+    `resources/read` keeps the normal error path — an undeclared capability is
+    not a promise that a URI does not exist. Both ride `ctx.inject` and are
     disposed with the server handle; a composition that mounts neither degrades
     to no contribution. Instructions are published only by an ESTABLISHED
     generation (connect + initial discovery), bounded by `MAX_INSTRUCTION_BYTES`
@@ -629,9 +634,10 @@ written — through the platform's own seams rather than a new channel:
 
 - **Why nothing is written**: a private session event is required-on-read. The
   persisted envelope's `ignorable?: true` marker is the only admission a reader
-  honors for a type it does not know, and this generation has no write path that
-  can set it (`Session.append` composes `type`/`seq`/`time`/`data` plus surface
-  metadata only). `validateStoredEvents` refuses the WHOLE log when any stored
+  honors for a type it does not know, and the append surface this plugin is
+  built against cannot set it (`Session.append` composes `type`/`seq`/`time`/
+  `data` plus surface metadata only; upstream's `appendPluginRecord` writer
+  arrives with the 0.2.1 line, above our dev pin, and is never called here). `validateStoredEvents` refuses the WHOLE log when any stored
   event type is outside the build-generated `KNOWN_SESSION_EVENT_TYPES` set
   unless that envelope says `ignorable: true` — and out-of-repo plugin types are
   outside that set by construction. A host-appended `mcp-scope/injected` event

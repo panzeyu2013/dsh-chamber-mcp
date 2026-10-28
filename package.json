@@ -1,6 +1,6 @@
 {
   "name": "dsh-chamber-mcp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Third-party dsh plugin: manage MCP servers per workspace from the Settings UI; tools are injected into the tool scopes of enabled workspaces only (mcp__ naming, official semantics).",
   "license": "MIT",
   "repository": {
@@ -61,7 +61,7 @@
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.4",
-    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/client": "^2.2.0",
     "zod": "^4.4.3"
   },
   "peerDependencies": {

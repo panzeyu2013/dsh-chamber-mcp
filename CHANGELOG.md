@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > only and ignores this one — an entry left here ships in the tree but never
 > appears in the release notes.
 
+## [0.2.3] - 2026-10-28
+
 ### Changed
 
 - **README restructured around positioning.** The root `README.md` is now
@@ -21,6 +23,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference for session behaviour, context cost, configuration and
   troubleshooting. `docs/README.en.md` is the English mirror and
   `docs/README.md` links both. No code or behaviour change.
+- **MCP resource listing follows the declared capability.** A server that does
+  not advertise the `resources` capability now answers `resources/list` and
+  `resources/templates/list` with an empty page without asking the client at
+  all, matching `@deepseek-ai/dsh-mcp-client` 0.2.1-rc.4+. The shared list
+  tools already returned an empty page, but only because the MCP SDK client
+  fell back on its own and logged on every call. `resources/read` keeps its
+  normal error path.
+
+### Security
+
+- **The MCP protocol library moves to its patched line.** The runtime
+  dependency `@modelcontextprotocol/client` goes from the exact `2.0.0` to
+  `^2.2.0`: `2.0.0` falls inside GHSA-6qxp-vccf-f47h / CVE-2026-104850
+  (`>=2.0.0, <2.2.0`, high — the OAuth client could send credentials to an
+  authorization server the MCP server names). This plugin configures no OAuth
+  provider (stdio and Streamable HTTP with explicit headers only), so no shipped
+  path reaches the flaw — 2.2.0's only new public names are DPoP helpers, and the
+  advisory fix itself touches the OAuth provider paths this plugin does not
+  configure. The lock resolves `2.3.1`; the surface this plugin calls
+  (`Client`, the transports, `Tool`) is unchanged. No API or behaviour change.
 
 ## [0.2.2] - 2026-09-28
 

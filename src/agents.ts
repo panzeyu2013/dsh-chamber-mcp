@@ -46,8 +46,8 @@
  * This module NEVER writes into a session log. The registered-tools notice is
  * derived client-side from the harness's own session events
  * (`src/client/injection.ts`): a third-party session event is
- * required-on-read — the envelope's `ignorable` marker has no write path in
- * this generation — so appending one would make the persisted session
+ * required-on-read — no append path this host half can use sets the envelope's
+ * `ignorable` marker — so appending one would make the persisted session
  * unreadable to every reader, the harness that wrote it included.
  *
  * @module

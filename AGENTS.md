@@ -73,12 +73,15 @@ the supported generations). Migration recipe: `docs/RELEASE.md`.
   nothing in this lane may throw into a session or settings publish path.
 - No custom session events. The host half never appends a private event type:
   the persisted envelope's `ignorable?: true` marker is the only admission a
-  reader honors for an unknown type, this generation has no write path that can
-  set it, and `validateStoredEvents` then refuses the WHOLE log — including for
-  the harness that wrote it. The registered-tools notice is derived client-side
-  from the harness's own session events — the request tool array and the
-  rendered system prompt — (`src/client/injection.ts`); anything that needs
-  session visibility rides known event types read back in the browser half.
+  reader honors for an unknown type; upstream only ships a writer for it from
+  the 0.2.1 line on (`appendPluginRecord`, which upstream itself calls only from
+  `packages/experimental/`), the dev-pinned 0.2.0-rc.1 generation has none, and
+  `validateStoredEvents` refuses the WHOLE log for an unknown type without
+  that marker — including for the harness that wrote it. The registered-tools
+  notice is derived client-side from the harness's own session events — the
+  request tool array and the rendered system prompt — (`src/client/injection.ts`);
+  anything that needs session visibility rides known event types read back in
+  the browser half.
 - Locale discipline: every user-visible string lives in
   `src/client/locales.ts` (en/zh parity is compile-enforced + tested).
 - Secrets never ride the settings document or any API response; credential

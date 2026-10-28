@@ -7,12 +7,12 @@
  * exhaustion → unregister, and clean disposal.
  */
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import type { ServerDef } from '../../src/shared/model.js'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
-import type { Transport } from '@modelcontextprotocol/client'
+import { Client, type Transport } from '@modelcontextprotocol/client'
 import {
   EMPTY_DEFS,
   RECONNECT_DEFAULTS,
@@ -117,12 +117,35 @@ async function boot(serverName = 'fix', reconnect?: Parameters<typeof startServe
   return { handle, lines, commits }
 }
 
+/** Boot one supervisor whose fixture child sees exactly one `<envKey>=1` override. */
+async function bootWithEnv(serverName: string, envKey: string): Promise<{ handle: ServerHandle; lines: LoggedLine[] }> {
+  const { log, lines } = makeLogger()
+  const handle = startServerSupervisor({
+    ctx,
+    serverName,
+    buildTransport: () => createTransport(
+      stdioDef(serverName, { envKeys: [envKey] }),
+      async (ref) => ref === envKey ? { value: '1', source: 'test' } : undefined,
+      NO_WARN,
+    ),
+    logger: { info: (m) => log('info', m), warn: (m) => log('warn', m), error: (m) => log('error', m) },
+    onDefsChanged: () => {},
+    reconnect: { enabled: false },
+  })
+  handles.push(handle)
+  await handle.ready
+  return { handle, lines }
+}
+
 const handles: ServerHandle[] = []
 afterEach(async () => {
   while (handles.length > 0) {
     const handle = handles.pop()!
     await handle.dispose()
   }
+  // vitest.config.ts sets no restoreMocks: prototype spies must not outlive a
+  // test, or a later case in this file would silently record their calls.
+  vi.restoreAllMocks()
 })
 
 describe('server supervisor with a real stdio MCP server', () => {
@@ -552,6 +575,34 @@ describe('runtime snapshot + probe (M3)', () => {
       .rejects.toThrow(/server is disconnected/)
   })
 
+  it('answers both resource list methods with an empty page when the server declares no resources capability', async () => {
+    // Official gate (0.2.1-rc.4+): an UNDECLARED resources capability is an
+    // empty page answered WITHOUT asking the client. The SDK client would answer
+    // empty too (plus a debug line), so the value alone cannot discriminate —
+    // these prototype spies are what fail if the gate is removed.
+    const listCalls = vi.spyOn(Client.prototype, 'listResources')
+    const templateCalls = vi.spyOn(Client.prototype, 'listResourceTemplates')
+    const { handle } = await bootWithEnv('nores', 'FIXTURE_NO_RESOURCES')
+    // The gate keys on the CAPABILITY, not on the tool set: tools still sync.
+    expect(handle.state.connected).toBe(true)
+    expect(handle.state.defs.size).toBeGreaterThan(0)
+    await expect(handle.context.resources.request({ method: 'resources/list' }, execContext()))
+      .resolves.toEqual({ resources: [] })
+    await expect(handle.context.resources.request({ method: 'resources/templates/list' }, execContext()))
+      .resolves.toEqual({ resourceTemplates: [] })
+    // A cursor is equally irrelevant when there is nothing to page through.
+    await expect(handle.context.resources.request({ method: 'resources/list', cursor: 'next' }, execContext()))
+      .resolves.toEqual({ resources: [] })
+    // 'read' is NOT gated: an undeclared capability says nothing about URIs, so
+    // the wire still answers for itself (and fails for itself).
+    await expect(handle.context.resources.request(
+      { method: 'resources/read', uri: 'file:///fixture-readme.txt' },
+      execContext(),
+    )).rejects.toThrow(/Method not found/)
+    expect(listCalls).not.toHaveBeenCalled()
+    expect(templateCalls).not.toHaveBeenCalled()
+  })
+
   it('publishes the established generation instructions and clears them on disposal', async () => {
     const { handle } = await boot()
     handles.push(handle)
@@ -562,21 +613,7 @@ describe('runtime snapshot + probe (M3)', () => {
   })
 
   it('fails the attempt when server instructions exceed MAX_INSTRUCTION_BYTES', async () => {
-    const { log, lines } = makeLogger()
-    const handle = startServerSupervisor({
-      ctx,
-      serverName: 'huge',
-      buildTransport: () => createTransport(
-        stdioDef('huge', { envKeys: ['FIXTURE_HUGE_INSTRUCTIONS'] }),
-        async (ref) => ref === 'FIXTURE_HUGE_INSTRUCTIONS' ? { value: '1', source: 'test' } : undefined,
-        NO_WARN,
-      ),
-      logger: { info: (m) => log('info', m), warn: (m) => log('warn', m), error: (m) => log('error', m) },
-      onDefsChanged: () => {},
-      reconnect: { enabled: false },
-    })
-    handles.push(handle)
-    await handle.ready
+    const { handle, lines } = await bootWithEnv('huge', 'FIXTURE_HUGE_INSTRUCTIONS')
     // The oversized block fails the connect itself: no tools, no instructions,
     // and the reason names the bound.
     expect(handle.state.connected).toBe(false)

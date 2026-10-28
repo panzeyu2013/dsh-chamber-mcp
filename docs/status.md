@@ -1,10 +1,16 @@
 # Status — dsh-chamber-mcp
 
-Current release, compatibility and verification state. Refreshed 2026-09-28
-(the 0.2.0-line adaptation below shipped in `v0.2.2`, published 2026-09-28).
+Current release, compatibility and verification state. Refreshed 2026-10-28
+(the 0.2.0-line adaptation shipped in `v0.2.2`, published 2026-09-28).
 
 ## Release state
 
+- **Prepared, NOT tagged: `v0.2.3`** (2026-10-28). Version identity is set in
+  `package.json`, `package-lock.json` (`packages[""]`) and the dated CHANGELOG
+  section `## [0.2.3] - 2026-10-28`; the full gate, `release-notes.mjs 0.2.3`,
+  `verify-workflow-action-pins` and the live smoke on both declared anchors are
+  green on this tree. No tag and no GitHub Release exist for it: do not describe
+  it as released.
 - **Published release: `v0.2.2`** — tag `v0.2.2` on `main` (`3ccbec7`),
   GitHub Release published 2026-09-28 with `dsh-chamber-mcp-0.2.2.tgz`
   (165,272 bytes, sha256
@@ -139,6 +145,41 @@ Current release, compatibility and verification state. Refreshed 2026-09-28
   changed — the edit is `package.json` peers/devDeps (the smoke driver now
   gates on that declared range via `semver`) plus docs and one stale
   `src/tools.ts` comment.
+- **Upstream 0.2.2-alpha.2 check (2026-10-28; no repin, one alignment).**
+  The `alpha` channel is `0.2.2-alpha.2` (npm 2026-10-27T19:10Z, GitHub
+  `dsh-v0.2.2-alpha.2`), 307 → 331 packages (+25 / −1) with 175 packages
+  carrying non-locale file changes (171 `lib/`-only, 3 additionally touch
+  `src/`, 1 is the web frontend's `dist/` build output). Eleven of the 24
+  packages this plugin imports changed. The two MCP ones changed no code we
+  read — `dsh-mcp-client` (adapter + `McpToolDefinitionOptions`) and
+  `dsh-mcp-resources` keep byte-identical `lib/` code, their tarballs
+  differing only by the version stamp and the added `locale/` catalogs.
+  `dsh-client-ui-tool`'s `tool.call.toolview` contract changed only in
+  comments, the session `binding(id)` / `eventSource` / `retainedBy` seam
+  survives, and `dsh-tools`' type-only restructure (`index.d.ts` split into
+  contracts/executor/events, mandatory `output`, optional
+  `ToolRegistrationOptions`) compiles unchanged here. The two typed surfaces
+  that did move stay off our path: `dsh-client-locale`'s `register()` now
+  requires the baseline catalogs plus optional extra locales (our
+  `{ zh, en }` still assigns) and `dsh-system-prompt` split
+  `PromptAssembly` into `PromptPresentation` (we subscribe to no assemble
+  hook). The install gate accepts
+  the existing peers (`evaluatePluginCompatibility` → compatible on
+  `0.2.2-alpha.2`; prereleases participate in ranges). A CLEAN derived tree —
+  216 packages (217 `npm ls --all --parseable` lines including the root),
+  outside any other `node_modules`: the 26 pins at
+  `0.2.2-alpha.2` plus cordis `4.0.6-alpha.1`, loader `1.0.7-alpha.1` and
+  schemastery `~3.18.6-alpha.1` — compiles this tree's `src` + `tests`
+  UNCHANGED with 0 errors and passes 536/536. An earlier reading that blamed the
+  `connection/reset` augmentation was a probe-tree artifact: that copy sat
+  inside `.scratch/compat-022a2` (331 `@deepseek-ai` packages) with unresolved
+  peers, so its program loaded the same package under several module identities
+  (this copy, that parent tree, and this checkout's dev tree) and the
+  augmentation stopped merging. No repin:
+  the 0.2.2 line is still alpha. One alignment WAS taken — the resource-provider
+  capability gate (`## [Unreleased]` in `CHANGELOG.md`, `docs/design.md`
+  §5(c)(12)); its response shape is unchanged today — only the client call and
+  the SDK's per-call fallback log disappear.
 - **Known cosmetic drift on the 0.2.0 line (deliberately not patched yet).**
   Two upstream defaults moved: `dsh-client-ui-chat`'s transcript-view default
   is now `detailed` (more process detail visible by default, where the
@@ -168,9 +209,11 @@ Current release, compatibility and verification state. Refreshed 2026-09-28
   canonical result validation, `taskRequired` refusal, `isError` → throw and
   DURABLE IMAGE ADMISSION; this plugin owns the naming contract, the per-server
   tool cap, registration per agent scope, and transport/lifetime.
-- The client half speaks **`@modelcontextprotocol/client@2.0.0`** (this
-  plugin's own dependency, not a host surface); `@modelcontextprotocol/sdk`
-  (1.x) is no longer a dependency at all.
+- The client half speaks **`@modelcontextprotocol/client@^2.2.0`** (this
+  plugin's own dependency, not a host surface; the floor moved off the
+  vulnerable `2.0.0` on 2026-10-11 for GHSA-6qxp-vccf-f47h, which no shipped
+  path reaches — see §Verification state); `@modelcontextprotocol/sdk` (1.x)
+  is no longer a dependency at all.
 - The live smoke installs *and* boots through the anchor CLI `DSH_ANCHOR_CLI`
   names, reading its `dsh` version at run time and recording it in the
   transcript; the driver gates on the plugin's DECLARED `@deepseek-ai/dsh-*`
@@ -179,12 +222,16 @@ Current release, compatibility and verification state. Refreshed 2026-09-28
   gets its own run. The
   chamber gateway's anchor must be upgraded to a supported generation before a
   new release can be installed there.
-- **Upstream dist-tags (measured 2026-09-28):** `@deepseek-ai/dsh`
-  `latest` = `0.1.7-rc.2`, `next` = `0.2.0-rc.1`, `alpha` =
-  `0.1.7-alpha.2`. There is no stable `0.2.0` on the registry yet — the
-  0.2.0 line exists only as the `dsh-v0.2.0-rc.1` release candidate. This
-  line targets `next` and still declares `latest`; re-check the peer range
-  when `latest` moves to the 0.2.0 line.
+- **Upstream `0.2.1-alpha.2` (measured 2026-10-11): no interface adaptation
+  needed.** Registry `latest` = `next` = `0.2.0-rc.2`, `alpha` =
+  `0.2.1-alpha.2` (npm 2026-10-09; GitHub `dsh-v0.2.1-alpha.2`). Every seam
+  this plugin consumes is byte-identical or changed only outside the members
+  it references, and the only MCP change is the packages' own
+  `@modelcontextprotocol/client` `2.0.0` → `2.2.0`; the declared peer range
+  needs no widening (the runtime evaluates peers with `includePrerelease`, so
+  `^0.2.0-rc.1` accepts the alpha) — verified by a real
+  `dsh plugin --profile web add` (exit 0) and a green M0; §Verification state.
+  Audit recipe: `docs/RELEASE.md` §Auditing a new upstream line.
 - **What 0.1.7 provides and this plugin consumes:** the per-entry
   `Config` settings model with `dsh-config-editor` persistence and volatile
   in-place commits; `SettingsForms`/`ConfigForms`; `createMcpToolDefinition`
@@ -240,6 +287,59 @@ Current release, compatibility and verification state. Refreshed 2026-09-28
 
 ## Verification state
 
+- **Unreleased on `main` (2026-10-28) — MCP resource capability gate.** The
+  provider now answers `resources/list` and `resources/templates/list` with an
+  empty page when the server declares no `resources` capability, matching
+  `@deepseek-ai/dsh-mcp-client` 0.2.1-rc.4+ (no client call;
+  `resources/read` keeps its error path). `npm run check` PASS — `tsc` ×2,
+  **536 tests / 28 files**, 47 packed entries, `verify-client-artifact` PASS,
+  `verify:package` PASS. The gate's test fails when the gate is removed
+  (`Client.prototype` spies, red/green in a probe copy), and the same sources
+  typecheck with 0 errors and pass 536/536 against a CLEAN derived
+  `0.2.2-alpha.2` tree (`.scratch/accept/derived-tree/evidence.log`:
+  `npm ls --all` exit 0, 217 parseable lines = 216 packages + root, both
+  tsconfigs clean, 536/536).
+- **Full acceptance (2026-10-28) — clean install, gate, three anchors.** A
+  clean-room copy of the worktree with a FRESH `node_modules`: plain
+  `npm ci` (210 packages, no `--legacy-peer-deps`, lock intact) followed by
+  `npm run check` PASS, repeated with
+  `--cache=.scratch/accept/cold-cache --prefer-online`: npm's own debug log
+  for that run records 210 `(cache miss)` lines, i.e. the tarballs were
+  re-fetched instead of served from a warm cache. Live smoke green on three anchors — `0.1.7-rc.2`,
+  `0.2.0-rc.1` and `0.2.2-alpha.2` — each M0+M1 run COMPLETED with driver
+  exit 0 (observed at run time; the archived transcripts carry the anchor,
+  tarball and verdict, not the driver's exit code),
+  `R3-live-capture: not-captured` on all three headless anchors (the known
+  limitation recorded above). `verify-workflow-action-pins` PASS,
+  `release-notes.mjs 0.2.2` composes (with the expected `[Unreleased]`
+  warning), `verify-generation.mjs 0.1.7-rc.2` PASS in strict mode. The same
+  guard against `0.2.2-alpha.2` PASSES with the three framework pins on the
+  command line (`--pin @deepseek-ai/cordis@4.0.6-alpha.1`, loader
+  `1.0.7-alpha.1`, schemastery `~3.18.6-alpha.1`): the install stays exact, the
+  closure is complete, and both tsconfigs compile — no source change. Without
+  the pins the guard correctly refuses the line with a peer conflict. The repin
+  to `0.2.2-alpha.2` was evaluated and deliberately NOT taken while that line
+  is alpha: a plain `npm ci` against it needs exactly those three pins on top
+  of the 26 pin bumps — recipe in `docs/RELEASE.md`
+  §Auditing a new upstream line (6).
+- **Unreleased on `main` (2026-10-11) — MCP protocol-library security floor
+  (`@modelcontextprotocol/client` `2.0.0` → `^2.2.0`).** `npm run check` PASS
+  twice — `tsc` ×2, **535 tests / 28 files**, 47 packed entries,
+  `verify-client-artifact` PASS, `verify:package` PASS; `node
+  scripts/verify-generation.mjs 0.1.7-rc.2` PASS; the live smoke is green on
+  BOTH declared generations (`dsh@0.1.7-rc.2`, `dsh@0.2.0-rc.1`) with the same
+  lifecycle assertions as the `v0.2.2` entry below, and a post-change M0 on a
+  scratch `dsh@0.2.1-alpha.2` anchor is green on the same points
+  (`R3-live-capture: not-captured` on all three headless anchors, the known
+  limitation). The lock resolves `@modelcontextprotocol/client@2.3.1`. Caveat:
+  the first chain run's 0.1.7 install exited 1 with only the plugin-manager's
+  `pnpm.log` pointer (0-byte, overwritten by the next driver run); later reruns
+  of the identical path (a standalone `npm run test:smoke` and the full clean
+  chain) exited 0, and the same failure signature appears in earlier,
+  pre-change runs — recorded as an unreproduced transient, not a defect of the
+  change. Packaging/tagging remains a maintainer action: the live profile still
+  runs the published `v0.2.2` (client `2.0.0`), so the floor reaches users at
+  the next release.
 - **0.2.0-line adaptation (shipped in `v0.2.2`; no behavior change):**
   `npm run check` PASS on the repinned `0.2.0-rc.1` dev tree — `tsc` ×2,
   **535 tests / 28 files**, 47 packed entries, `verify-client-artifact` PASS,
@@ -384,9 +484,10 @@ Current release, compatibility and verification state. Refreshed 2026-09-28
   with the 1.x client, so they need no test at all.
 - `M1`'s live R3 capture (the model-facing `tools[]` array) needs an anchor that
   actually starts a turn: on the 0.1.5-rc.2 chamber anchor the 0.1.0/0.1.1 runs
-  recorded **`R3-live-capture: PASS`**, while the headless 0.1.6-alpha.1 and
-  0.1.7-rc.2 anchors record `not-captured` — those instances never start a turn,
-  so the mock LLM receives no chat request. The capture is transcript evidence
+  recorded **`R3-live-capture: PASS`**, while the headless 0.1.6-alpha.1,
+  0.1.7-rc.2, 0.2.0-rc.1 and 0.2.2-alpha.2 anchors (the last three re-run on
+  2026-10-28) record `not-captured` — those instances never start a turn, so the mock LLM
+  receives no chat request. The capture is transcript evidence
   either way: the driver reports the verdict without failing on it.
 - **The 0.1.5/0.1.6 generation is unsupported as of 0.2.0.** The plugin's
   verbatim port of the official tool adapter (and its parity suite) was removed
@@ -436,6 +537,20 @@ Current release, compatibility and verification state. Refreshed 2026-09-28
 npm run check                                    # typecheck + tests + build + pack surface
 node scripts/release-notes.mjs "$(node -p "require('./package.json').version")"  # dated CHANGELOG section
 npm run verify:workflows                         # action pins + release structure
+# Per-generation type guard (CI runs it for every declared line, strict mode):
+node scripts/verify-generation.mjs 0.1.7-rc.2
+# A line NEWER than the pin is audited by passing its framework pins (exact
+# install, complete closure — see docs/RELEASE.md §(6)):
+#   node scripts/verify-generation.mjs 0.2.2-alpha.2 \
+#     --pin @deepseek-ai/cordis@4.0.6-alpha.1 \
+#     --pin @deepseek-ai/cordis-plugin-loader@1.0.7-alpha.1 \
+#     --pin @deepseek-ai/schemastery@~3.18.6-alpha.1
+# Cold-cache install proof (empty cache → every tarball re-fetched; npm logs
+# the 210 "(cache miss)" lines):
+#   rm -rf .scratch/accept/cold-cache
+#   npm ci --cache "$PWD/.scratch/accept/cold-cache" --prefer-online
+# Smoke transcripts: .smoke/logs/{M0,M1}-raw.log; the 2026-10-28 runs are
+# archived under .scratch/accept/smoke-017, smoke-020 and smoke-022a2.
 # Live smoke on EVERY supported generation — one run per anchor. For a local run:
 #   mkdir -p .scratch/anchor-017 && (cd .scratch/anchor-017 && npm i --no-audit @deepseek-ai/dsh@0.1.7-rc.2)
 #   mkdir -p .scratch/anchor-020 && (cd .scratch/anchor-020 && npm i --no-audit @deepseek-ai/dsh@0.2.0-rc.1)
