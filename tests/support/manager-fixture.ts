@@ -18,17 +18,7 @@ export interface LoggedLine {
   message: string
 }
 
-export async function waitFor(
-  condition: () => boolean,
-  what: string,
-  timeoutMs = 8000,
-): Promise<void> {
-  const start = Date.now()
-  while (!condition()) {
-    if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for ${what}`)
-    await new Promise((resolve) => setTimeout(resolve, 20))
-  }
-}
+export { waitFor } from './wait.ts'
 
 export function stdioServer(
   serverName: string,

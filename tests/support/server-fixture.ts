@@ -59,17 +59,9 @@ export function stdioDef(
   }
 }
 
-export async function waitFor(
-  condition: () => boolean,
-  what: string,
-  timeoutMs = 8000,
-): Promise<void> {
-  const start = Date.now()
-  while (!condition()) {
-    if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for ${what}`)
-    await new Promise((resolve) => setTimeout(resolve, 25))
-  }
-}
+// One polling helper for the whole suite (tests/support/wait.ts); the interval
+// is timing-only, so the shared default is what every host suite wants.
+export { waitFor } from './wait.ts'
 
 /**
  * A transport whose server is UP but never answers the MCP handshake: start()

@@ -123,6 +123,15 @@ describe('fetchToolDefinitions', () => {
     expect(definitions.has('greet')).toBe(false)
   })
 
+  it('carries a NON-default per-server deadline onto the listing verb too', async () => {
+    // The case above asserts the default 60 s, which a dropped option would also
+    // produce. The configured value has to survive both verbs: tools/call is
+    // pinned with 1234 ms in the official-adapter suite below, tools/list here.
+    const client = createMockClient([{ name: 'add', inputSchema: { type: 'object' } }])
+    await fetchToolDefinitions(ctx, client as never, { serverName: 'srv', toolCallTimeoutMs: 4321 })
+    expect(client.listTools).toHaveBeenCalledWith(undefined, { cacheMode: 'refresh', timeout: 4321 })
+  })
+
   it('contributes no tools when the server does not advertise the tools capability', async () => {
     const client = createMockClient([{ name: 'add', inputSchema: { type: 'object' } }], {})
     const definitions = await fetchToolDefinitions(ctx, client as never, defaultOpts)
