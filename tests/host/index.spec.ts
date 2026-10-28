@@ -159,12 +159,21 @@ describe('plugin entry shape', () => {
   // a per-root reservation in a WeakSet — these two cases pin that discipline
   // (a leaked reservation would make the second mount throw, and a missing
   // guard would let a duplicate activation shadow the first silently).
-  it('is effect-owned: disposing the activation releases the root, and the same root activates again', async () => {
+  it('is effect-owned: disposing the activation releases the root and stops its listeners', async () => {
     const { ctx } = build()
+    managerMock.reconcile.mockClear()
+    managerMock.dispose.mockClear()
     const first = await ctx.plugin(entry)
     await first.dispose()
+    expect(managerMock.dispose).toHaveBeenCalledTimes(1)
+    const reconciles = managerMock.reconcile.mock.calls.length
+    ctx.emit('loader/volatile-update', [['servers']])
+    expect(managerMock.reconcile, 'a disposed activation still listened').toHaveBeenCalledTimes(reconciles)
+
+    // The per-root reservation must be released by the disposer, not leaked.
     const second = await ctx.plugin(entry)
     await second.dispose()
+    expect(managerMock.dispose).toHaveBeenCalledTimes(2)
   })
 
   it('refuses a duplicate concurrent activation on the same root, loudly', async () => {

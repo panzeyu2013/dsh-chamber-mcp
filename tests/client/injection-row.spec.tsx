@@ -16,11 +16,9 @@ import {
   type InjectionRowState,
 } from '../../src/client/injection-row.tsx'
 import { INJECTION_NAME_LIMIT, MCP_INJECTION_NODE_KIND } from '../../src/client/injection.ts'
-import { en, type SettingsKey } from '../../src/client/locales.ts'
+import { en } from '../../src/client/locales.ts'
+import { t } from '../support/section-fixtures.ts'
 import type { ServerDef } from '../../src/shared/model.ts'
-
-const t = (key: SettingsKey, params?: Record<string, string | number>): string =>
-  en[key].replace(/\{(\w+)\}/g, (_, name: string) => String(params?.[name] ?? ''))
 
 /**
  * Server identities the spec's public names belong to. The notice only reports
@@ -322,9 +320,13 @@ describe('MCP injection node definition', () => {
   })
 
   it('unions both sources without double counting', () => {
-    const prompt = 'mcp__zotero__item mcp__zotero__search'
+    // A declaration adds a third name that the header never carried; without
+    // reading the prompt the notice would still report only the header's two.
+    const prompt = '  mcp__zotero__extra: unknown;'
     const state = stateOf(header(13, 'initial', zotero), undefined, stepLocation, prompt)
-    expect(state.servers).toEqual([{ name: 'zotero', toolCount: 2, tools: zotero }])
+    expect(state.servers).toEqual([
+      { name: 'zotero', toolCount: 3, tools: [...zotero, 'mcp__zotero__extra'].sort() },
+    ])
   })
 
   it('falls back to just before the header when the window resolves no step', () => {

@@ -279,16 +279,18 @@ export function renameDisabledKey(
  */
 export function removeServerOverrides(overrides: WorkspaceOverrides, serverName: string): WorkspaceOverrides {
   let changed = false
-  const next: WorkspaceOverrides = {}
+  const entries: [string, Record<string, true>][] = []
   for (const [workspaceId, row] of Object.entries(overrides)) {
     const rest: Record<string, true> = {}
     for (const name of Object.keys(row)) {
       if (name !== serverName) rest[name] = true
       else changed = true
     }
-    if (Object.keys(rest).length > 0) next[workspaceId] = rest
+    if (Object.keys(rest).length > 0) entries.push([workspaceId, rest])
   }
-  return changed ? next : overrides
+  // Object.fromEntries defines OWN properties: a literal __proto__ workspace
+  // stays a row instead of silently becoming the prototype.
+  return changed ? (Object.fromEntries(entries) as WorkspaceOverrides) : overrides
 }
 
 /**

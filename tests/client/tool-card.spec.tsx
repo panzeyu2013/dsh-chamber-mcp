@@ -6,7 +6,8 @@
 // row fails the suite.
 import { afterEach, describe, expect, it } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
-import { en, type SettingsKey } from '../../src/client/locales.ts'
+import { en } from '../../src/client/locales.ts'
+import { t as fixtureT } from '../support/section-fixtures.ts'
 import type { SectionT } from '../../src/client/section.tsx'
 import { styles } from '../../src/client/styles.ts'
 import type { ServerDef } from '../../src/shared/model.ts'
@@ -22,8 +23,7 @@ import {
 import { McpToolRow } from '../../src/client/tool-card/row.tsx'
 import { mcpToolView } from '../../src/client/tool-card/view.tsx'
 
-const t = ((key: SettingsKey, params?: Record<string, string | number>) =>
-  en[key].replace(/\{(\w+)\}/g, (_, name) => String(params?.[name] ?? ''))) as unknown as SectionT
+const t = fixtureT as unknown as SectionT
 
 const STDIO: ServerDef = { serverName: 'fixture', transport: 'stdio', command: 'node', args: ['srv.mjs'] }
 const HTTP: ServerDef = { serverName: 'github', transport: 'streamable-http', url: 'https://mcp.example.com/x' }

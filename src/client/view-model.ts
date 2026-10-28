@@ -157,6 +157,7 @@ export function runtimeSnapshotsEqual(
     const b = right.servers[name]
     if (a === undefined || b === undefined) return false
     if (
+      a.name !== b.name ||
       a.state !== b.state ||
       a.attempts !== b.attempts ||
       a.maxAttempts !== b.maxAttempts ||

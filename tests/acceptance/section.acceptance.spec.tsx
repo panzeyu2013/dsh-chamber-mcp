@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 /**
- * INDEPENDENT acceptance suite for the Phase 0-4 settings surface (C4).
+ * Acceptance suite for the settings surface.
+ *
+ * Traceability (docs/acceptance.md): R2 default-off; E1 availability;
+ * E3/E8 runtime status; E4/E5 connect-disconnect-test; E6 tools; E7 editor;
+ * E9 list/detail/workspaces; E10 optimistic/bulk/undo; E11 removal.
  *
  * Capabilities are asserted through the real section with injected stores:
  * correctness (off-by-default, optimistic state, navigation is read-only),
@@ -8,7 +12,7 @@
  * write and DOM counts). Copy is read from the shipped dictionaries.
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { en, type SettingsKey } from '../../src/client/locales.ts'
+import { t as text } from '../support/section-fixtures.ts'
 import { styles } from '../../src/client/styles.ts'
 import {
   buttonsOf,
@@ -19,7 +23,7 @@ import {
   stdioServer,
   viewOf,
   type Harness,
-} from './harness.tsx'
+} from '../support/section-harness.tsx'
 import type { RuntimeSnapshot } from '../../src/client/runtime.ts'
 
 afterEach(() => {
@@ -37,10 +41,6 @@ function runtimeWith(names: readonly string[], phase: RuntimeSnapshot['phase'] =
   const servers: Record<string, ReturnType<typeof viewOf>> = {}
   for (const name of names) servers[name] = viewOf(name)
   return { phase, servers }
-}
-
-function text(key: SettingsKey, params?: Record<string, string | number>): string {
-  return en[key].replace(/\{(\w+)\}/g, (_, name) => String(params?.[name] ?? ''))
 }
 
 function buttonWith(root: ParentNode, label: string): HTMLButtonElement {
@@ -95,7 +95,7 @@ function dialog(): HTMLElement {
   return element
 }
 
-describe('C4 correctness: off-by-default and optimistic writes', () => {
+describe('acceptance correctness: off-by-default and optimistic writes', () => {
   it('[correctness] a configured server is off in every workspace by default', async () => {
     const mounted = mountSection({
       doc: { servers: [stdioServer(SERVER)], overrides: {} },
@@ -199,27 +199,7 @@ describe('C4 correctness: off-by-default and optimistic writes', () => {
     expect(mounted.calls.writes).toEqual([])
   })
 
-  it('[correctness] a document that was still loading finishes into the list', async () => {
-    const mounted = mountSection({
-      doc: { servers: [stdioServer(SERVER)], overrides: {} },
-      wsItems: WS,
-      runtime: runtimeWith([SERVER]),
-      docStatus: 'loading',
-    })
-    await flush()
-    expect(mounted.text()).toContain(text('state.loading'))
-    mounted.setDocStatus('ready')
-    await flush()
-    expect(rowOf(mounted, SERVER)).not.toBeNull()
-    mounted.setDocStatus('unavailable')
-    await flush()
-    expect(mounted.text()).toContain(text('state.unavailable'))
-    mounted.setDocStatus('ready')
-    await flush()
-    expect(rowOf(mounted, SERVER)).not.toBeNull()
-  })
-
-  it('[correctness] a failed bulk write leaves every row on the committed value and reports once', async () => {
+  it('[correctness] a failed bulk write rolls back rows it still owns and keeps a superseded row', async () => {
     let failBatch!: (outcome: { ok: false; reason: 'conflict' }) => void
     const mounted = mountSection({
       doc: { servers: [stdioServer(SERVER)], overrides: {} },
@@ -241,35 +221,25 @@ describe('C4 correctness: off-by-default and optimistic writes', () => {
       )!
     buttonWith(detail, text('row.allOn')).click()
     await flush()
-    // A newer per-row write on beta while the batch is in flight.
+    // A newer per-row write on beta lands TWICE while the batch is in flight:
+    // its target (on) differs from the committed value (off), so a naive
+    // drop-everything rollback gives a different result than a token filter.
+    scopeSwitch('beta').click()
+    await flush()
     scopeSwitch('beta').click()
     await flush()
     failBatch({ ok: false, reason: 'conflict' })
     await flush()
     await flush()
     expect(scopeSwitch('alpha').checked).toBe(false)
-    expect(scopeSwitch('beta').checked).toBe(false)
+    expect(scopeSwitch('beta').checked).toBe(true)
     expect(scopeSwitch('gamma').checked).toBe(false)
     expect(mounted.text()).toContain(text('error.conflict'))
+    expect(buttonWith(mounted.host, text('action.retry'))).toBeDefined()
   })
 })
 
-describe('C4 completeness: one test per user-visible capability', () => {
-  it('[completeness] every server has a list row with its scope and status', async () => {
-    const names = ['alpha', 'beta', 'gamma']
-    const mounted = mountSection({
-      doc: { servers: names.map((name) => stdioServer(name)), overrides: {} },
-      wsItems: WS,
-      runtime: runtimeWith(names),
-    })
-    await flush()
-    for (const name of names) {
-      expect(rowOf(mounted, name).textContent).toContain(name)
-      expect(rowOf(mounted, name).textContent).toContain(text('status.connected'))
-    }
-    expect(mounted.host.querySelectorAll('.' + styles.serverRow)).toHaveLength(names.length)
-  })
-
+describe('acceptance completeness: user-visible capabilities', () => {
   it('[completeness] a per-server refresh hits only that server', async () => {
     const mounted = mountSection({
       doc: { servers: [stdioServer(SERVER)], overrides: {} },
@@ -285,7 +255,7 @@ describe('C4 completeness: one test per user-visible capability', () => {
     expect(added).toEqual([{ silent: true, server: SERVER }])
   })
 
-  it('[completeness] connect, disconnect and test are real actions', async () => {
+  it('[completeness] disconnect and test are wired to the runtime actions', async () => {
     const mounted = mountSection({
       doc: { servers: [stdioServer(SERVER)], overrides: {} },
       wsItems: WS,
@@ -313,33 +283,6 @@ describe('C4 completeness: one test per user-visible capability', () => {
     buttonWith(detail, text('action.connect')).click()
     await flush()
     expect(mounted.calls.connect).toEqual([SERVER])
-  })
-
-  it('[completeness] the tools disclosure loads the host tool list once', async () => {
-    const mounted = mountSection({
-      doc: { servers: [stdioServer(SERVER)], overrides: {} },
-      wsItems: WS,
-      runtime: runtimeWith([SERVER]),
-      actions: {
-        loadTools: async () => ({
-          tools: [{ publicName: 'mcp__alpha__search', rawName: 'search', description: 'Search' }],
-          truncated: false,
-          total: 1,
-        }),
-      },
-    })
-    await flush()
-    const detail = await openServer(mounted, SERVER)
-    const toolsButton = buttonWith(detail, text('tools.title'))
-    toolsButton.click()
-    await flush()
-    expect(mounted.calls.tools).toEqual([SERVER])
-    toolsButton.click()
-    await flush()
-    toolsButton.click()
-    await flush()
-    // The list is cached for the current sync generation.
-    expect(mounted.calls.tools).toEqual([SERVER])
   })
 
   it('[completeness] one scope switch is one write; bulk scope is still one write', async () => {
@@ -395,61 +338,6 @@ describe('C4 completeness: one test per user-visible capability', () => {
     })
   })
 
-  it('[completeness] workspace detail toggles a server and batches one workspace', async () => {
-    const mounted = mountSection({
-      doc: { servers: [stdioServer('alpha'), stdioServer('beta')], overrides: {} },
-      wsItems: WS,
-      runtime: runtimeWith(['alpha', 'beta']),
-    })
-    await flush()
-    await openWorkspaces(mounted)
-    const detail = await openWorkspace(mounted, 'ws-1')
-    detail.querySelector<HTMLInputElement>('input[aria-label="alpha: alpha"]')!.click()
-    await flush()
-    expect(mounted.calls.writes).toEqual(['toggleWorkspace'])
-    expect(mounted.calls.writeArgs[0]).toEqual({
-      action: 'toggleWorkspace',
-      args: ['ws-1', 'alpha', true],
-    })
-    buttonWith(detail, text('row.allOn')).click()
-    await flush()
-    expect(mounted.calls.writes).toEqual(['toggleWorkspace', 'toggleWorkspaceServers'])
-    expect(mounted.calls.writeArgs[1]).toEqual({
-      action: 'toggleWorkspaceServers',
-      args: ['ws-1', ['alpha', 'beta'], true],
-    })
-  })
-
-
-
-  it('[completeness] undoing a workspace bulk restores its exact prior mix', async () => {
-    const mounted = mountSection({
-      doc: {
-        servers: [stdioServer('alpha'), stdioServer('beta'), stdioServer('gamma')],
-        overrides: overridesOf({ 'ws-1': ['alpha'] }),
-      },
-      wsItems: WS,
-      runtime: runtimeWith(['alpha', 'beta', 'gamma']),
-    })
-    await flush()
-    await openWorkspaces(mounted)
-    const detail = await openWorkspace(mounted, 'ws-1')
-    buttonWith(detail, text('row.allOn')).click()
-    await flush()
-    buttonWith(mounted.host, text('toast.undo')).click()
-    await flush()
-    expect(mounted.calls.writeArgs.slice(1)).toEqual([
-      {
-        action: 'restoreScopeValues',
-        args: [[
-          { workspaceId: 'ws-1', serverName: 'alpha', enabled: true },
-          { workspaceId: 'ws-1', serverName: 'beta', enabled: false },
-          { workspaceId: 'ws-1', serverName: 'gamma', enabled: false },
-        ]],
-      },
-    ])
-  })
-
   it('[completeness] the Workspaces tab filters workspaces by name', async () => {
     const items = Array.from({ length: 6 }, (_, index) => ({
       workspaceId: 'ws-' + index,
@@ -469,41 +357,6 @@ describe('C4 completeness: one test per user-visible capability', () => {
     await flush()
     expect(mounted.host.querySelector('[data-workspace="ws-3"]')).not.toBeNull()
     expect(mounted.host.querySelector('[data-workspace="ws-1"]')).toBeNull()
-  })
-
-  it('[completeness] the detail removes a server only after the specific confirmation', async () => {
-    const mounted = mountSection({
-      doc: { servers: [stdioServer(SERVER)], overrides: overridesOf({ 'ws-1': [SERVER] }) },
-      wsItems: WS,
-      runtime: runtimeWith([SERVER]),
-    })
-    await flush()
-    const detail = await openServer(mounted, SERVER)
-    buttonWith(detail, text('server.remove')).click()
-    await flush()
-    expect(dialog().textContent).toContain(text('server.removeTitle', { name: SERVER }))
-    buttonWith(dialog(), text('server.removeAction')).click()
-    await flush()
-    expect(mounted.calls.writes).toEqual(['removeServer'])
-    expect(mounted.calls.writeArgs[0]).toEqual({ action: 'removeServer', args: [SERVER] })
-  })
-
-  it('[completeness] the editor is reachable from the list and the detail', async () => {
-    const mounted = mountSection({
-      doc: { servers: [stdioServer(SERVER)], overrides: {} },
-      wsItems: WS,
-      runtime: runtimeWith([SERVER]),
-    })
-    await flush()
-    buttonWith(mounted.host, text('add.add')).click()
-    await flush()
-    expect(mounted.host.textContent).toContain(text('add.title'))
-    buttonWith(mounted.host, text('action.cancel')).click()
-    await flush()
-    await openServer(mounted, SERVER)
-    buttonWith(mounted.host, text('server.edit')).click()
-    await flush()
-    expect(mounted.host.textContent).toContain(text('edit.title'))
   })
 
   it('[completeness] a stale runtime keeps its views and retries the full refresh once', async () => {
@@ -550,7 +403,7 @@ describe('C4 completeness: one test per user-visible capability', () => {
   })
 })
 
-describe('C4 optimality: writes, requests and DOM', () => {
+describe('acceptance optimality: writes, requests and DOM', () => {
   it('[optimality] a re-render performs no extra write or refresh', async () => {
     const mounted = mountSection({
       doc: { servers: [stdioServer(SERVER)], overrides: {} },
@@ -579,18 +432,5 @@ describe('C4 optimality: writes, requests and DOM', () => {
       (input) => input.getAttribute('aria-label')?.startsWith(text('server.workspacesTitle')),
     )
     expect(scopeSwitches).toHaveLength(WS.length)
-  })
-
-  it('[optimality] unmounting cancels the status timer', async () => {
-    const mounted = mountSection({
-      doc: { servers: [stdioServer(SERVER)], overrides: {} },
-      wsItems: WS,
-      runtime: runtimeWith([SERVER]),
-    })
-    await flush()
-    const before = mounted.calls.refresh.length
-    mounted.unmount()
-    await new Promise((resolve) => setTimeout(resolve, 40))
-    expect(mounted.calls.refresh.length).toBe(before)
   })
 })

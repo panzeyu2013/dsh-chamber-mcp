@@ -19,15 +19,21 @@ import {
   mountStyles,
   styles,
 } from '../../src/client/styles.ts'
-import { en } from '../../src/client/locales.ts'
-import type { SettingsKey } from '../../src/client/locales.ts'
 import type { SectionT } from '../../src/client/section.tsx'
+import { t as fixtureT } from '../support/section-fixtures.ts'
 import type { McpScopeDoc } from '../../src/shared/model.ts'
 import type { RuntimeSnapshot } from '../../src/client/runtime.ts'
 
 /** Locale reader of the section namespace (en dictionary, `{name}` interpolation). */
-const t = ((key: SettingsKey, params?: Record<string, string | number>) =>
-  en[key].replace(/\{(\w+)\}/g, (_, name) => String(params?.[name] ?? ''))) as unknown as SectionT
+const t = fixtureT as unknown as SectionT
+
+/** Exact class tokens in a static markup string (substring matches hide missing roots). */
+const classesOf = (markup: string): Set<string> =>
+  new Set(
+    Array.from(markup.matchAll(/class="([^"]*)"/g)).flatMap((match) =>
+      (match[1] ?? '').split(/\s+/).filter(Boolean),
+    ),
+  )
 
 afterEach(() => {
   for (const tag of Array.from(document.querySelectorAll('style[data-plugin-css]'))) tag.remove()
@@ -423,6 +429,7 @@ describe('components consume the style seat', () => {
         writable
       />,
     )
+    const classes = classesOf(markup)
     for (const name of [
       styles.section,
       styles.searchToolbar,
@@ -442,7 +449,7 @@ describe('components consume the style seat', () => {
       styles.statusPillOk,
       styles.serverRowChevron,
     ]) {
-      expect(markup, 'missing ' + name).toContain(name)
+      expect(classes.has(name), 'missing ' + name).toBe(true)
     }
     expect(markup).toContain(t('server.scopeCount', { enabled: 1, total: 1 }))
   })
@@ -462,6 +469,7 @@ describe('components consume the style seat', () => {
         onSaved={() => {}}
       />,
     )
+    const classes = classesOf(markup)
     for (const name of [
       styles.editor,
       styles.editorHead,
@@ -484,7 +492,7 @@ describe('components consume the style seat', () => {
       styles.buttonMd,
       styles.buttonPrimary,
     ]) {
-      expect(markup, 'missing ' + name).toContain(name)
+      expect(classes.has(name), 'missing ' + name).toBe(true)
     }
     expect(markup).toContain('mcp-scope-editor-name')
     expect(markup).toContain(t('editor.saveAndTest'))

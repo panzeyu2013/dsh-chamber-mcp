@@ -4,7 +4,7 @@
  * that a resolved env key actually reaches a spawned stdio MCP child.
  */
 
-import { beforeAll, afterAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Client } from '@modelcontextprotocol/client'
@@ -98,6 +98,30 @@ describe('resolveServerEnv / resolveServerHeaders', () => {
     expect(warnings[1]).toMatch(/EMPTY/)
   })
 
+  it('treats an empty stored value as absent for both env and headers', async () => {
+    const warnings: string[] = []
+    const env = await resolveServerEnv(
+      stdioDef({ envKeys: ['EMPTY'] }),
+      rawResolver({ EMPTY: '' }),
+      (m) => void warnings.push(m),
+    )
+    expect(env).toEqual({})
+    const headers = await resolveServerHeaders(
+      {
+        serverName: 'srv',
+        transport: 'streamable-http',
+        url: 'https://x',
+        headers: [{ name: 'X-Empty', ref: 'EMPTY' }],
+      },
+      rawResolver({ EMPTY: '' }),
+      (m) => void warnings.push(m),
+    )
+    expect(headers).toEqual({})
+    expect(warnings).toHaveLength(2)
+    expect(warnings[0]).toContain('not configured')
+    expect(warnings[1]).toContain('not configured')
+  })
+
   it('resolves headers and omits missing refs; warns without a logger too', async () => {
     const headers = await resolveServerHeaders(
       { serverName: 'srv', transport: 'streamable-http', url: 'https://x', headers: [{ name: 'X-Auth', ref: 'OK' }, { name: 'Y', ref: 'NOPE' }] },
@@ -173,11 +197,12 @@ describe('createTransport', () => {
     }
   })
 
-  it('builds a streamable-http transport with resolved headers', async () => {
-    const transport = await createTransport(
-      { serverName: 'srv', transport: 'streamable-http', url: 'http://127.0.0.1:9/nope', headers: [{ name: 'Authorization', ref: 'TOK' }] },
-      resolver({ TOK: 'abc' }),
-    )
-    expect(transport).toBeDefined()
+  it('rejects an HTTP definition whose URL cannot be parsed', async () => {
+    await expect(
+      createTransport(
+        { serverName: 'srv', transport: 'streamable-http', url: 'not a url', headers: [] },
+        resolver({}),
+      ),
+    ).rejects.toThrow()
   })
 })

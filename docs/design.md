@@ -227,11 +227,11 @@ breaking a child's creation.
 | `src/routes.ts` | 0.0.3 runtime routes on the Connection carrier: `status` / `action` / `tools` (fixed host codes only; §(d)) |
 | `src/server-context.ts` | per-server publication of the `mcp:<serverName>` instructions section and the `mcpResources` provider (the official `registerServerContext` shape) |
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
+| `tests/support/{section-harness.tsx,section-kit.ts,section-fixtures.ts,server-fixture.ts,manager-fixture.ts,http-fixture.ts,wait.ts}` | shared section mount/fixtures, host server/manager harnesses, the shared wait helper, and the in-process real Streamable HTTP fixture |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture on the 2.0 server packages (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe; publishes instructions, oversized under `FIXTURE_HUGE_INSTRUCTIONS=1`; serves one resource and one URI TEMPLATE so the resource provider's list/templates/read paths are exercised end to end; `FIXTURE_NO_RESOURCES=1` declares no resources capability and registers none) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (14 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`, `tests/delegation.spec.ts`; repo total 583 tests / 30 files) |
+| `tests/tools.spec.ts`, `tests/host/*.spec.ts` | 18 host suites (server/manager groups split for file-level parallelism, incl. `http.spec.ts` and `manager-agents.spec.ts`) plus `tests/tools.spec.ts`, all green (16 client suites under `tests/client/`, 3 acceptance suites under `tests/acceptance/`, `tests/delegation.spec.ts`; repo total 573 tests / 39 files) |
 
-Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (583 tests / 30 files).
+Run: `npm run typecheck` (both tsconfigs) and `npm run test:coverage` — both fully green (573 tests / 39 files; statements 94.24%, branches 87.29%).
 
 ### (a) API signatures and runtime assumptions
 
@@ -842,8 +842,8 @@ written — through the platform's own seams rather than a new channel:
 | `src/client/nav-icon.ts` | settings sidebar glyph: paints the plugin's plug mark into OUR nav row (§9.4), because the shell picks the mark from a hardcoded map by section id and the registration carries no icon option |
 | `src/client/workspaces.ts` | minimal workspace-row narrowing (typed items) |
 | `src/client/tool-card/{names,icon,row,view,register}.ts(x)` | transcript lane: MCP tool identity from the session's request header, the keyed tool view, and its registration lifecycle (§6, §5(f)) |
-| `tests/client/{controller,locales,styles,section-render,section-repaint,tool-card,tool-register,import,runtime,injection,injection-row,draft,view-model,nav-icon}.spec.ts(x)` | browser-half vitest suites (14 files; the section suites cover list/detail/workspaces/editor, document-status transitions, optimistic rollback, queue ordering, draft restore and focus) |
-| `tests/acceptance/{copy,store,host-route,styles,section}.acceptance.spec.ts(x)` | independent acceptance suites (contract C1–C4) driven through the real components/manager |
+| `tests/client/{controller,locales,styles,section-render,section-editor,section-repaint,tool-card,tool-register,import,runtime,injection,injection-row,draft,view-model,nav-icon,apply}.spec.ts(x)` | browser-half vitest suites (16 files; the section suites cover list/detail/workspaces/editor, document-status transitions, optimistic rollback, queue ordering, draft restore, focus, and the real browser-entry registration) |
+| `tests/acceptance/{store,host-route,section}.acceptance.spec.ts(x)` | component/route acceptance suites; `host-route` keeps only the real-manager projection (the route matrix is in `routes.spec.ts`), and copy/style invariants live in their owner suites (`locales.spec.ts` / `styles.spec.tsx`) |
 | `src/client/injection.ts` (contract) + `tests/client/injection.spec.ts` | see §5(f) for the notice and §6 for the lane |
 
 Also edited (build-gate fixes, see `docs/RELEASE.md`): `tsconfig.json` (added `DOM` lib),

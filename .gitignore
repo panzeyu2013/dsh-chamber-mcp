@@ -9,6 +9,8 @@ dist/
 # scratch / smoke (scripts/smoke tooling IS tracked; .smoke scratch is not)
 .smoke/
 smoke/
+.coverage/
+.npm-cache/
 *.tgz
 !scripts/smoke/
 !scripts/smoke/**

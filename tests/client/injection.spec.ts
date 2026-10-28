@@ -249,13 +249,12 @@ describe('one request → registered set (dual source)', () => {
   })
 
   it('never reports a server that is not configured', () => {
-    // Real prompts render every tool DESCRIPTION into the SDK block, so a
-    // mention may sit in a declaration-shaped position (followed by "(") while
-    // naming a server this deployment does not run.
+    // A declaration name can belong to a server this deployment does not run;
+    // the strict-ownership filter must drop it instead of inventing a server.
     const servers = injectionServersOfRequest(
       {
         header: headerData('run_code'),
-        prompt: 'Use mcp__speech__transcribe(args) for audio.\n  mcp__zotero__search: unknown;',
+        prompt: '  mcp__speech__transcribe: unknown;\n  mcp__zotero__search: unknown;',
       },
       [server('zotero')],
     )

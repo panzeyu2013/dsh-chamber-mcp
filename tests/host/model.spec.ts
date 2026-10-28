@@ -205,6 +205,21 @@ describe('removeServerOverrides', () => {
     const empty: WorkspaceOverrides = {}
     expect(removeServerOverrides(empty, 'files')).toBe(empty)
   })
+
+  it('keeps a workspace literally named __proto__ as an OWN row', () => {
+    // A plain next[workspaceId] = rest assignment would set the prototype and
+    // silently drop the row, exactly like the F1 workspace-key discipline in
+    // overrideDoc/pruneEmptyOverrideRows.
+    const overrides = Object.fromEntries([
+      ['__proto__', { files: true, git: true }],
+      ['ws-a', { files: true }],
+    ]) as WorkspaceOverrides
+    const next = removeServerOverrides(overrides, 'files')
+    expect(Object.hasOwn(next, '__proto__')).toBe(true)
+    expect(Object.keys(next)).toEqual(['__proto__'])
+    expect(next['__proto__']).toEqual({ git: true })
+    expect(next['ws-a']).toBeUndefined()
+  })
 })
 
 describe('credentialRefsOf', () => {

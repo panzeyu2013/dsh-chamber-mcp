@@ -17,7 +17,7 @@ describe('locales: en/zh parity', () => {
     expect(enKeys.length).toBeGreaterThan(0)
   })
 
-  it('has no empty or placeholder-less values', () => {
+  it('has no empty values', () => {
     for (const key of keys) {
       expect(en[key].length).toBeGreaterThan(0)
       expect(en[key].trim()).not.toBe('')

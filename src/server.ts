@@ -303,6 +303,8 @@ export interface SupervisorOptions {
   reconnect?: ReconnectConfig
   /** Per-tool-call timeout for executor requests (official default 60 s). */
   toolCallTimeoutMs?: number
+  /** Bound for waiting on a generation's transport close (default 5 s; tests shrink it). */
+  generationCloseTimeoutMs?: number
 }
 
 /**
@@ -317,6 +319,7 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
   const fmtError = safeErrorText
   const log = options.logger
   const toolCallTimeoutMs = options.toolCallTimeoutMs ?? DEFAULT_TOOL_CALL_TIMEOUT_MS
+  const generationCloseTimeoutMs = options.generationCloseTimeoutMs ?? GENERATION_CLOSE_TIMEOUT_MS
 
   let disposed = false
   /** Current generation: the connecting or connected client; undefined during backoff waits and after final failure. */
@@ -445,7 +448,7 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
   /** Wait for the transport-owned close signal without letting a broken transport wedge teardown forever. */
   function waitForClose(closed: Promise<void>): Promise<boolean> {
     return new Promise((resolve) => {
-      const timeout = setTimeout(() => { resolve(false) }, GENERATION_CLOSE_TIMEOUT_MS)
+      const timeout = setTimeout(() => { resolve(false) }, generationCloseTimeoutMs)
       timeout.unref()
       void closed.then(() => {
         clearTimeout(timeout)
@@ -616,8 +619,8 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
         // No timer is armed (an overlapping retry would be worse), so without
         // this the snapshot would report 'connecting' forever.
         gaveUp = true
-        lastError = `failed generation did not close within ${GENERATION_CLOSE_TIMEOUT_MS}ms`
-        log.error(`${label}: failed generation did not close within ${GENERATION_CLOSE_TIMEOUT_MS}ms — reconnect stopped to avoid overlapping server processes; reload the plugin or restart the Host to retry`)
+        lastError = `failed generation did not close within ${generationCloseTimeoutMs}ms`
+        log.error(`${label}: failed generation did not close within ${generationCloseTimeoutMs}ms — reconnect stopped to avoid overlapping server processes; reload the plugin or restart the Host to retry`)
         return
       }
       generationDown(generationClient)
@@ -633,7 +636,7 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
       // owns the generation any more: close it here or a live child process is
       // orphaned (official discipline).
       if (!await closeGeneration()) {
-        log.error(`${label}: generation superseded during connect did not close within ${GENERATION_CLOSE_TIMEOUT_MS}ms — a server process may still be running`)
+        log.error(`${label}: generation superseded during connect did not close within ${generationCloseTimeoutMs}ms — a server process may still be running`)
       }
       return
     }
@@ -754,7 +757,7 @@ export function startServerSupervisor(options: SupervisorOptions): ServerHandle 
       clientCloser = undefined
       connected = false
       if (close !== undefined && !await close()) {
-        log.error(`${label}: generation did not close within ${GENERATION_CLOSE_TIMEOUT_MS}ms during disposal — server shutdown may be incomplete`)
+        log.error(`${label}: generation did not close within ${generationCloseTimeoutMs}ms during disposal — server shutdown may be incomplete`)
       }
       // Quiesce, don't just request it: the in-flight attempt enqueues its
       // sync before settling, so awaiting both leaves `master` final.

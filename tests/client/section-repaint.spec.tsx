@@ -7,100 +7,41 @@
  * add and remove NO node.
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { createRoot, type Root } from 'react-dom/client'
-import { McpScopeSection, type McpScopeSectionProps } from '../../src/client/section.tsx'
 import { styles } from '../../src/client/styles.ts'
-import { en, type SettingsKey } from '../../src/client/locales.ts'
-import type { McpScopeDoc } from '../../src/shared/model.ts'
-import type { CredentialInfo } from '../../src/client/controller.ts'
+import {
+  cleanupSections,
+  flush,
+  mountSection,
+  overridesOf,
+  stdioServer,
+  t,
+} from '../support/section-harness.tsx'
 
-function t(key: SettingsKey, params?: Record<string, string | number>): string {
-  return en[key].replace(/\{(\w+)\}/g, (_, name) => String(params?.[name] ?? ''))
-}
-const flush = () => new Promise((resolve) => setTimeout(resolve, 20))
-
-const live = {
-  doc: {
-    servers: [
-      { serverName: 'alpha', transport: 'stdio', command: 'node', args: ['a.js'], envKeys: [] },
-      { serverName: 'beta', transport: 'stdio', command: 'node', args: ['b.js'], envKeys: [] },
-    ],
-    overrides: {},
-    disabled: {},
-  } as McpScopeDoc,
-  revision: 3,
-}
-
-function propsOf(): McpScopeSectionProps {
-  const wsState = {
-    items: [
-      { workspaceId: 'ws-1', title: 'tmp', path: '/tmp' },
-      { workspaceId: 'ws-2', title: 'daily', path: '/daily' },
-      { workspaceId: 'ws-3', title: 'quant', path: '/quant' },
-      { workspaceId: 'ws-4', title: 'perf', path: '/perf' },
-      { workspaceId: 'ws-5', title: 'literature', path: '/lit' },
-    ],
-    archivedSessionIds: [],
-    state: 'idle',
-    phase: 'ready',
-    error: null,
-    baselinesReady: true,
-    recentWorkspaceId: undefined,
-  }
-  const snapshot = {
-    status: 'ready',
-    doc: live.doc,
-    revision: live.revision,
-    writable: true,
-    credentials: {} as Record<string, CredentialInfo>,
-    credentialsAt: 0,
-  }
-  const runtime = { phase: 'ready', servers: {} }
-  const ok = async () => ({ ok: true as const })
-  return {
-    close: async () => {},
-    t: t as unknown as McpScopeSectionProps['t'],
-    useDoc: ((selector: (s: unknown) => unknown) => selector(snapshot)) as unknown as McpScopeSectionProps['useDoc'],
-    useWorkspaces: ((selector: (s: unknown) => unknown) => selector(wsState)) as unknown as McpScopeSectionProps['useWorkspaces'],
-    addServer: ok,
-    replaceServer: ok,
-    removeServer: ok,
-    toggleWorkspace: ok,
-    toggleWorkspaces: ok,
-    toggleWorkspaceServers: ok,
-    restoreScopeValues: ok,
-    setServerEnabled: ok,
-    unsetCredential: ok,
-    useRuntime: ((selector: (s: unknown) => unknown) => selector(runtime)) as unknown as McpScopeSectionProps['useRuntime'],
-    refreshRuntime: async () => {},
-    connectServer: async () => {},
-    disconnectServer: async () => {},
-    testServer: async () => ({ ok: true }),
-    loadTools: async () => ({ tools: [], truncated: false, total: 0 }),
-  }
-}
-
-const tracked: { root: Root; host: HTMLDivElement }[] = []
 afterEach(() => {
-  for (const entry of tracked.splice(0)) {
-    entry.root.unmount()
-    entry.host.remove()
-  }
+  cleanupSections()
 })
+
+const WS = [
+  { workspaceId: 'ws-1', title: 'tmp', path: '/tmp' },
+  { workspaceId: 'ws-2', title: 'daily', path: '/daily' },
+  { workspaceId: 'ws-3', title: 'quant', path: '/quant' },
+  { workspaceId: 'ws-4', title: 'perf', path: '/perf' },
+  { workspaceId: 'ws-5', title: 'literature', path: '/lit' },
+]
 
 describe('section repaint discipline', () => {
   it('diffs a settings commit in place: no node is added or removed', async () => {
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    const root = createRoot(host)
-    root.render(<McpScopeSection {...propsOf()} />)
-    tracked.push({ root, host })
-    await flush()
+    const mounted = mountSection({
+      doc: { servers: [stdioServer('alpha'), stdioServer('beta')], overrides: {} },
+      wsItems: WS,
+      runtime: { phase: 'ready', servers: {} },
+    })
+    await flush(20)
     // Open the server detail so the largest subtree (workspace switches) is on
     // screen; the commit then changes one switch and nothing else.
-    host.querySelector<HTMLElement>('[data-server="alpha"] button')!.click()
-    await flush()
-    const switches = host.querySelectorAll('.' + styles.scopeRow).length
+    mounted.host.querySelector<HTMLElement>('[data-server="alpha"] button')!.click()
+    await flush(20)
+    const switches = mounted.host.querySelectorAll('.' + styles.scopeRow).length
     expect(switches).toBe(5)
     const counts = { added: 0, removed: 0 }
     const observer = new MutationObserver((records) => {
@@ -109,14 +50,19 @@ describe('section repaint discipline', () => {
         counts.removed += record.removedNodes.length
       }
     })
-    observer.observe(host, { childList: true, subtree: true, attributes: true, characterData: true })
+    observer.observe(mounted.host, { childList: true, subtree: true, attributes: true, characterData: true })
     // ONE settings commit: a workspace enable plus a revision bump.
-    live.doc = { ...live.doc, overrides: { 'ws-1': { alpha: true } } }
-    live.revision = 4
-    root.render(<McpScopeSection {...propsOf()} />)
-    await flush()
+    mounted.commitDoc({
+      ...mounted.live.doc,
+      overrides: overridesOf({ 'ws-1': ['alpha'] }),
+    })
+    await flush(20)
     observer.disconnect()
     expect(counts).toEqual({ added: 0, removed: 0 })
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="' + t('server.workspacesTitle') + ': tmp"]')!.checked).toBe(true)
+    expect(
+      mounted.host.querySelector<HTMLInputElement>(
+        'input[aria-label="' + t('server.workspacesTitle') + ': tmp"]',
+      )!.checked,
+    ).toBe(true)
   })
 })

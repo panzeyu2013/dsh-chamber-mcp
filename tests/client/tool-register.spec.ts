@@ -126,7 +126,7 @@ describe('tool view registry', () => {
     expect(registry.size()).toBe(1)
     expect(sink.live.has('mcp__github__a')).toBe(true)
     expect(onRefuse.mock.calls.map(([name]) => name)).toEqual(['mcp__github__b', 'mcp__github__c'])
-    expect(DEFAULT_TOOL_VIEW_LIMIT).toBeGreaterThan(1)
+    expect(DEFAULT_TOOL_VIEW_LIMIT).toBe(256)
   })
 
   it('reports a failed reconciliation instead of throwing into the publisher', () => {

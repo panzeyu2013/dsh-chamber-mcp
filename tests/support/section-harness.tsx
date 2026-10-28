@@ -1,12 +1,11 @@
 /**
- * Shared mount harness of the INDEPENDENT acceptance suite (contract C4).
+ * Shared mount harness for the section suites (acceptance + repaint).
  *
- * Nothing here is imported by production code: the acceptance suite drives the
- * real section component with injected store faces (the same technique the
- * owner suites use) so every assertion is black-box on the documented
- * behaviour, not on an implementation detail. Helpers discover the FROZEN
- * contract copy (the quoted zh sentences) from the shipped dictionaries so a
- * missing key fails loudly instead of silently matching English literals.
+ * Nothing here is imported by production code: the suites drive the real
+ * section component with injected store faces so assertions stay on the
+ * documented behaviour. Helpers discover the FROZEN contract copy from the
+ * shipped dictionaries so a missing key fails loudly instead of silently
+ * matching English literals.
  */
 import { createRoot, type Root } from 'react-dom/client'
 import { McpScopeSection, type McpScopeSectionProps } from '../../src/client/section.tsx'
@@ -14,10 +13,10 @@ import { McpScopeSection, type McpScopeSectionProps } from '../../src/client/sec
 import type {} from '../../src/client/index.ts'
 import { en, zh } from '../../src/client/locales.ts'
 import type { CredentialInfo } from '@deepseek-ai/dsh-credentials/types'
-import type { McpScopeDoc, WorkspaceOverrides } from '../../src/shared/model.ts'
+import type { McpScopeDoc } from '../../src/shared/model.ts'
 import type { RuntimeSnapshot, RuntimeTestResult, RuntimeToolEntry } from '../../src/client/runtime.ts'
+export { flush, httpServer, overridesOf, runtimeWith, stdioServer, t, translate, viewOf } from './section-fixtures.ts'
 
-export type ServerDefLike = McpScopeDoc['servers'][number]
 export type Dictionary = Record<string, string>
 
 export const dictionaries: Record<'en' | 'zh', Dictionary> = { en, zh }
@@ -39,38 +38,7 @@ export function makeT(dict: Dictionary, missing: string[] = []) {
   }
 }
 
-export const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 2))
-
 export const EMPTY_RUNTIME: RuntimeSnapshot = { phase: 'ready', servers: {} }
-
-export function stdioServer(
-  serverName: string,
-  extra: Partial<{ command: string; args: string[]; envKeys: string[] }> = {},
-): ServerDefLike {
-  return {
-    serverName,
-    transport: 'stdio',
-    command: extra.command ?? 'node',
-    args: extra.args ?? ['a.js'],
-    ...(extra.envKeys !== undefined ? { envKeys: extra.envKeys } : {}),
-  } as ServerDefLike
-}
-
-export function overridesOf(rows: Record<string, string[]>): WorkspaceOverrides {
-  const out: WorkspaceOverrides = {}
-  for (const [ws, names] of Object.entries(rows)) {
-    const row: Record<string, true> = {}
-    for (const name of names) row[name] = true
-    out[ws] = row
-  }
-  return out
-}
-
-export type RuntimeViewLike = RuntimeSnapshot['servers'][string]
-
-export function viewOf(name: string, state: RuntimeViewLike['state'] = 'connected'): RuntimeViewLike {
-  return { name, state, attempts: 0, maxAttempts: 10, toolCount: 2 }
-}
 
 export interface RecordedWrite {
   action:
@@ -129,7 +97,7 @@ export type DocStatus = 'loading' | 'ready' | 'unavailable'
 
 export interface MountOptions {
   doc: McpScopeDoc
-  wsItems?: readonly { workspaceId: string; title: string }[]
+  wsItems?: readonly { workspaceId: string; title: string; path?: string }[]
   runtime?: RuntimeSnapshot
   locale?: 'en' | 'zh'
   writable?: boolean
@@ -140,11 +108,23 @@ export interface MountOptions {
   actions?: Actions
   /** Document status at mount (a live change goes through `setDocStatus`). */
   docStatus?: DocStatus
+  wsState?: 'idle' | 'loading' | 'error'
+  wsPhase?: 'pending' | 'ready'
 }
 
 export interface Harness {
   host: HTMLDivElement
-  live: { doc: McpScopeDoc; revision: number; runtime?: RuntimeSnapshot; docStatus: DocStatus }
+  live: {
+    doc: McpScopeDoc
+    revision: number
+    runtime?: RuntimeSnapshot
+    docStatus: DocStatus
+    writable: boolean
+    credentials: Record<string, CredentialInfo>
+    wsItems: readonly { workspaceId: string; title: string; path?: string }[]
+    wsState: 'idle' | 'loading' | 'error'
+    wsPhase: 'pending' | 'ready'
+  }
   calls: RecordedCalls
   missing: string[]
   /** Flip the document status (a real store publishes loading -> ready). */
@@ -156,12 +136,16 @@ export interface Harness {
   text(): string
 }
 
-function workspaceStateOf(live: { wsItems: readonly { workspaceId: string; title: string }[] }) {
+function workspaceStateOf(live: {
+  wsItems: readonly { workspaceId: string; title: string; path?: string }[]
+  wsState: 'idle' | 'loading' | 'error'
+  wsPhase: 'pending' | 'ready'
+}) {
   return {
     items: live.wsItems,
     archivedSessionIds: [],
-    state: 'idle',
-    phase: 'ready',
+    state: live.wsState,
+    phase: live.wsPhase,
     error: null,
     baselinesReady: true,
     recentWorkspaceId: undefined,
@@ -182,6 +166,10 @@ export function mountSection(options: MountOptions): Harness {
     runtime: options.runtime,
     wsItems: options.wsItems ?? [],
     docStatus: options.docStatus ?? ('ready' as DocStatus),
+    writable: options.writable ?? true,
+    credentials: options.credentials ?? {},
+    wsState: options.wsState ?? ('idle' as const),
+    wsPhase: options.wsPhase ?? ('ready' as const),
   }
   const missing = options.missingKeys ?? []
   const dict = dictOf(options.locale)
@@ -300,8 +288,8 @@ export function mountSection(options: MountOptions): Harness {
       status: live.docStatus,
       doc: live.doc,
       revision: live.revision,
-      writable: options.writable ?? true,
-      credentials: options.credentials ?? {},
+      writable: live.writable,
+      credentials: live.credentials,
       credentialsAt: 0,
     })) as unknown as McpScopeSectionProps['useDoc']
   const workspacesHook = ((selector: (snapshot: unknown) => unknown) =>
@@ -309,7 +297,7 @@ export function mountSection(options: MountOptions): Harness {
   const runtimeHook = ((selector: (snapshot: unknown) => unknown) =>
     selector(live.runtime ?? EMPTY_RUNTIME)) as unknown as McpScopeSectionProps['useRuntime']
 
-  const props: McpScopeSectionProps = {
+  const propsOf = (): McpScopeSectionProps => ({
     close: () => {},
     t: t as unknown as McpScopeSectionProps['t'],
     useDoc: docHook,
@@ -329,12 +317,12 @@ export function mountSection(options: MountOptions): Harness {
     disconnectServer,
     testServer,
     loadTools,
-  }
+  })
 
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root: Root = createRoot(host)
-  root.render(<McpScopeSection {...props} />)
+  root.render(<McpScopeSection {...propsOf()} />)
 
   let unmounted = false
   const harness: Harness = {
@@ -344,13 +332,13 @@ export function mountSection(options: MountOptions): Harness {
     missing,
     setDocStatus: (status: DocStatus) => {
       live.docStatus = status
-      root.render(<McpScopeSection {...props} />)
+      root.render(<McpScopeSection {...propsOf()} />)
     },
-    rerender: () => root.render(<McpScopeSection {...props} />),
+    rerender: () => root.render(<McpScopeSection {...propsOf()} />),
     commitDoc: (next: McpScopeDoc) => {
       live.doc = next
       live.revision += 1
-      root.render(<McpScopeSection {...props} />)
+      root.render(<McpScopeSection {...propsOf()} />)
     },
     unmount: () => {
       if (unmounted) return

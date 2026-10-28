@@ -17,6 +17,7 @@ import {
   toggleOp,
   type CredentialsGateway,
   type ConfigFormPort,
+  type SaveOutcome,
 } from '../../src/client/controller.js'
 import { isEnabled, removeServerOverrides, type McpScopeDoc, type ServerDef, type WorkspaceOverrides } from '../../src/shared/model.js'
 
@@ -338,6 +339,7 @@ function deferred<T>(): Deferred<T> {
 class FakeCredentials implements CredentialsGateway {
   readonly values = new Map<string, string>()
   readonly setFail = new Set<string>()
+  readonly unsetFail = new Set<string>()
   /** When non-empty, describe returns these promises in FIFO order. */
   readonly describeDeferred: Deferred<Record<string, CredentialInfo>>[] = []
   readonly setCalls: { ref: string; value: string }[] = []
@@ -378,6 +380,7 @@ class FakeCredentials implements CredentialsGateway {
   async unset(ref: string): Promise<void> {
     this.log?.push(`unset:${ref}`)
     this.unsetCalls.push(ref)
+    if (this.unsetFail.has(ref)) throw new Error(`unset refused: ${ref}`)
     this.values.delete(ref)
   }
 }
@@ -386,6 +389,8 @@ class FakeScope implements ConfigFormPort {
   mirror: McpScopeDoc
   revision = 1
   writable = true
+  /** Document status the section sees; every write guard keys off it. */
+  status: 'ready' | 'loading' | 'unavailable' = 'ready'
   /** When true, the next mutate RESOLVES without applying (host refusal). */
   refuseNext = false
   readonly mutateCalls: { ops: SettingsPathOpView[]; expectedRevision: number | undefined }[] = []
@@ -399,8 +404,8 @@ class FakeScope implements ConfigFormPort {
     this.log = log
   }
 
-  getSnapshot(): { status: 'ready'; value: McpScopeDoc; revision: number; writable: boolean } {
-    return { status: 'ready', value: structuredClone(this.mirror), revision: this.revision, writable: this.writable }
+  getSnapshot(): { status: 'ready' | 'loading' | 'unavailable'; value: McpScopeDoc; revision: number; writable: boolean } {
+    return { status: this.status, value: structuredClone(this.mirror), revision: this.revision, writable: this.writable }
   }
 
   subscribe(listener: () => void): () => void {
@@ -484,8 +489,13 @@ const flush = async (): Promise<void> => {
   await Promise.resolve()
 }
 
-function makePipeline(initial: McpScopeDoc, log?: string[]) {
+function makePipeline(
+  initial: McpScopeDoc,
+  log?: string[],
+  status: 'ready' | 'loading' | 'unavailable' = 'ready',
+) {
   const scope = new FakeScope(initial, log)
+  scope.status = status
   const creds = new FakeCredentials(log)
   const controller = new McpScopeController(scope, creds)
   const stop = controller.start()
@@ -1079,6 +1089,101 @@ describe('McpScopeController save pipeline (FE-4)', () => {
       const outcome = await controller.replaceServer('a', { server: stdioServer('b'), secrets: [] })
       expect(outcome).toEqual({ ok: false, reason: 'invalid' })
       expect(scope.mutateCalls.length).toBe(0)
+    } finally {
+      stop()
+    }
+  })
+})
+
+describe('McpScopeController readiness guards', () => {
+  const guarded: {
+    name: string
+    run: (controller: McpScopeController) => Promise<SaveOutcome>
+    loadingReason: 'invalid' | 'save-failed'
+  }[] = [
+    {
+      name: 'addServer',
+      run: (controller) => controller.addServer({ server: stdioServer('new'), secrets: [] }),
+      loadingReason: 'invalid',
+    },
+    {
+      name: 'replaceServer',
+      run: (controller) => controller.replaceServer('alpha', { server: stdioServer('alpha'), secrets: [] }),
+      loadingReason: 'invalid',
+    },
+    {
+      name: 'toggleWorkspace',
+      run: (controller) => controller.toggleWorkspace('ws-1', 'alpha', true),
+      loadingReason: 'save-failed',
+    },
+    {
+      name: 'toggleWorkspaces',
+      run: (controller) => controller.toggleWorkspaces('alpha', true, ['ws-1']),
+      loadingReason: 'save-failed',
+    },
+    {
+      name: 'toggleWorkspaceServers',
+      run: (controller) => controller.toggleWorkspaceServers('ws-1', ['alpha'], true),
+      loadingReason: 'save-failed',
+    },
+    {
+      name: 'setServerEnabled',
+      run: (controller) => controller.setServerEnabled('alpha', false),
+      loadingReason: 'save-failed',
+    },
+    {
+      name: 'restoreScopeValues',
+      run: (controller) =>
+        controller.restoreScopeValues([{ workspaceId: 'ws-1', serverName: 'alpha', enabled: true }]),
+      loadingReason: 'save-failed',
+    },
+  ]
+
+  it('refuses every guarded write while the document is loading', async () => {
+    for (const { name, run, loadingReason } of guarded) {
+      const { scope, controller, stop } = makePipeline(doc([stdioServer('alpha')]), undefined, 'loading')
+      try {
+        await expect(run(controller), name).resolves.toEqual({ ok: false, reason: loadingReason })
+        expect(scope.mutateCalls, name).toEqual([])
+      } finally {
+        stop()
+      }
+    }
+  })
+
+  it('reports save-failed for every guarded write when the document is unavailable', async () => {
+    for (const { name, run } of guarded) {
+      const { scope, controller, stop } = makePipeline(doc([stdioServer('alpha')]), undefined, 'unavailable')
+      try {
+        await expect(run(controller), name).resolves.toEqual({ ok: false, reason: 'save-failed' })
+        expect(scope.mutateCalls, name).toEqual([])
+      } finally {
+        stop()
+      }
+    }
+  })
+})
+
+describe('McpScopeController credential clearing', () => {
+  it('validates, reports a refused unset, and refreshes after a successful clear', async () => {
+    const { creds, controller, stop } = makePipeline(doc([stdioServer('alpha', ['TOKEN'])]))
+    try {
+      await expect(controller.unsetCredential('bad ref')).resolves.toEqual({ ok: false, reason: 'invalid' })
+      expect(creds.unsetCalls).toEqual([])
+
+      creds.unsetFail.add('TOKEN')
+      await expect(controller.unsetCredential('TOKEN')).resolves.toEqual({
+        ok: false,
+        reason: 'secret-write-failed',
+        refs: ['TOKEN'],
+      })
+      expect(creds.unsetCalls).toEqual(['TOKEN'])
+
+      creds.unsetFail.clear()
+      await expect(controller.unsetCredential('TOKEN')).resolves.toEqual({ ok: true })
+      expect(creds.unsetCalls).toEqual(['TOKEN', 'TOKEN'])
+      await flush()
+      expect(controller.store.getSnapshot().credentials['TOKEN']?.configured).toBe(false)
     } finally {
       stop()
     }

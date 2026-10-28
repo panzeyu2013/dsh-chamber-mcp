@@ -31,6 +31,15 @@ const withLocation = (origin: string, pathname = '/'): void => {
   })
 }
 
+// Every test that installs a global must clean it up here; a leaked location
+// makes discovery tests order-dependent (they pass only after a previous test
+// happened to set one).
+afterEach(() => {
+  delete (globalThis as Record<string, unknown>).location
+  delete (globalThis as Record<string, unknown>).__DSH_BASE_PATH__
+  delete (globalThis as Record<string, unknown>).document
+})
+
 const view = (name: string, state = 'connected') => ({
   name,
   state,
@@ -60,21 +69,21 @@ describe('runtime store refresh', () => {
     expect(seen.length).toBeGreaterThan(0)
   })
 
-  it('degrades to unavailable when the route cannot be reached', async () => {
+  it('degrades to unavailable, then recovers on the next refresh of the same store', async () => {
+    let calls = 0
     const store = createRuntimeStore({
       fetchLike: async () => {
-        throw new TypeError('fetch failed')
+        calls += 1
+        if (calls === 1) throw new TypeError('fetch failed')
+        return json({ ok: true, value: { v: 1, at: 1, servers: [] } })
       },
     })
     await store.refresh()
     expect(store.getSnapshot().phase).toBe('unavailable')
     expect(store.getSnapshot().error).toContain('fetch failed')
-    // The document UI keeps working: running again recovers.
-    const recovered = createRuntimeStore({
-      fetchLike: async () => json({ ok: true, value: { v: 1, at: 1, servers: [] } }),
-    })
-    await recovered.refresh()
-    expect(recovered.getSnapshot().phase).toBe('ready')
+    await store.refresh()
+    expect(store.getSnapshot().phase).toBe('ready')
+    expect(store.getSnapshot().error).toBeUndefined()
   })
 
   it('reads the shell prefix through a TOTAL accessor (real cordis fiber: absent service must not throw)', async () => {
@@ -269,23 +278,31 @@ describe('runtime store refresh', () => {
     expect(calls.filter((url) => url.endsWith('/api/connections')).length).toBeGreaterThan(probesBefore)
   })
 
-  it('re-arms every base on a connection reset (the panel must not stay dark)', async () => {
-    let calls = 0
+  it('clears the dead-base memory on reset so the old prefix is tried again', async () => {
+    ;(globalThis as Record<string, unknown>).__DSH_BASE_PATH__ = '/api/i/dead'
+    const calls: string[] = []
     const store = createRuntimeStore({
-      fetchLike: async () => {
-        calls += 1
-        return json({ error: 'not_found' }, 404)
+      fetchLike: async (input) => {
+        const url = String(input)
+        calls.push(url)
+        return url.startsWith('/api/i/dead')
+          ? json({ error: 'not_found' }, 404)
+          : json({ ok: true, value: { v: 1, at: 7, servers: [view('a')] } })
       },
     })
     await store.refresh()
-    expect(calls).toBeGreaterThan(0)
-    expect(store.getSnapshot().phase).toBe('unavailable')
-    // Without the reset every candidate stays dead and the store would issue
-    // ZERO requests from here on.
-    store.resetBases()
-    const before = calls
+    // The prefixed base was answered by something that is not this plugin;
+    // the fallback root worked, and the dead prefix is remembered.
+    expect(calls).toEqual(['/api/i/dead' + RUNTIME_STATUS_PATH, RUNTIME_STATUS_PATH])
+    calls.length = 0
     await store.refresh()
-    expect(calls).toBeGreaterThan(before)
+    expect(calls).toEqual([RUNTIME_STATUS_PATH])
+
+    store.resetBases()
+    calls.length = 0
+    await store.refresh()
+    expect(calls).toEqual(['/api/i/dead' + RUNTIME_STATUS_PATH, RUNTIME_STATUS_PATH])
+    expect(store.getSnapshot().phase).toBe('ready')
   })
 
   it('accepts a long prefixed instance id (the shell mints up to 72 characters)', async () => {
@@ -318,7 +335,8 @@ describe('runtime store refresh', () => {
     expect(readShellBasePath(hostile)).toBeUndefined()
   })
 
-  it('joins the probe in flight even when the discovery budget is spent', async () => {
+  it('joins one discovery probe for concurrent per-server refreshes', async () => {
+    withLocation('http://localhost:3000')
     let releaseProbe: (() => void) | undefined
     const gate = new Promise<void>((resolve) => {
       releaseProbe = resolve
@@ -332,19 +350,23 @@ describe('runtime store refresh', () => {
           await gate
           return json({ connection: { id: 'Z', status: 'ready' } })
         }
-        if (url.startsWith('/api/i/Z/')) return json({ ok: true, value: { v: 1, at: 1, servers: [view('from-z')] } })
+        if (url.startsWith('/api/i/Z/')) {
+          return json({ ok: true, value: { v: 1, at: 1, servers: [view('alpha'), view('beta')] } })
+        }
         return json({ error: 'not_found' }, 404)
       },
     })
-    const first = store.refresh()
-    const second = store.refresh()
-    const third = store.refresh()
-    releaseProbe?.()
-    await Promise.all([first, second, third])
-    // One probe, joined by all three callers — not one caller failing because
-    // another already spent the budget.
+    // Different per-server passes are not deduped by serverInFlight; both need
+    // discovery, and the second must join the first probe rather than start one.
+    const first = store.refresh({ server: 'alpha' })
+    const second = store.refresh({ server: 'beta' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(probes).toBe(1)
-    expect(store.getSnapshot().servers['from-z']).toBeDefined()
+    releaseProbe?.()
+    await Promise.all([first, second])
+    expect(probes).toBe(1)
+    expect(store.getSnapshot().servers['alpha']).toBeDefined()
+    expect(store.getSnapshot().servers['beta']).toBeDefined()
   })
 
   it('refuses ids the shell could never mint', async () => {
@@ -366,24 +388,37 @@ describe('runtime store refresh', () => {
     }
   })
 
-  it('re-issues a per-server refresh after a reset instead of joining the old pass', async () => {
-    let calls = 0
+  it('starts a new per-server pass after a reset instead of joining the old one', async () => {
+    let releaseFirst: (() => void) | undefined
+    let serverCalls = 0
     const store = createRuntimeStore({
       shellBasePath: () => '/api/i/A',
       fetchLike: async (input) => {
         const url = String(input)
-        if (url.includes('?server=')) {
-          calls += 1
-          return json({ ok: true, value: { v: 1, at: calls, servers: [view('srv')] } })
+        if (!url.includes('?server=')) {
+          return json({ ok: true, value: { v: 1, at: 1, servers: [] } })
         }
-        return json({ ok: true, value: { v: 1, at: 1, servers: [] } })
+        serverCalls += 1
+        if (serverCalls === 1) {
+          return new Promise<Response>((resolve) => {
+            releaseFirst = () => resolve(json({ ok: true, value: { v: 1, at: 1, servers: [view('srv')] } }))
+          })
+        }
+        return json({ ok: true, value: { v: 1, at: 2, servers: [view('srv')] } })
       },
     })
     await store.refresh()
+    const first = store.refresh({ server: 'srv' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(serverCalls).toBe(1)
+    // resetBases must clear serverInFlight: otherwise the new caller joins the
+    // pass that the reset already invalidated.
     store.resetBases()
-    const before = calls
-    await store.refresh({ server: 'srv' })
-    expect(calls).toBeGreaterThan(before)
+    const second = store.refresh({ server: 'srv' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(serverCalls).toBe(2)
+    releaseFirst?.()
+    await Promise.all([first, second])
     expect(store.getSnapshot().servers['srv']).toBeDefined()
   })
 
