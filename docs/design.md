@@ -229,9 +229,9 @@ breaking a child's creation.
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
 | `tests/support/{section-harness.tsx,section-kit.ts,section-fixtures.ts,server-fixture.ts,manager-fixture.ts,http-fixture.ts,wait.ts}` | shared section mount/fixtures, host server/manager harnesses, the `waitFor` polling helper, and the in-process real Streamable HTTP fixture |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture on the 2.0 server packages (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe; publishes instructions, oversized under `FIXTURE_HUGE_INSTRUCTIONS=1`; serves one resource and one URI TEMPLATE so the resource provider's list/templates/read paths are exercised end to end; `FIXTURE_NO_RESOURCES=1` declares no resources capability and registers none) |
-| `tests/tools.spec.ts`, `tests/host/*.spec.ts` | 18 host suites (server/manager groups split for file-level parallelism, incl. `http.spec.ts` and `manager-agents.spec.ts`) plus `tests/tools.spec.ts`, all green (16 client suites under `tests/client/`, 3 acceptance suites under `tests/acceptance/`, `tests/delegation.spec.ts`; repo total 573 tests / 39 files) |
+| `tests/tools.spec.ts`, `tests/host/*.spec.ts` | 18 host suites (server/manager groups split for file-level parallelism, incl. `http.spec.ts` and `manager-agents.spec.ts`) plus `tests/tools.spec.ts`, all green (16 client suites under `tests/client/`, 3 acceptance suites under `tests/acceptance/`, `tests/delegation.spec.ts`; repo total 574 tests / 39 files) |
 
-Run: `npm run typecheck` (both tsconfigs) and `npm run test:coverage` — both fully green (573 tests / 39 files; statements 94.24%, branches 87.29%).
+Run: `npm run typecheck` (both tsconfigs) and `npm run test:coverage` — both fully green (574 tests / 39 files; statements 94.24%, branches ~87.3%). The branch ratio drifts by a few hundredths of a point between runs (the v8 provider counts async paths as they are exercised: 3124/3579, 3125/3580, 3129/3584 on the same tree), so the thresholds — not the second decimal — are the contract.
 
 ### (a) API signatures and runtime assumptions
 
