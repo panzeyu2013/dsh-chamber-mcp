@@ -26,13 +26,13 @@
  *     fill) palettes. The section
  *     header action is literally the official `settings.action` seat's
  *     `<Button variant="outline" size="sm">`;
- *   - cards: radius 14px + `elevation-stroke` + bg-layer-3, 12px/14px inset —
- *     the settings panel's 14px card recipe, where the hairline is drawn by the
- *     elevation stroke instead of a `border`, so the card never doubles an
+ *   - server rows: radius 12px + `elevation-stroke` + bg-layer-3, 10px/12px
+ *     inset — the settings panel's row recipe, where the hairline is drawn by
+ *     the elevation stroke instead of a `border`, so the row never doubles an
  *     outline;
- *   - the staged add/edit form: the official editing-surface fill
- *     (bg-module-platform + radius 12px + 14px/16px padding;
- *     `ModelsSection` `.editor` / `.addCard`);
+ *   - the detail sections and the add/edit editor: hairline separators for the
+ *     former, the official editing-surface fill (bg-module-platform + radius
+ *     12px + 14px/16px padding) for the latter (`ModelsSection` `.editor`);
  *   - fields: label 13px/20px weight 500, input 34px high / radius 8px /
  *     0.5px border-l4 / bg-layer-1 / 13px text, focus border brand-primary,
  *     placeholder label-dimmed, disabled dimmed (`ui-settings-plugins`
@@ -45,8 +45,9 @@
  *     (36x20 track, radius 10px, 16px thumb, the accent when on) driven by
  *     the native checkbox's `:checked`, since this plugin owns a controlled
  *     input rather than the primitive;
- *   - notices: 12px/18px success text for the saved note, state-error text on
- *     the danger-tinted fill for failures (the chamber/upstream "risk" block).
+ *   - notices: 12px/18px inline strips (info/success/warn/error) with a mark,
+ *     a persistent body and an action slot; success also rides a transient
+ *     toast. Failures never auto-retire.
  *
  * Colour, border, surface and type values resolve through `--dsw-alias-*` /
  * `--ds-*` tokens only — no literals anywhere, so light and dark both come
@@ -82,30 +83,14 @@ export const styles = {
   head: 'mcpScope_head',
   title: 'mcpScope_title',
   spacer: 'mcpScope_spacer',
-  focusRing: 'mcpScope_focusRing',
   button: 'mcpScope_button',
   buttonMd: 'mcpScope_buttonMd',
   buttonOutline: 'mcpScope_buttonOutline',
   buttonPrimary: 'mcpScope_buttonPrimary',
   buttonDanger: 'mcpScope_buttonDanger',
-  linkButton: 'mcpScope_linkButton',
   iconButton: 'mcpScope_iconButton',
   hint: 'mcpScope_hint',
   empty: 'mcpScope_empty',
-  noticeOk: 'mcpScope_noticeOk',
-  noticeError: 'mcpScope_noticeError',
-  noticeText: 'mcpScope_noticeText',
-  staleBanner: 'mcpScope_staleBanner',
-  staleText: 'mcpScope_staleText',
-  list: 'mcpScope_list',
-  card: 'mcpScope_card',
-  cardDisabled: 'mcpScope_cardDisabled',
-  cardHead: 'mcpScope_cardHead',
-  cardName: 'mcpScope_cardName',
-  cardMeta: 'mcpScope_cardMeta',
-  cardActions: 'mcpScope_cardActions',
-  cardRefresh: 'mcpScope_cardRefresh',
-  cardRefreshBusy: 'mcpScope_cardRefreshBusy',
   // registered-tools notice (conversation lane, registered through
   // `conversation.chat.node`) — the shipped disclosure-row chrome
   injectionRoot: 'mcpScope_injectionRoot',
@@ -125,40 +110,11 @@ export const styles = {
   injectionToolName: 'mcpScope_injectionToolName',
   injectionOmitted: 'mcpScope_injectionOmitted',
   tag: 'mcpScope_tag',
-  code: 'mcpScope_code',
-  badges: 'mcpScope_badges',
-  badge: 'mcpScope_badge',
-  badgeOk: 'mcpScope_badgeOk',
-  badgeWarn: 'mcpScope_badgeWarn',
-  badgeKey: 'mcpScope_badgeKey',
-  badgeRef: 'mcpScope_badgeRef',
-  confirm: 'mcpScope_confirm',
-  confirmText: 'mcpScope_confirmText',
-  confirmActions: 'mcpScope_confirmActions',
-  dialog: 'mcpScope_dialog',
-  toggleRow: 'mcpScope_toggleRow',
-  toggleLabel: 'mcpScope_toggleLabel',
-  statusRow: 'mcpScope_statusRow',
-  statusDot: 'mcpScope_statusDot',
-  statusDotOk: 'mcpScope_statusDotOk',
-  statusDotWarn: 'mcpScope_statusDotWarn',
-  statusDotError: 'mcpScope_statusDotError',
-  statusText: 'mcpScope_statusText',
-  statusErrorText: 'mcpScope_statusErrorText',
   toolList: 'mcpScope_toolList',
-  toolItem: 'mcpScope_toolItem',
-  toolName: 'mcpScope_toolName',
-  wsBlock: 'mcpScope_wsBlock',
-  wsList: 'mcpScope_wsList',
-  wsRow: 'mcpScope_wsRow',
-  wsLabel: 'mcpScope_wsLabel',
-  wsName: 'mcpScope_wsName',
   switchBox: 'mcpScope_switchBox',
   switchInput: 'mcpScope_switchInput',
   switch: 'mcpScope_switch',
   switchThumb: 'mcpScope_switchThumb',
-  form: 'mcpScope_form',
-  formTitle: 'mcpScope_formTitle',
   field: 'mcpScope_field',
   fieldLabel: 'mcpScope_fieldLabel',
   input: 'mcpScope_input',
@@ -170,12 +126,132 @@ export const styles = {
   choice: 'mcpScope_choice',
   choiceInput: 'mcpScope_choiceInput',
   choicePill: 'mcpScope_choicePill',
-  rowsGroup: 'mcpScope_rowsGroup',
-  row: 'mcpScope_row',
-  rowInput: 'mcpScope_rowInput',
-  wsFilterInput: 'mcpScope_wsFilterInput',
-  problems: 'mcpScope_problems',
-  formActions: 'mcpScope_formActions',
+  // settings shell (Phase 0-4 information architecture)
+  subtitle: 'mcpScope_subtitle',
+  summary: 'mcpScope_summary',
+  headActions: 'mcpScope_headActions',
+  searchToolbar: 'mcpScope_searchToolbar',
+  searchField: 'mcpScope_searchField',
+  searchInput: 'mcpScope_searchInput',
+  filterChips: 'mcpScope_filterChips',
+  filterChip: 'mcpScope_filterChip',
+  filterChipActive: 'mcpScope_filterChipActive',
+  serverList: 'mcpScope_serverList',
+  serverRow: 'mcpScope_serverRow',
+  serverRowButton: 'mcpScope_serverRowButton',
+  serverRowTop: 'mcpScope_serverRowTop',
+  serverRowName: 'mcpScope_serverRowName',
+  serverRowTags: 'mcpScope_serverRowTags',
+  serverRowMeta: 'mcpScope_serverRowMeta',
+  serverRowStats: 'mcpScope_serverRowStats',
+  serverRowChevron: 'mcpScope_serverRowChevron',
+  serverRowUnused: 'mcpScope_serverRowUnused',
+  scopeText: 'mcpScope_scopeText',
+  detail: 'mcpScope_detail',
+  detailBack: 'mcpScope_detailBack',
+  detailHead: 'mcpScope_detailHead',
+  detailTitleGroup: 'mcpScope_detailTitleGroup',
+  detailTitle: 'mcpScope_detailTitle',
+  detailSub: 'mcpScope_detailSub',
+  detailActions: 'mcpScope_detailActions',
+  detailBody: 'mcpScope_detailBody',
+  detailStatusRow: 'mcpScope_detailStatusRow',
+  scopeGrid: 'mcpScope_scopeGrid',
+  scopeRow: 'mcpScope_scopeRow',
+  scopeName: 'mcpScope_scopeName',
+  scopePath: 'mcpScope_scopePath',
+  toolPanel: 'mcpScope_toolPanel',
+  toolDisclosure: 'mcpScope_toolDisclosure',
+  toolBody2: 'mcpScope_toolBody2',
+  toolSearchRow: 'mcpScope_toolSearchRow',
+  toolRow: 'mcpScope_toolRow',
+  toolRowName: 'mcpScope_toolRowName',
+  toolRowDesc: 'mcpScope_toolRowDesc',
+  toolTruncate: 'mcpScope_toolTruncate',
+  configGrid: 'mcpScope_configGrid',
+  configItem: 'mcpScope_configItem',
+  configLabel: 'mcpScope_configLabel',
+  configValue: 'mcpScope_configValue',
+  credentialList: 'mcpScope_credentialList',
+  credentialRow: 'mcpScope_credentialRow',
+  credentialMain: 'mcpScope_credentialMain',
+  credentialName: 'mcpScope_credentialName',
+  credentialState: 'mcpScope_credentialState',
+  credentialActions: 'mcpScope_credentialActions',
+  credentialShared: 'mcpScope_credentialShared',
+  availabilityRow: 'mcpScope_availabilityRow',
+  availabilityBody: 'mcpScope_availabilityBody',
+  availabilityHint: 'mcpScope_availabilityHint',
+  dangerZone: 'mcpScope_dangerZone',
+  dangerHint: 'mcpScope_dangerHint',
+  dangerActions: 'mcpScope_dangerActions',
+  editor: 'mcpScope_editor',
+  editorHead: 'mcpScope_editorHead',
+  editorTitle: 'mcpScope_editorTitle',
+  editorSub: 'mcpScope_editorSub',
+  editorSource: 'mcpScope_editorSource',
+  editorGrid: 'mcpScope_editorGrid',
+  editorField: 'mcpScope_editorField',
+  editorSection: 'mcpScope_editorSection',
+  editorSectionTitle: 'mcpScope_editorSectionTitle',
+  editorAdvanced: 'mcpScope_editorAdvanced',
+  editorAdvancedBody: 'mcpScope_editorAdvancedBody',
+  editorFooter: 'mcpScope_editorFooter',
+  editorFooterHint: 'mcpScope_editorFooterHint',
+  editorErrorSummary: 'mcpScope_editorErrorSummary',
+  editorErrorTitle: 'mcpScope_editorErrorTitle',
+  editorErrorList: 'mcpScope_editorErrorList',
+  editorErrorLink: 'mcpScope_editorErrorLink',
+  secretInputWrap: 'mcpScope_secretInputWrap',
+  revealButton: 'mcpScope_revealButton',
+  rowRemove: 'mcpScope_rowRemove',
+  keyValueRow: 'mcpScope_keyValueRow',
+  keyValueCell: 'mcpScope_keyValueCell',
+  editorNote: 'mcpScope_editorNote',
+  candidateList: 'mcpScope_candidateList',
+  toast: 'mcpScope_toast',
+  toastText: 'mcpScope_toastText',
+  toastAction: 'mcpScope_toastAction',
+  toastClose: 'mcpScope_toastClose',
+  statusPill: 'mcpScope_statusPill',
+  statusPillOk: 'mcpScope_statusPillOk',
+  statusPillWarn: 'mcpScope_statusPillWarn',
+  statusPillError: 'mcpScope_statusPillError',
+  statusPillIdle: 'mcpScope_statusPillIdle',
+  statusPillDot: 'mcpScope_statusPillDot',
+  inlineNotice: 'mcpScope_inlineNotice',
+  inlineNoticeInfo: 'mcpScope_inlineNoticeInfo',
+  inlineNoticeSuccess: 'mcpScope_inlineNoticeSuccess',
+  inlineNoticeWarn: 'mcpScope_inlineNoticeWarn',
+  inlineNoticeError: 'mcpScope_inlineNoticeError',
+  inlineNoticeMark: 'mcpScope_inlineNoticeMark',
+  inlineNoticeBody: 'mcpScope_inlineNoticeBody',
+  inlineNoticeActions: 'mcpScope_inlineNoticeActions',
+  emptyState: 'mcpScope_emptyState',
+  emptyStateCompact: 'mcpScope_emptyStateCompact',
+  emptyTitle: 'mcpScope_emptyTitle',
+  emptyBody: 'mcpScope_emptyBody',
+  emptyActions: 'mcpScope_emptyActions',
+  detailSection: 'mcpScope_detailSection',
+  detailSectionDanger: 'mcpScope_detailSectionDanger',
+  detailSectionHead: 'mcpScope_detailSectionHead',
+  detailSectionHeading: 'mcpScope_detailSectionHeading',
+  detailSectionTitle: 'mcpScope_detailSectionTitle',
+  detailSectionHint: 'mcpScope_detailSectionHint',
+  detailSectionActions: 'mcpScope_detailSectionActions',
+  tabs: 'mcpScope_tabs',
+  tab: 'mcpScope_tab',
+  tabActive: 'mcpScope_tabActive',
+  tabCount: 'mcpScope_tabCount',
+  modalBackdrop: 'mcpScope_modalBackdrop',
+  modal: 'mcpScope_modal',
+  modalWide: 'mcpScope_modalWide',
+  modalHead: 'mcpScope_modalHead',
+  modalTitle: 'mcpScope_modalTitle',
+  modalBody: 'mcpScope_modalBody',
+  modalActions: 'mcpScope_modalActions',
+  buttonPrimaryDanger: 'mcpScope_buttonPrimaryDanger',
+  confirmBody: 'mcpScope_confirmBody',
   // MCP tool row (transcript lane, registered through `tool.call.toolview`)
   toolCard: 'mcpScope_toolCard',
   toolHead: 'mcpScope_toolHead',
@@ -235,14 +311,6 @@ export const css = `
 
 .mcpScope_spacer {
   flex: 1;
-}
-
-/* The card-header element receives focus after a save; keep the ring on the
-   text rather than on a full-width box. */
-.mcpScope_focusRing:focus-visible {
-  outline: 2px solid var(--dsw-alias-state-business-primary);
-  outline-offset: 2px;
-  border-radius: 4px;
 }
 
 /* ---- buttons (ui-primitives Button, size="sm": h28 / r14 / 12px) ---- */
@@ -312,33 +380,6 @@ export const css = `
   background: var(--dsw-alias-interactive-bg-hover-danger);
 }
 
-/* Text-only affordance inside a tag (the official reset vocabulary). */
-.mcpScope_linkButton {
-  border: none;
-  background: none;
-  padding: 0;
-  font-family: inherit;
-  font-size: 11px;
-  line-height: 17px;
-  color: var(--dsw-alias-label-tertiary);
-  cursor: pointer;
-}
-
-.mcpScope_linkButton:hover:not(:disabled) {
-  color: var(--dsw-alias-label-primary);
-}
-
-.mcpScope_linkButton:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.mcpScope_linkButton:focus-visible {
-  outline: 2px solid var(--dsw-alias-state-business-primary);
-  outline-offset: 1px;
-  border-radius: 4px;
-}
-
 .mcpScope_iconButton {
   display: inline-flex;
   align-items: center;
@@ -375,7 +416,7 @@ export const css = `
 
 /* The anywhere overflow-wrap matters for the one interpolated value here — the
    working-directory line renders an arbitrary host path, which has no break
-   opportunity and would otherwise push the card wider than the column. */
+   opportunity and would otherwise push the column wider. */
 .mcpScope_hint {
   margin: 0;
   font-size: 12px;
@@ -389,134 +430,6 @@ export const css = `
   font-size: 13px;
   line-height: 20px;
   color: var(--dsw-alias-label-tertiary);
-}
-
-.mcpScope_noticeOk {
-  margin: 0;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-state-success-primary);
-}
-
-.mcpScope_noticeError {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 6px 8px 6px 10px;
-  border-radius: 8px;
-  background: var(--dsw-alias-interactive-bg-hover-danger);
-  color: var(--dsw-alias-state-error-primary);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.mcpScope_noticeText {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-/* Stale-while-revalidate: the last good status stays readable behind one
-   compact line. A normal (non-accent) surface — it is informational, not an
-   interactive or selected state. */
-.mcpScope_staleBanner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px 6px 10px;
-  border-radius: 8px;
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.mcpScope_staleText {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-/* ---- server cards ---- */
-
-.mcpScope_list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.mcpScope_card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: var(--dsw-alias-bg-layer-3);
-  box-shadow: var(--dsw-elevation-stroke);
-  transition: background .16s;
-}
-
-.mcpScope_card:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-/* A globally disabled server keeps its card readable but visibly out of play. */
-.mcpScope_cardDisabled {
-  opacity: 0.6;
-}
-
-.mcpScope_cardHead {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  /* Holds the enable switch's 28px hit box, and keeps wrapped lines further
-     apart than its 4px slop (see .mcpScope_switchBox). */
-  min-height: 28px;
-  row-gap: 10px;
-}
-
-.mcpScope_cardName {
-  font-size: 14px;
-  line-height: 22px;
-  font-weight: 600;
-  color: var(--dsw-alias-label-primary);
-}
-
-.mcpScope_cardMeta {
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.mcpScope_cardActions {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-}
-
-/* The card's own status refresh: a small icon control beside the row actions
-   (the ink/geometry are the icon-button vocabulary, see .mcpScope_iconButton). */
-.mcpScope_cardRefresh {
-  width: 22px;
-  height: 22px;
-  flex: none;
-  border-radius: 11px;
-}
-
-.mcpScope_cardRefreshBusy {
-  animation: mcpScope_spin 900ms linear infinite;
-}
-
-@keyframes mcpScope_spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /* ---- registered-tools notice (one disclosure row in the conversation lane) ----
@@ -698,198 +611,6 @@ export const css = `
   color: var(--dsw-alias-label-tertiary);
 }
 
-.mcpScope_code {
-  display: block;
-  margin: 0;
-  font-family: var(--ds-font-family-code);
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ---- credential refs (Tag pills, toned by the tri-state) ---- */
-
-.mcpScope_badges {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-/* Neither header names nor credential refs are length-capped by the document
-   schema, so a pill must be able to shrink to the card instead of widening it:
-   the wrap container caps the pill, and the two code parts (the only text
-   without a floor) absorb the shrink and ellipsize — the state word and the
-   Clear control keep their intrinsic width. Same guard upstream puts on its
-   overlong badge cells. */
-.mcpScope_badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  min-width: 0;
-  padding: 1px 8px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: 999px;
-  corner-shape: round;
-  font-size: 11px;
-  line-height: 17px;
-  white-space: nowrap;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.mcpScope_badgeOk {
-  border-color: transparent;
-  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent);
-  color: var(--dsw-alias-state-success-primary);
-}
-
-.mcpScope_badgeWarn {
-  border-color: transparent;
-  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent);
-  color: var(--dsw-alias-state-warn-primary);
-}
-
-.mcpScope_badgeKey {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: var(--ds-font-family-code);
-  font-size: 11px;
-  line-height: 17px;
-}
-
-/* The reference is real information (the header's env-style ref), not a
-   placeholder, so it takes the secondary label tone: 'label-dimmed' is the
-   disabled/placeholder step and would wash out on the light palette. */
-.mcpScope_badgeRef {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: var(--ds-font-family-code);
-  font-size: 11px;
-  line-height: 17px;
-  color: var(--dsw-alias-label-secondary);
-}
-
-/* ---- remove confirmation (a nested, danger-tinted block) ---- */
-
-.mcpScope_confirm {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--dsw-alias-interactive-bg-hover-danger);
-}
-
-.mcpScope_confirmText {
-  margin: 0;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
-}
-
-.mcpScope_confirmText strong {
-  font-weight: 500;
-  color: var(--dsw-alias-label-primary);
-}
-
-.mcpScope_confirmActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* ---- import dialog (nested block inside the staged form) ---- */
-
-.mcpScope_dialog {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: 10px;
-  background: var(--dsw-alias-bg-layer-2);
-}
-
-/* ---- enable toggle (Switch geometry in a labelled row) ---- */
-
-.mcpScope_toggleRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  /* Holds the 28px hit box (see .mcpScope_switchBox). */
-  min-height: 28px;
-}
-
-.mcpScope_toggleLabel {
-  /* The same 4px dead column as the workspace row: the switch's hit box ends at
-     track+40, the label's box starts at track+44. Cover the band, move nothing. */
-  margin-left: -4px;
-  padding-left: 4px;
-  font-size: 13px;
-  line-height: 20px;
-  font-weight: 500;
-  color: var(--dsw-alias-label-primary);
-}
-
-/* ---- runtime status row (dot + phase + actions) ---- */
-
-.mcpScope_statusRow {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.mcpScope_statusDot {
-  width: 8px;
-  height: 8px;
-  flex: none;
-  border-radius: 50%;
-  corner-shape: round;
-  background: var(--dsw-alias-border-l3);
-}
-
-.mcpScope_statusDotOk {
-  background: var(--dsw-alias-state-success-primary);
-}
-
-.mcpScope_statusDotWarn {
-  background: var(--dsw-alias-state-warn-primary);
-}
-
-.mcpScope_statusDotError {
-  background: var(--dsw-alias-state-error-primary);
-}
-
-.mcpScope_statusText {
-  /* The card is a 8px-gap flex column: a paragraph that keeps its UA margin
-     doubles the rhythm around its own line (hint / empty / noticeOk reset it
-     for the same reason). */
-  margin: 0;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
-}
-
-.mcpScope_statusErrorText {
-  /* The give-up / timeout / probe-failure line sits between two card rows: with
-     the UA margin it opened ~20px above and below instead of the card's 8px
-     gap, which read as an empty line. The gap owns the rhythm. */
-  margin: 0;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-state-error-primary);
-  overflow-wrap: anywhere;
-}
-
 .mcpScope_toolList {
   list-style: none;
   margin: 0;
@@ -897,90 +618,8 @@ export const css = `
   display: flex;
   flex-direction: column;
   gap: 2px;
-}
-
-.mcpScope_toolItem {
-  overflow: hidden;
-  font-family: var(--ds-font-family-code);
-  font-size: 11px;
-  line-height: 17px;
-  color: var(--dsw-alias-label-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mcpScope_toolName {
-  color: var(--dsw-alias-label-primary);
-}
-
-/* ---- per-workspace rows ---- */
-
-.mcpScope_wsBlock {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-/* The rows lay out as a responsive grid — one column in a narrow panel, more as
-   it widens — so a long workspace list stops being a 20-row stack. */
-.mcpScope_wsList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 2px 16px;
-}
-
-/* The row is 28px tall on purpose: the switch's hit box is 4+20+4 = 28px, so
-   the slop stays INSIDE this row. At the previous 20px the hit boxes of two
-   neighbouring rows overlapped by 6px, and because the absolutely positioned
-   inputs paint in DOM order the LOWER row won that band — the bottom ~2px of a
-   switch toggled the row below it. */
-.mcpScope_wsRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  min-height: 28px;
-}
-
-/* Only the row whose write is running shows a busy state: the card no longer
-   dims every switch while one row saves. */
-.mcpScope_wsRow[data-pending] .mcpScope_switch {
-  opacity: 0.6;
-}
-
-/* The label is the WHOLE text run (name + the state word) so every pixel of it
-   toggles, and the cursor says so. */
-.mcpScope_wsLabel {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  /* Stretch to the row's 28px: otherwise the text run is 20px tall and the row
-     keeps a 4px dead strip above and below it, right next to a live switch. */
-  align-self: stretch;
-  /* The 8px flex gap leaves a 4x28 dead column: the switch's -4px hit slop
-     reaches track+40 while the label's border box starts at track+44, so a
-     click in that band hits the row background. Pull the box back by the slop
-     and push the text back out — the label covers its half of the gap and
-     nothing moves. */
-  margin-left: -4px;
-  padding-left: 4px;
-  gap: 8px;
-  font-size: 13px;
-  line-height: 20px;
-  color: var(--dsw-alias-label-primary);
-  cursor: pointer;
-}
-
-.mcpScope_wsName {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-height: 280px;
+  overflow: auto;
 }
 
 /* ---- switch (ui-primitives Switch geometry over a native checkbox) ---- */
@@ -988,7 +627,7 @@ export const css = `
 /* The native checkbox fills this box, so the box IS the hit area: the slop
    below grows it to 44x28 around the unchanged 36x20 track, and the negative
    margin cancels the padding in layout (nothing moves, only the target does).
-   The card-head switch and the staged form share it. */
+   The detail scope rows, workspace rows and the editor use it. */
 /* Hit box = track + 4px on every side (36x20 -> 44x28), laid out at the track's
    own 20px via the cancelling margin. INVARIANT for every container of a switch:
    it must be at least 28px tall, or the slop leaves the container and the
@@ -1015,6 +654,11 @@ export const css = `
 
 .mcpScope_switchInput:disabled {
   cursor: default;
+}
+
+/* Optimistic writes keep the switch interactive but visibly in flight. */
+.mcpScope_switchBox[data-pending] .mcpScope_switch {
+  opacity: 0.6;
 }
 
 /* The track and its thumb are DECORATION: the hit target is the absolutely
@@ -1067,31 +711,6 @@ export const css = `
   transform: translateX(16px);
 }
 
-/* ---- staged add/edit form (the official editing-surface fill) ---- */
-
-.mcpScope_form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 14px 16px;
-  border-radius: 12px;
-  background: var(--dsw-alias-bg-module-platform);
-  animation: mcpScope_fadeIn var(--ds-transition-duration) var(--ds-ease-in-out);
-}
-
-@keyframes mcpScope_fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.mcpScope_formTitle {
-  margin: 0;
-  font-size: 14px;
-  line-height: 22px;
-  font-weight: 500;
-  color: var(--dsw-alias-label-primary);
-}
-
 .mcpScope_field {
   display: flex;
   flex-direction: column;
@@ -1124,29 +743,8 @@ export const css = `
   border-color: var(--dsw-alias-state-business-primary);
 }
 
-/* The card-local filter keeps the field geometry but NOT the official field
-   fill: bg-layer-1 reads as a white slab against the card's bg-layer-3, so the
-   inline filter takes the card-local fill and the hairline our outline buttons
-   use, and keeps the brand focus border. */
-.mcpScope_wsFilterInput {
-  background: transparent;
-  border-color: var(--dsw-alias-border-l3);
-}
-
-.mcpScope_wsFilterInput:focus {
-  border-color: var(--dsw-alias-state-business-primary);
-}
-
 .mcpScope_input::placeholder {
   color: var(--dsw-alias-label-dimmed);
-}
-
-/* The card-local filter shows the card's own surface through a transparent fill,
-   and label-dimmed is tuned for a WHITE field: on the card it read as barely
-   there. One step up, and pinned opacity so the token is not dimmed twice. */
-.mcpScope_wsFilterInput::placeholder {
-  color: var(--dsw-alias-label-secondary);
-  opacity: 1;
 }
 
 .mcpScope_input:disabled {
@@ -1257,47 +855,6 @@ export const css = `
 
 .mcpScope_choiceInput:disabled + .mcpScope_choicePill {
   opacity: 0.4;
-}
-
-/* ---- repeatable rows (args, env keys, headers) ---- */
-
-.mcpScope_rowsGroup {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.mcpScope_row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.mcpScope_rowInput {
-  flex: 1 1 120px;
-  min-width: 0;
-}
-
-.mcpScope_problems {
-  list-style: none;
-  margin: 2px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-state-error-primary);
-}
-
-.mcpScope_formActions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding-top: 12px;
-  border-top: 0.5px solid var(--dsw-alias-border-l2);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1569,28 +1126,1221 @@ export const css = `
   color: var(--dsw-alias-label-dimmed);
 }
 
+/* ===========================================================================
+   Phase 0-4 settings surface: list, detail, workspaces, editor and dialogs.
+   Token-only declarations. The legacy card/form rules were removed with the
+   components; the transcript-lane rules stay above and are shared by design.
+   =========================================================================== */
+
+.mcpScope_subtitle {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.mcpScope_summary {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mcpScope_headActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* ---- tabs (compact segmented control) ---- */
+
+.mcpScope_tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2);
+  align-self: flex-start;
+}
+
+.mcpScope_tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mcpScope_tab:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.mcpScope_tab:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.mcpScope_tabActive {
+  background: var(--dsw-alias-bg-layer-3);
+  box-shadow: var(--dsw-elevation-stroke);
+  color: var(--dsw-alias-label-primary);
+}
+
+.mcpScope_tabCount {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- list toolbar ---- */
+
+.mcpScope_searchToolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mcpScope_searchField {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.mcpScope_searchInput {
+  box-sizing: border-box;
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.mcpScope_searchInput::placeholder {
+  color: var(--dsw-alias-label-secondary);
+  opacity: 1;
+}
+
+.mcpScope_searchInput:focus {
+  outline: none;
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.mcpScope_filterChips {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mcpScope_filterChip {
+  height: 24px;
+  padding: 0 9px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mcpScope_filterChip:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.mcpScope_filterChip:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.mcpScope_filterChipActive {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-button-ghost-active-fill);
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-button-ghost-active-border);
+  border-color: transparent;
+}
+
+/* ---- server list ---- */
+
+.mcpScope_serverList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mcpScope_serverRow {
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-3);
+  box-shadow: var(--dsw-elevation-stroke);
+  transition: background .16s;
+}
+
+.mcpScope_serverRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.mcpScope_serverRowButton {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mcpScope_serverRowButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.mcpScope_serverRowTop {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mcpScope_serverRowName {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 42%;
+}
+
+.mcpScope_serverRowTags {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mcpScope_serverRowStats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+.mcpScope_serverRowMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mcpScope_serverRowChevron {
+  flex: none;
+  color: var(--dsw-alias-label-caption);
+  font-size: 14px;
+  line-height: 17px;
+}
+
+.mcpScope_serverRowUnused {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.mcpScope_scopeText {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- detail ---- */
+
+.mcpScope_detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.mcpScope_detailBack {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.mcpScope_detailBack:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.mcpScope_detailBack:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.mcpScope_detailHead {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mcpScope_detailTitleGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.mcpScope_detailTitle {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.mcpScope_detailSub {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.mcpScope_detailActions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.mcpScope_detailStatusRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.mcpScope_detailBody {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* ---- section block ---- */
+
+.mcpScope_detailSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  min-width: 0;
+}
+
+.mcpScope_detailBody > .mcpScope_detailSection:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.mcpScope_detailSectionDanger {
+  padding: 12px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+}
+
+.mcpScope_detailSectionHead {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mcpScope_detailSectionHeading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.mcpScope_detailSectionTitle {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.mcpScope_detailSectionHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mcpScope_detailSectionActions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mcpScope_scopeGrid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 2px 16px;
+}
+
+.mcpScope_scopeRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  min-width: 0;
+}
+
+.mcpScope_scopeName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.mcpScope_scopePath {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ---- tools panel ---- */
+
+.mcpScope_toolPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mcpScope_toolDisclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.mcpScope_toolDisclosure:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.mcpScope_toolDisclosure:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.mcpScope_toolBody2 {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mcpScope_toolSearchRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mcpScope_toolRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0;
+  min-width: 0;
+}
+
+.mcpScope_toolRowName {
+  flex: none;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.mcpScope_toolRowDesc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mcpScope_toolTruncate {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ---- configuration / credentials ---- */
+
+.mcpScope_configGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px 16px;
+}
+
+.mcpScope_configItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mcpScope_configLabel {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mcpScope_configValue {
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.mcpScope_credentialList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mcpScope_credentialRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  min-width: 0;
+}
+
+.mcpScope_credentialRow:first-child {
+  border-top: none;
+}
+
+.mcpScope_credentialMain {
+  flex: 1 1 200px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mcpScope_credentialName {
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.mcpScope_credentialState {
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mcpScope_credentialActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mcpScope_credentialShared {
+  flex-basis: 100%;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+/* ---- availability / danger ---- */
+
+.mcpScope_availabilityRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.mcpScope_availabilityBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mcpScope_availabilityHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mcpScope_dangerZone {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mcpScope_dangerHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.mcpScope_dangerActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---- editor ---- */
+
+.mcpScope_editor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-module-platform);
+  min-width: 0;
+}
+
+.mcpScope_editorHead {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mcpScope_editorTitle {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.mcpScope_editorSub {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mcpScope_editorSource {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mcpScope_editorGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 16px;
+}
+
+.mcpScope_editorField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mcpScope_editorSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  min-width: 0;
+}
+
+.mcpScope_editorSectionTitle {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.mcpScope_editorAdvanced {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.mcpScope_editorAdvanced:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.mcpScope_editorAdvanced:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.mcpScope_editorAdvancedBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mcpScope_editorFooter {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 0 4px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-module-platform);
+}
+
+.mcpScope_editorFooterHint {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mcpScope_editorErrorSummary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.mcpScope_editorErrorTitle {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+}
+
+.mcpScope_editorErrorList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mcpScope_editorErrorLink {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--dsw-alias-state-error-primary);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.mcpScope_editorErrorLink:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+.mcpScope_secretInputWrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.mcpScope_secretInputWrap > input {
+  flex: 1;
+  padding-right: 38px;
+}
+
+.mcpScope_revealButton {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.mcpScope_revealButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.mcpScope_revealButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.mcpScope_rowRemove {
+  flex: none;
+}
+
+.mcpScope_keyValueRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mcpScope_keyValueCell {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.mcpScope_editorNote {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mcpScope_candidateList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/* ---- toast ---- */
+
+.mcpScope_toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-3);
+  box-shadow: var(--dsw-elevation-stroke);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.mcpScope_toastText {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mcpScope_toastAction {
+  height: 24px;
+  padding: 0 8px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.mcpScope_toastAction:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.mcpScope_toastClose {
+  flex: none;
+}
+
+/* ---- status pill ---- */
+
+.mcpScope_statusPill {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border: 0.5px solid transparent;
+  border-radius: 999px;
+  corner-shape: round;
+  font-size: 11px;
+  line-height: 17px;
+  white-space: nowrap;
+}
+
+.mcpScope_statusPillDot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  corner-shape: round;
+  background: currentColor;
+}
+
+.mcpScope_statusPillOk {
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent);
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.mcpScope_statusPillWarn {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent);
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.mcpScope_statusPillError {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.mcpScope_statusPillIdle {
+  border-color: var(--dsw-alias-border-l3);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ---- inline notice ---- */
+
+.mcpScope_inlineNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  min-width: 0;
+}
+
+.mcpScope_inlineNoticeMark {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  corner-shape: round;
+  background: currentColor;
+}
+
+.mcpScope_inlineNoticeBody {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mcpScope_inlineNoticeActions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mcpScope_inlineNoticeInfo {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.mcpScope_inlineNoticeSuccess {
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent);
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.mcpScope_inlineNoticeWarn {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent);
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.mcpScope_inlineNoticeError {
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* ---- empty state ---- */
+
+.mcpScope_emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 28px 20px;
+  border: 0.5px dashed var(--dsw-alias-border-l3);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.mcpScope_emptyStateCompact {
+  padding: 12px;
+  border: none;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.mcpScope_emptyTitle {
+  margin: 0;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.mcpScope_emptyBody {
+  margin: 0;
+  max-width: 460px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mcpScope_emptyActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.mcpScope_emptyStateCompact .mcpScope_emptyActions {
+  justify-content: flex-start;
+}
+
+/* ---- dialog ---- */
+
+.mcpScope_modalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--dsw-alias-bg-mask-1);
+}
+
+.mcpScope_modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(420px, 100%);
+  max-height: min(680px, calc(100vh - 48px));
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--dsw-alias-bg-layer-3);
+  box-shadow: var(--dsw-elevation-panel);
+}
+
+.mcpScope_modalWide {
+  width: min(560px, 100%);
+}
+
+.mcpScope_modalHead {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.mcpScope_modalTitle {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.mcpScope_modalBody {
+  min-height: 0;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.mcpScope_modalActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.mcpScope_confirmBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+.mcpScope_buttonPrimaryDanger {
+  background: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+
+.mcpScope_buttonPrimaryDanger:hover:not(:disabled) {
+  background: var(--dsw-alias-state-error-primary);
+  opacity: 0.9;
+}
+
+@media (max-width: 560px) {
+.mcpScope_serverRowName {
+    max-width: 100%;
+  }
+
+.mcpScope_serverRowStats {
+    margin-left: 0;
+  }
+
+.mcpScope_detailActions {
+    margin-left: 0;
+  }
+
+.mcpScope_editor {
+    padding: 12px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .mcpScope_card,
-  .mcpScope_switch,
-  .mcpScope_switchThumb,
-  .mcpScope_choicePill {
-    transition: none;
-  }
-
-  .mcpScope_form,
-  .mcpScope_cardRefreshBusy {
+.mcpScope_toolHead[data-state='running']::after {
     animation: none;
   }
 
-  .mcpScope_toolHead[data-state='running']::after {
-    animation: none;
-  }
-
-  .mcpScope_toolGlyphIdle,
+.mcpScope_toolGlyphIdle,
   .mcpScope_toolGlyphHover {
     transition: none;
   }
 }
+
 `
 
 /**

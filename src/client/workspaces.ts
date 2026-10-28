@@ -8,7 +8,8 @@
  * longer a dependency). The section narrows each row to the fields it actually
  * renders through {@link WorkspaceItem}, which `WorkspaceView` structurally
  * satisfies — no cast is needed. The list lifecycle (state/phase) is real and
- * drives the loading/error/empty gating of the per-card workspace rows (UX-18).
+ * drives the loading/error/empty gating of the workspace rows in the server
+ * detail and the Workspaces views (UX-18).
  */
 
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
@@ -24,7 +25,7 @@ export interface WorkspaceItem {
 /** Selector-hook shape over the workspace list state. */
 export type WorkspaceListHook = <T>(selector: (state: WorkspaceSnapshot) => T) => T
 
-/** What the per-card workspace-row area may show right now. */
+/** What a workspace-row area may show right now. */
 export type WorkspaceListStatus = 'ready' | 'loading' | 'error'
 
 /**

@@ -747,62 +747,100 @@ written — through the platform's own seams rather than a new channel:
 - Data: `ctx.configForms.get<Doc>('mcp-scope')` — the Loader entry's own
   Config form, whose snapshot carries {status, value, revision, writable};
   workspaces via global `useWorkspaces`.
-- Views: server cards (name, transport, "on in N workspaces" / "not on in any
-  workspace", edit, remove, per-workspace enable rows that are OFF by default),
-  staged Add/Edit form (serverName + transport toggle +
-  command/args list/cwd/env key rows | url/header name+ref rows, secret inputs write-only),
-  Save = credentials.set dirty secrets first → `scope.mutate([...ops], expectedRevision)`;
-  removal cascades to refs no longer referenced (credentials.unset). Edit reopens the same
-  staged form with the existing definition and writes the same op shape.
-- Hand-written controls (official card-form pattern); no generic schema-form.
+- **Views (Phase 0-4 UI line).** The section is a small navigation stack,
+  not one card per server:
+  - **Servers list** — one row per server with status, "N of M workspaces"
+    scope and tool count; name and state filters; the row is the only
+    interactive target and opens the detail.
+  - **Server detail** — overview status/actions, Workspaces (per-workspace
+    switches, search and bulk), Tools (lazy disclosure with search/copy),
+    Configuration (definition, credential refs, copy JSON), Availability
+    (the global "Allow to run" switch) and a Danger zone.
+  - **Workspaces list / detail** — the mirror view: one row per workspace,
+    then one switch per server for that workspace, including a one-mutation
+    batch through `controller.toggleWorkspaceServers`.
+  - **Editor** — an independent Add/Edit view (import-first quick start,
+    stdio/http fields, write-only secret rows, advanced disclosure, sticky
+    footer, submitted validation, draft persistence without secret values).
+    It no longer freezes the list: leaving the list for the editor means the
+    other views are not mounted.
+- **Scope and availability are separate controls.** Workspace switches write
+  immediately (single `toggleWorkspace`; bulk server→workspaces
+  `toggleWorkspaces`; bulk workspace→servers `toggleWorkspaceServers`), while
+  the global allow flag lives only in Availability. The list never carries an
+  ambiguous switch; its row summary is the scan surface.
+- **Optimistic scope / allow writes.** The section keeps tokenized pending
+  entries per (workspace, server) and per server; the committed document
+  clears an entry once it reflects the intended value. Failures roll the
+  switch back, persist an inline error with Retry, and never auto-dismiss.
+  Successful toggles raise a `role="status"` toast with Undo. A single-row
+  Undo writes the inverse; a BULK Undo restores each row's pre-batch value
+  (it never inverts the batch target, which would flip originally-on rows).
+- **One write queue, two levels.** Every user-triggered document mutation
+  (scope, allow, add/edit, remove, credential clear) runs through the section's
+  serial queue (`src/client/hooks/use-write-queue.ts`) for ordering and the
+  saving state; the controller additionally keeps a `writeTail` so writes from
+  a previous mount and a newly mounted section cannot reuse one revision.
+  Runtime actions (connect/disconnect/test/tools/refresh) are separate
+  read/probe paths and are not queued.
+- **Hand-written controls** remain the official card-form pattern; no generic
+  schema-form. The views are split into `src/client/views/*` and
+  `src/client/components/ui.tsx`; the pure draft model lives in
+  `src/client/draft.ts` and pure status/scope mappings in
+  `src/client/view-model.ts`.
 - Update cadence: scope.subscribe + `ctx.remote.$on('settings/document-updated')` +
   `credentials/reference-updated` for badge refresh; `connection/reset` and
   each document revision re-pull the runtime snapshot.
-- **Runtime store (0.0.3)**: `src/client/runtime.ts` reads the three routes
-  with global `fetch` (no client package import, keeping the react-only
-  bundle), dedupes refreshes and owns no timer; the section polls it every 5 s
-  while visible. Missing routes / failed calls degrade the cards to "runtime
-  status unavailable" while every document feature keeps working. Cards show
-  the status dot/label, a localized failure line derived from the host code,
-  Connect/Disconnect/Test (Test gated on a runtime view) and a `Tools (N)`
-  disclosure whose table refetches per sync generation.
+- **Runtime store**: `src/client/runtime.ts` reads the three routes with
+  global `fetch` (no client package import, keeping the react-only bundle),
+  dedupes refreshes and owns no timer; the section polls it every 10 s while
+  visible and backs off to 30 s after a failed pass. Missing routes / failed
+  calls degrade rows/detail to "status unavailable" while every document
+  feature keeps working. The detail shows the status pill, localized failure
+  line derived from the host code, Connect/Disconnect, Test (available even
+  without a current runtime view), Refresh and a `Tools` disclosure whose
+  table refetches per sync generation.
 - **Per-server refresh and stale views.** `refresh({ server })` asks the
   status route for one entry, merges it and publishes once; a failure rejects
-  to the calling card and leaves the snapshot untouched. A failed FULL refresh
-  keeps the last good views (stale-while-revalidate) and the section shows a
-  compact stale banner with a retry instead of blanking every card. Each card
-  owns a refresh/retry button (busy while in flight, the failed card promotes
-  its Connect action to the accent-filled retry), so one flapping server no
-  longer costs a full-table re-read.
-- **Enabled workspaces instead of a row per workspace.** Workspace rows
-  collapse to the ENABLED set; with none enabled the card shows NOTHING there, and
-  a manage toggle reveals every row with bulk on/off (the bulk pair appears once
-  more than one workspace exists, §6). This is purely local UI state — no settings
-  write — and the card renders no default-off copy at all: the enable switch (off
-  by default) is that surface, and neither a note line nor a summary sentence
-  restates what the OFF switches already show (`server.defaultOff` and
-  `row.allOffDefault` are both retired).
-- The staged form gained the enable switch, `timeoutMs`, an unsaved-changes
-  guard on every dismissal path, clipboard paste helpers and a single-server
-  JSON import (`src/client/import.ts`, pure and unit-tested); the section adds
-  a name filter and per-card bulk workspace switches (one mutation per action).
+  to the calling detail and leaves the snapshot untouched. A failed FULL
+  refresh keeps the last good views (stale-while-revalidate) and the section
+  shows a compact stale banner with a retry instead of blanking the list.
+- **Removal and credential clearing are explicit.** Remove opens a dialog that
+  names the server, its enabled-workspace count and the orphaned credential
+  refs the controller will clear; clear-credential names every server sharing
+  the ref (the unset is global). Reversible scope/allow switches never confirm.
+- **Feedback model.** Success is transient (a role=status toast/note); errors
+  are persistent inline notices with Retry and a dismiss action; no failure
+  auto-retires. The editor's submitted validation lists every problem and
+  focuses the first invalid field instead of disabling Save silently.
+- Clipboard paste helpers and multi-server JSON import remain
+  (`src/client/import.ts`, pure and unit-tested); the editor offers a
+  candidate list when the snippet names more than one server.
+
 ### Files (browser half)
 
 | file | role |
 |---|---|
 | `src/client/index.ts` | browser entry: `inject` + `apply` (locale, controller wiring, `settings.section` registration) |
 | `src/client/locales.ts` | flat `SettingsKey` union + `en`/`zh` dictionaries + `NS = 'mcp-scope.settings'` |
-| `src/client/controller.ts` | framework-free domain core: scope store, credentials badge state, save pipelines, pure plan helpers |
-| `src/client/section.tsx` | `McpScopeSection` page component (+ composed-props interface, outcome→text mapping) |
-| `src/client/server-card.tsx` | one server card: badges, per-workspace on/off rows, remove cascade confirm |
-| `src/client/add-form.tsx` | staged add form (transport switch, stdio/http fields, write-only secret rows, draft validation) |
+| `src/client/controller.ts` | framework-free domain core: scope store, credentials badge state, save pipelines, cross-mount write tail, pure plan helpers |
+| `src/client/section.tsx` | `McpScopeSection` shell: view stack, tabs, write queue, optimistic pending map, toast/failure/confirm dialogs |
+| `src/client/views/server-list.tsx` | scannable server rows, name/state filters, empty states |
+| `src/client/views/server-detail.tsx` | overview, scope switches, tools, configuration/credentials, availability, danger zone |
+| `src/client/views/workspace-list.tsx` | workspace list with enabled-server counts |
+| `src/client/views/workspace-detail.tsx` | one workspace's server switches + one-mutation batch |
+| `src/client/views/server-editor.tsx` | independent Add/Edit view: import quick start, grouped fields, advanced disclosure, sticky footer, submitted validation, draft persistence |
+| `src/client/components/ui.tsx` | local Switch/status pill/notice/empty state/section/tabs/modal/confirm primitives |
+| `src/client/hooks/use-write-queue.ts` | section-level serial UI write queue (ordering/pending state; the controller tail survives mounts) |
+| `src/client/draft.ts` | pure staged-draft model (validation, import prefill, wire materialization) |
+| `src/client/view-model.ts` | pure runtime-status, credential-sharing, scope and time helpers |
 | `src/client/import.ts` | 0.0.3 single-server JSON import (`mcpServers` / VS Code `servers` / opencode `mcp`, flat and array shapes → draft; tolerant of a brace-less or torn section (with or without the `mcp` wrapper, dangling separators/closers included), comments, trailing commas, fences and prose; candidates are tried until one resolves a server, so an example snippet above the real config cannot shadow it; discovery is iterative and bounded, so a deeply nested paste cannot throw; `env` takes a map or a `{name,value}` list; secrets land write-only) |
-| `src/client/runtime.ts` | 0.0.3 runtime store over the three host routes: status/action/tool-list reads (`refresh`/`act`/`test`/`tools`); pending-action state lives in the card (§6) |
+| `src/client/runtime.ts` | runtime store over the three host routes: status/action/tool-list reads (`refresh`/`act`/`test`/`tools`); pending-action state lives in the detail view (§6) |
 | `src/client/styles.ts` | style seat: the plugin's stylesheet, its class-name map, and the `data-plugin-css` tag mount (§9) |
 | `src/client/nav-icon.ts` | settings sidebar glyph: paints the plugin's plug mark into OUR nav row (§9.4), because the shell picks the mark from a hardcoded map by section id and the registration carries no icon option |
 | `src/client/workspaces.ts` | minimal workspace-row narrowing (typed items) |
 | `src/client/tool-card/{names,icon,row,view,register}.ts(x)` | transcript lane: MCP tool identity from the session's request header, the keyed tool view, and its registration lifecycle (§6, §5(f)) |
-| `tests/client/{controller,locales,styles,section-render,tool-card,tool-register,import,runtime,injection,injection-row}.spec.ts(x)` | browser-half vitest suites (10 files) |
+| `tests/client/{controller,locales,styles,section-render,section-repaint,tool-card,tool-register,import,runtime,injection,injection-row}.spec.ts(x)` | browser-half vitest suites (11 files; the section suites cover list/detail/workspaces/editor, optimistic rollback, queue ordering, draft restore and focus) |
 | `tests/acceptance/{copy,store,host-route,styles,section}.acceptance.spec.ts(x)` | independent acceptance suites (contract C1–C4) driven through the real components/manager |
 | `src/client/injection.ts` (contract) + `tests/client/injection.spec.ts` | see §5(f) for the notice and §6 for the lane |
 
@@ -1179,11 +1217,12 @@ mount and fails if the wiring stops painting it.
 
 ## 10. Settings UI layout reference
 
-Structural reference for the shipped browser half, derived from the components and
+Structural reference for the shipped browser half, derived from the views and
 the style seat — open *Settings → MCP servers* in a live GUI for the rendered
-result. Wireframe: [`mcp-desktop-layout.svg`](mcp-desktop-layout.svg); the labels
-below follow the zh locale (the en locale is key-for-key identical,
-`src/client/locales.ts`).
+result. The labels below follow the zh locale (the en locale is key-for-key
+identical, `src/client/locales.ts`). `docs/mcp-desktop-layout.svg` is the
+0.1-era card sketch and is deliberately NOT updated here: the code superseded
+that shape with the list → detail → editor stack below.
 
 ### Where it lives
 
@@ -1195,10 +1234,10 @@ slots, never replacing the shell.
 ┌──────────────────────── dsh Web GUI / chamber desktop ────────────────────────┐
 │ ┌──────────┐ ┌──────────────────── Settings ────────────────────────────────┐ │
 │ │ sidebar  │ │ ┌───────────┐ ┌──────────── MCP 服务器 ──────────────────┐ │ │
-│ │          │ │ │ settings  │ │  标题                  [+ 添加服务器]      │ │ │
-│ │ …        │ │ │ nav       │ │  ── 卡片列表（见下）─────────────────────  │ │ │
-│ │ 设置 ◀   │ │ │ 通用      │ │                                           │ │ │
-│ │          │ │ │ 模型      │ │                                           │ │ │
+│ │          │ │ │ settings  │ │ MCP 服务器                  [+ 添加服务器] │ │ │
+│ │ …        │ │ │ nav       │ │ MCP 只会在启用了它的 workspace 中运行。    │ │ │
+│ │ 设置 ◀   │ │ │ 通用      │ │ [ 服务器 ] [ Workspaces ]  4 个 · 2 已连接 │ │ │
+│ │          │ │ │ 模型      │ │ ── 列表 / 详情 / 编辑器（见下）──────────  │ │ │
 │ │          │ │ │ 插件      │ │                                           │ │ │
 │ │          │ │ │ MCP 服务器◀│ │                                           │ │ │
 │ │          │ │ └───────────┘ └───────────────────────────────────────────┘ │ │
@@ -1206,68 +1245,120 @@ slots, never replacing the shell.
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Card anatomy (top → bottom)
+### Servers list
 
 ```
-(◉) github   [流式 HTTP]   [移除] [编辑]                     ← 卡头
-● 已连接 · 12 个工具                    [断开] [测试] [工具 (12)]
-┌ 工具（展开后） ────────────────────────────────────────────┐
-│ search_issues — Search issues                              │
-│ 共 120 个工具，显示前 2 个。                                │
-└────────────────────────────────────────────────────────────┘
-管理 workspace：[管理 workspace（已开启 1）]                  ← 折叠态
-  · alpha (switch) 开启            ← 只列显式开启的 workspace
-（无显式开启时这里什么都不显示：开关本身就是状态）
-npx -y @modelcontextprotocol/server-github                   ← 定义
-工作目录：/srv/github
-Authorization  AUTH_TOKEN  已配置  [清除]                    ← 凭据徽标
+[搜索服务器…]  [全部] [已连接] [需关注] [未使用]
+┌──────────────────────────────────────────────────────────────┐
+│ ● github        流式 HTTP   2/3 个 workspace   12 个工具   › │
+│   已连接 · 同步于 14:03                                      │
+├──────────────────────────────────────────────────────────────┤
+│ ○ filesystem    stdio       未在任何 workspace 使用         › │
+│   未启动 · 未在任何 workspace 使用                           │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-**管理 workspace（N）** is local UI state and never writes the settings document:
-expanding it replaces the enabled block with every workspace row plus
-**全部开启 / 全部关闭** (only when more than one workspace exists); past five
-workspaces it also grows the name filter. No default-off note follows the rows
-(the switch carries it). A single-workspace dsh
-reaches its only row the same way — a collapsed view would otherwise hide the only
-switch, and MCP is off until it is flipped. Cards are
-listed in document order; an open add/edit form renders above the list; removing
-a server replaces the action row with the confirmation until it is confirmed or
-cancelled.
+The row is the ONLY interactive target. It reports status, scope and tool count
+and opens the detail; it carries no switch and no destructive action.
+
+### Server detail
+
+```
+← 所有服务器
+github  [已连接]  流式 HTTP                  [断开] [测试] [刷新状态]
+12 个工具 · 3/5 个 workspace
+
+Workspaces (3/5)                          [全部开启] [全部关闭]
+[搜索 workspace…]
+alpha [switch]   beta [switch]   gamma [switch]   delta [switch]
+
+Tools ▸   [搜索工具…] [复制列表]
+  search_issues — Search issues
+
+Configuration                              [编辑] [复制 JSON]
+URL  https://api.github.com/mcp
+AUTH_TOKEN  已配置  [清除]          同时被 gitlab 使用
+Timeout      60 秒
+
+Availability
+[switch] 允许运行
+允许运行不等于启用：每个 workspace 仍需单独开启。
+
+危险操作
+[移除服务器]
+```
+
+**Workspaces** is the first section because scope is the core model. A pending
+optimistic switch keeps its new value; a failed write rolls back and leaves a
+persistent inline error with Retry. **Availability** is the only global switch;
+it is separate from scope on purpose. Test remains reachable even when the
+runtime channel cannot produce a view. Credential clearing names every server
+sharing the ref because the unset is global. Removal names the server, its
+enabled-workspace count and the orphaned credential refs.
+
+### Workspaces view
+
+```
+[ 服务器 ] [ Workspaces ]
+
+alpha  · 3/5 个服务器已启用  ›
+beta   · 0/5 个服务器已启用  ›
+```
+
+Selecting one workspace opens its server switches:
+
+```
+← 所有 Workspaces
+alpha
+3/5 个服务器已启用                     [全部开启] [全部关闭]
+[搜索服务器…]
+● github      [switch]   已连接
+● filesystem  [switch]   已停止
+```
+
+The bulk pair writes ONE revision-fenced mutation through
+`toggleWorkspaceServers` (one path op per server), mirroring the server→
+workspaces batch. Globally disabled servers stay visible but cannot be enabled
+here.
+
+### Editor
+
+```
+← 所有服务器
+添加 MCP 服务器
+[ 从 JSON 导入 ] [ 粘贴命令 ]       ← 快速开始
+名称 [github]          传输方式 [stdio] [HTTP]
+命令 / URL
+Workspaces 范围在这里不编辑：保存后进入详情开启。
+环境变量 / 请求头（值只写，留空保留已存值；可显示/隐藏）
+高级设置 ▸（工作目录、超时）
+[取消]  [保存并测试]                 ← sticky footer
+```
+
+Validation is submitted, not hidden behind a disabled Save: the summary lists
+every problem and focuses the first invalid field. A multi-server JSON paste
+offers a candidate list. Non-secret draft fields persist in sessionStorage;
+secret values are deliberately never persisted. The editor is a separate view,
+so it no longer freezes the list.
 
 ### Interactions worth knowing
 
-- There is no global **刷新状态** control in the section header. The runtime
-  snapshot refreshes by itself: once per settings-document revision, then on a
-  5 s interval while the panel is visible, and per card through that card's own
-  **刷新状态** button (only that server re-reads). A failed full refresh keeps
-  the last good views (stale-while-revalidate), stores the failure (HTTP status
-  included) on the snapshot, and shows the stale banner instead of blanking the
-  panel; the stale banner's **重试** button is the only whole-table manual
-  refresh left.
+- The runtime snapshot refreshes once per settings-document revision, then on a
+  10 s visible interval (30 s after a failed pass). The detail also has a
+  per-server **刷新状态** action. A failed full refresh keeps the last good
+  views and shows the compact stale banner whose **重试** re-runs the full pass.
 - **Connect / Disconnect** are real stop/start actions (a manual stop latches
   until the definition changes or Connect is pressed); **Test** probes on a
   throwaway connection unless the live generation is already connected.
-- Save order: dirty credential values first (`credentials.set`), then ONE
-  revision-fenced `mutate` of the settings document; a conflict re-reads and
-  reports instead of retrying blindly.
-
-### Differences from the wireframe
-
-`docs/mcp-desktop-layout.svg` is a structural sketch, not a pixel contract.
-Where it and the code disagree, the code wins; the known gaps are recorded here
-so the figure is read for shape, not detail.
-
-| Difference | Resolution |
-|---|---|
-| Per-card refresh, the per-card refresh-failure row, the stale-while-revalidate banner and the collapsed workspace block (the figure draws every workspace row; §6 collapses them to the ENABLED set, and to nothing at all when none is enabled) are not drawn — all 0.1.0 additions. | The figure lags; the version note on the figure says so. The controls stay as shipped (§6). |
-| The figure gives `stopped`/`unknown` no runtime action, while the code renders **Connect** for every **enabled** server the host reports a runtime view for — the `stopped` and `unknown` phases included, and `unknown` is what a configured server with no live handle reports (`manager.ts:452-461`) — with the accent-filled primary reserved for `failed`. | Keep the code; the figure's `disabled` clause is the one that holds: a disabled server also reports a view (`manager.ts:434-441`), but `server-card.tsx:598-601` gates Connect/Disconnect (and `:628` Test) on `!globallyDisabled` (the Tools control at `:638` is gated on a loaded view with `runtime.toolCount > 0` instead). A genuinely missing runtime view drops only those three runtime controls (`runtime !== undefined`); the card keeps its head switch, per-card refresh and Edit/Remove. |
-| The figure draws a dot inside the credential badge; the code uses a tone plus text. | Keep the code — the badge is a Tag pill, not a status row. |
-| The figure puts a check mark on the success notice; the code uses plain `role=status` text. | Keep the code. |
-| Card radius r14 and padding `12px 14px` (`.mcpScope_card` in `styles.ts`; §9.3's r14 is the Button capsule, not the card) versus the figure's drawn max r12 — and the figure's own metric caption names r16 / `12 16 14`. | Keep the code; the figure is indicative. |
-| The tool panel in the figure carries a "first 2 of 120" label (`共 120 个工具，显示前 2 个。`), which reads as always-on. | The label is illustrative: the code renders exactly the host's list and adds the same hint (`tools.truncated`) only when the HOST truncates — `manager.ts` caps the list at 200 (`capToolList`), and `server-card.tsx` renders the hint. Keep the code. |
-| The figure draws the import dialog in a side panel beside the staged form (annotated `role=dialog`). | Keep the code — the import opens inline inside the staged form, between the import button and the fields; the panel is a side rail in the figure only for legibility. |
-| The figure draws a global **刷新状态** button in both of its section-header views; the code removed it — each card refreshes its own server, the section re-reads the runtime snapshot per document revision and polls every 5 s while visible, and a failed full refresh surfaces the stale banner whose **重试** re-runs it. | Keep the code. |
-| The figure labels the workspace rows **默认开启，除非在此关闭** / **新建 workspace 默认开启** and its summary reads **Off in 2 workspaces** (the 0.0.3 baseline, where every workspace had MCP on until it was switched off). The 0.1.0 line inverts that contract: MCP is OFF until a workspace explicitly enables the pair, the collapsed card lists the ENABLED workspaces, the manage button reads **Manage workspaces (N on)** — and keeps the count while the list is open (**Hide workspaces (N on)**), because the expanded list is exactly when the count would otherwise disappear — and a collapsed card with nothing enabled renders no rows and no summary sentence (the `row.allOffDefault` line was removed after review: the OFF switches carry that state). | Keep the code — the figure keeps its 0.0.3-baseline caption, and this row is the recorded decision. The figure's geometry (a card head, a workspace block and a manage toggle) is unchanged. |
+- Scope and allow writes are immediate, optimistic and undoable. All document
+  writes (scope, allow, add/edit, remove, clear) share the section queue; the
+  controller's write tail also serializes across mounts, so overlapping
+  surfaces (including a reopen) cannot produce spurious revision conflicts.
+- Save order for the editor: dirty credential values first
+  (`credentials.set`), then ONE revision-fenced `mutate` of the settings
+  document; a conflict re-reads and reports instead of retrying blindly.
+- Success is transient (a `role="status"` toast/note). Errors are persistent
+  inline notices with Retry and a dismiss action; no failure auto-retires.
 
 The two session lanes (the MCP tool-call transcript and the registered-tools
-notice) are not part of that wireframe; their contract lives in §5(f) and §6.
+notice) are not part of this page; their contract lives in §5(f) and §6.

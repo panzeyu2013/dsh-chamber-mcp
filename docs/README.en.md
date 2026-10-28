@@ -50,9 +50,9 @@ dsh plugin --profile web add file:./.smoke/dsh-chamber-mcp-<version>.tgz
 # restart the instance afterwards (the profile bundle list changed)
 ```
 
-1. Open *Settings → MCP servers* → **Add server**. Two transports: **stdio** (name, command, arguments, optional working directory, env-key rows) and **Streamable HTTP** (URL and header rows). Clipboard pastes (a full command line, `.env` lines, header lines) and single-server JSON import are accepted.
-2. A new server is **off in every workspace**. **Manage workspaces (N on)** expands every workspace so you can switch them on one by one — that switch *is* what "this (server × workspace) pair is on" means; with more than one workspace there is also **All on / All off**. The switch beside the server name is the **global** enable: a disabled server is not started and exposes no tools anywhere, while its configuration stays on disk.
-3. Each card carries its live status (connected / connecting / reconnecting / failed / stopped / disabled / unknown), **Connect** / **Disconnect** / **Test**, and **Tools (N)** (the synced tool names); **Edit** reopens the form, **Remove** stops the server everywhere and clears credential refs nothing else references. The section header has a name filter and **Refresh status**.
+1. Open *Settings → MCP servers* → **Add server**, or use **Import from clipboard** from the empty state. Two transports: **stdio** (name, command, arguments, optional working directory, env-key rows) and **Streamable HTTP** (URL and header rows). The editor accepts a full command line, `.env` lines, header lines, and single- or multi-server JSON (pick one when several are present); saving runs a connection test automatically.
+2. A list row shows **status, scope and tool count** only. Open it for the detail: **Workspaces** switches this server on or off per workspace (immediate and undoable), while **Allow to run** under **Availability** is the global switch (not allowed = not started and no tools anywhere; the configuration stays on disk). A new server is **off in every workspace** by default.
+3. The **Workspaces** tab answers the mirror question — which servers a workspace can use — and batches servers on or off. The detail also carries **Tools** (search and copy), **Configuration** (definition, credential references, copy JSON), live status / diagnostics, and a **Danger zone** removal that names the affected workspaces and credentials. The list supports name and state filters.
 
 ## What one session receives
 
@@ -128,7 +128,7 @@ Removing the package stops the servers and drops the settings section; the data 
 | --- | --- |
 | [`../README.md`](../README.md) | The Chinese README (primary) |
 | [`design.md`](design.md) | Architecture: host/browser halves, supervisor and injection model, settings document, upstream contracts and deliberate deviations, UI layout reference |
-| [`acceptance.md`](acceptance.md) | Requirement/cut matrix (R1–R4 / E1–E8 / C1–C6) |
+| [`acceptance.md`](acceptance.md) | Requirement/cut matrix (R1–R4 / E1–E11 / C1–C6) |
 | [`RELEASE.md`](RELEASE.md) | Release & CI runbook |
 
 ## License

@@ -13,6 +13,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > only and ignores this one — an entry left here ships in the tree but never
 > appears in the release notes.
 
+### Added
+
+- **Settings IA: servers list → server detail → editor, plus a Workspaces view.**
+  The list owns scanning (status, scope summary, tool count, name/state
+  filters); the detail owns scope, tools, configuration/credentials,
+  availability and the danger zone; the Workspaces tab answers the mirror
+  question and batches one workspace through the new controller method
+  `toggleWorkspaceServers`. Add/Edit is an independent view, so editing no
+  longer freezes the list.
+- **Optimistic, serialized writes.** Scope/allow switches update immediately,
+  roll back on failure, and offer Undo. Every document mutation shares one
+  serial queue; runtime actions stay independent.
+- **Editor rework.** Import-first quick start, multi-server JSON candidate
+  selection, submitted validation summary with focus, show/hide secrets,
+  advanced disclosure, sticky footer, save-and-test, and sessionStorage draft
+  persistence that never stores secret values.
+- **Destructive-action clarity.** Removal names the server, enabled-workspace
+  count and orphaned refs; clearing a credential names every server sharing the
+  ref. Both use a focus-trapped confirmation.
+- **Persistent feedback and diagnostics.** Failures stay inline with Retry;
+  status pills, stale-view banner, diagnostic copy, tool search/copy and
+  accessible tabs/disclosures.
+
+### Changed
+
+- **The old card and staged-form components are gone** (`server-card.tsx`,
+  `add-form.tsx`); the pure draft model moved to `draft.ts`, status/scope
+  helpers to `view-model.ts`, and the views to `src/client/views/`.
+- **Runtime polling is 10 s while visible, backing off to 30 s after a failed
+  pass** (was 5 s); Test remains reachable without a current runtime view.
+- The server section no longer renders per-card workspace blocks or a global
+  header refresh; per-server refresh lives in the detail and the stale banner
+  owns the full-table retry.
+
+### Fixed
+
+- **Bulk Undo restores the pre-batch scope of every row.** A mixed "all on"
+  followed by Undo no longer flips originally-on rows off; both server→
+  workspaces and workspace→servers batches restore the captured mix.
+- **Copy JSON and import agree on credential references.** The plugin's
+  `envKeys` shape is read back as reference-only env rows, so a copied server
+  no longer loses its environment keys on import.
+- **Unknown credential state is never cleaned up as "unset".** A refused save
+  re-describes the dirty refs first and only unsets refs confirmed unset; a
+  failed describe leaves the literal in place and reports it as kept.
+- **Editing a definition cannot resurrect a disabled server.** Availability is
+  preserved unless the caller explicitly stages it; the editor strips its
+  stale draft flag.
+- **Stale optimistic entries clear once the committed document reflects them**,
+  and entries for removed servers/workspaces are pruned.
+- **Dialog focus and keyboard trap are reliable**: auto-opened import modals
+  own focus, a trap recovers focus from outside, and a pending confirmation
+  keeps an enabled Dismiss control (plus `aria-busy`). View focus now has
+  fallbacks after removal/cancel.
+- **Writes stay serialized across section mounts.** The controller now owns a
+  shared write tail in addition to the section queue, so closing Settings
+  during a write and reopening it cannot read a stale revision and produce a
+  spurious conflict.
+- **Runtime/config polish**: refresh failures show the real message; success
+  test notes retire; Tools refetch on a new sync generation; workspace/server
+  scope counts use the same stored-override definition; runtime polling backs
+  off for `unavailable` too; unchanged polls do not re-render the section.
+
 ## [0.2.3] - 2026-10-28
 
 ### Changed

@@ -10,6 +10,7 @@ import {
   parseHeaderLines,
   parseKeyValueLines,
   parseMcpSnippet,
+  parseMcpSnippetCandidates,
   refFromHeaderName,
   splitCommandLine,
   stripJsonComments,
@@ -476,5 +477,52 @@ describe('parseMcpSnippet hardening', () => {
       const outcome = parseMcpSnippet(text)
       expect(typeof outcome.ok).toBe('boolean')
     }
+  })
+})
+
+describe('parseMcpSnippetCandidates', () => {
+  it('lists every named server of a multi-server config', () => {
+    const outcome = parseMcpSnippetCandidates(
+      JSON.stringify({
+        mcpServers: {
+          alpha: { command: 'node', args: ['a.js'] },
+          beta: { url: 'https://example.test/mcp', headers: { Authorization: 'tok' } },
+        },
+      }),
+    )
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.candidates.map((candidate) => candidate.name)).toEqual(['alpha', 'beta'])
+    expect(outcome.candidates[0]!.server.transport).toBe('stdio')
+    expect(outcome.candidates[1]!.server.transport).toBe('streamable-http')
+    expect(outcome.candidates[1]!.server.headers).toEqual([
+      { name: 'Authorization', ref: 'AUTHORIZATION', value: 'tok' },
+    ])
+  })
+
+  it('reads the plugin copy-JSON envKeys list as reference-only env rows', () => {
+    const outcome = parseMcpSnippetCandidates(
+      JSON.stringify({ mcpServers: { alpha: { command: 'node', envKeys: ['TOKEN', 'REGION'] } } }),
+    )
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.candidates[0]!.server.env).toEqual([
+      { key: 'TOKEN', value: '' },
+      { key: 'REGION', value: '' },
+    ])
+  })
+
+  it('falls back to a single unnamed server object', () => {
+    const outcome = parseMcpSnippetCandidates('{"command":"node","args":["server.js"]}')
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.candidates).toHaveLength(1)
+    expect(outcome.candidates[0]!.server.command).toBe('node')
+  })
+
+  it('reports empty, invalid and unsupported snippets without throwing', () => {
+    expect(parseMcpSnippetCandidates('')).toEqual({ ok: false, reason: 'empty' })
+    expect(parseMcpSnippetCandidates('not json at all')).toEqual({ ok: false, reason: 'invalid' })
+    expect(parseMcpSnippetCandidates('{"hello":"world"}')).toEqual({ ok: false, reason: 'unsupported' })
   })
 })

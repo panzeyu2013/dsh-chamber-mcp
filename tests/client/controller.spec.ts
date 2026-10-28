@@ -389,6 +389,8 @@ class FakeScope implements ConfigFormPort {
   /** When true, the next mutate RESOLVES without applying (host refusal). */
   refuseNext = false
   readonly mutateCalls: { ops: SettingsPathOpView[]; expectedRevision: number | undefined }[] = []
+  /** Gate the next mutate AFTER its revision check (cross-mount race probe). */
+  readonly mutateGates: Deferred<void>[] = []
   private readonly listeners = new Set<() => void>()
   private readonly log: string[] | undefined
 
@@ -409,6 +411,8 @@ class FakeScope implements ConfigFormPort {
   async mutate(ops: readonly SettingsPathOpView[], expectedRevision?: number): Promise<void> {
     this.mutateCalls.push({ ops: ops.map((op) => ({ ...op, path: [...op.path] })), expectedRevision })
     this.log?.push(`mutate:${expectedRevision ?? '?'}`)
+    const gate = this.mutateGates.shift()
+    if (gate !== undefined) await gate.promise
     // Host revision fence: a stale writer is refused (the real scope client
     // then recovers with a mirror reload and RESOLVES — modelled below).
     if (expectedRevision !== undefined && expectedRevision !== this.revision) return
@@ -594,6 +598,33 @@ describe('McpScopeController save pipeline (FE-4)', () => {
     }
   })
 
+
+  it('never unsets a credential whose state is unknown after a refused document write', async () => {
+    const { scope, creds, controller, stop } = makePipeline(doc([]))
+    try {
+      const gate = deferred<Record<string, CredentialInfo>>()
+      creds.describeDeferred.push(gate)
+      scope.refuseNext = true
+      const pending = controller.addServer({
+        server: stdioServer('git', ['TOKEN']),
+        secrets: [{ ref: 'TOKEN', value: 'new-secret' }],
+      })
+      await flush()
+      gate.resolve({}) // describe answered but has no view: unknown, not unset
+      const outcome = await pending
+      expect(outcome.ok).toBe(false)
+      if (outcome.ok) return
+      expect(outcome.reason).toBe('conflict')
+      // The freshly typed literal remains (the old value cannot be restored),
+      // so cleanup must not delete it, and the UI must be told it stayed.
+      expect(creds.unsetCalls).toEqual([])
+      expect(creds.values.get('TOKEN')).toBe('new-secret')
+      expect(outcome.keptSecretRefs).toEqual(['TOKEN'])
+    } finally {
+      stop()
+    }
+  })
+
   it('a conflict never unsets a ref that had a stored value before the save', async () => {
     const existing = stdioServer('existing', ['OLD'])
     const scope = new FakeScope(doc([existing]))
@@ -748,6 +779,23 @@ describe('McpScopeController save pipeline (FE-4)', () => {
     }
   })
 
+
+  it('replaceServer without an explicit enabled flag preserves the global off-switch', async () => {
+    const { scope, controller, stop } = makePipeline({
+      servers: [stdioServer('a')],
+      overrides: {},
+      disabled: { a: true },
+    })
+    try {
+      const outcome = await controller.replaceServer('a', { server: stdioServer('a', ['X']), secrets: [] })
+      expect(outcome).toEqual({ ok: true })
+      expect(scope.mirror.disabled).toEqual({ a: true })
+      expect(scope.mutateCalls.at(-1)?.ops.every((op) => op.path[0] !== 'disabled')).toBe(true)
+    } finally {
+      stop()
+    }
+  })
+
   it('a rename carries the global off-switch to the new name', async () => {
     const { scope, controller, stop } = makePipeline({
       servers: [stdioServer('old')],
@@ -807,6 +855,50 @@ describe('McpScopeController save pipeline (FE-4)', () => {
     }
   })
 
+
+
+  it('serializes mutations across section mounts so a reopen reuses no revision', async () => {
+    const { scope, controller, stop } = makePipeline(doc([stdioServer('a')]))
+    try {
+      const gate = deferred<void>()
+      scope.mutateGates.push(gate)
+      const first = controller.toggleWorkspace('ws-a', 'a', true)
+      await flush()
+      const second = controller.toggleWorkspace('ws-b', 'a', true)
+      await flush()
+      // The second write waits for the first controller-level slot; without
+      // the shared tail it would already have read revision 1.
+      expect(scope.mutateCalls).toHaveLength(1)
+      gate.resolve(undefined)
+      await first
+      await flush()
+      expect(scope.mutateCalls).toHaveLength(2)
+      expect(scope.mutateCalls[1]!.expectedRevision).toBe(2)
+      await Promise.all([first, second])
+      expect(scope.mirror.overrides).toEqual({
+        'ws-a': { a: true },
+        'ws-b': { a: true },
+      })
+    } finally {
+      stop()
+    }
+  })
+
+  it('toggleWorkspace refuses a server that is no longer in the document (no orphan override)', async () => {
+    const { scope, controller, stop } = makePipeline(doc([stdioServer('a')]))
+    try {
+      const before = scope.mutateCalls.length
+      expect(await controller.toggleWorkspace('ws1', 'missing', true)).toEqual({
+        ok: false,
+        reason: 'conflict',
+      })
+      expect(scope.mutateCalls.length).toBe(before)
+      expect(scope.mirror.overrides).toEqual({})
+    } finally {
+      stop()
+    }
+  })
+
   it('toggleWorkspaces batches one override op per workspace without rewriting servers', async () => {
     const { scope, controller, stop } = makePipeline(doc([stdioServer('a')]))
     try {
@@ -847,6 +939,55 @@ describe('McpScopeController save pipeline (FE-4)', () => {
       const before = scope.mutateCalls.length
       expect(await controller.toggleWorkspaces('a', true, [])).toEqual({ ok: true })
       expect(scope.mutateCalls.length).toBe(before)
+    } finally {
+      stop()
+    }
+  })
+
+
+  it('toggleWorkspaceServers batches one override op per server for one workspace', async () => {
+    const { scope, controller, stop } = makePipeline(doc([stdioServer('a'), stdioServer('b')]))
+    try {
+      const outcome = await controller.toggleWorkspaceServers('ws1', ['a', 'b'], true)
+      expect(outcome).toEqual({ ok: true })
+      expect(scope.mirror.overrides).toEqual({ ws1: { a: true, b: true } })
+      expect(scope.mutateCalls.at(-1)!.ops).toEqual([
+        { op: 'set', path: ['overrides', 'ws1', 'a'], value: true },
+        { op: 'set', path: ['overrides', 'ws1', 'b'], value: true },
+      ])
+      // The servers array is never rewritten by a scope-only batch.
+      expect(scope.mutateCalls.at(-1)!.ops.every((op) => op.path[0] !== 'servers')).toBe(true)
+      await controller.toggleWorkspaceServers('ws1', ['a', 'b'], false)
+      expect(scope.mirror.overrides).toEqual({})
+    } finally {
+      stop()
+    }
+  })
+
+  it('toggleWorkspaceServers ignores unknown names and is a no-op for an empty list', async () => {
+    const { scope, controller, stop } = makePipeline(doc([stdioServer('a')]))
+    try {
+      const before = scope.mutateCalls.length
+      expect(await controller.toggleWorkspaceServers('ws1', [], true)).toEqual({ ok: true })
+      expect(scope.mutateCalls.length).toBe(before)
+      expect(await controller.toggleWorkspaceServers('ws1', ['missing'], true)).toEqual({ ok: true })
+      expect(scope.mutateCalls.length).toBe(before)
+      expect(scope.mirror.overrides).toEqual({})
+    } finally {
+      stop()
+    }
+  })
+
+  it('toggleWorkspaceServers preserves other workspaces and the global off-switch map', async () => {
+    const { scope, controller, stop } = makePipeline({
+      servers: [stdioServer('a'), stdioServer('b')],
+      overrides: { ws2: { a: true } },
+      disabled: { b: true },
+    })
+    try {
+      expect(await controller.toggleWorkspaceServers('ws1', ['a', 'b'], true)).toEqual({ ok: true })
+      expect(scope.mirror.overrides).toEqual({ ws1: { a: true, b: true }, ws2: { a: true } })
+      expect(scope.mirror.disabled).toEqual({ b: true })
     } finally {
       stop()
     }

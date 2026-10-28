@@ -34,11 +34,11 @@ const live = {
 function propsOf(): McpScopeSectionProps {
   const wsState = {
     items: [
-      { workspaceId: 'ws-1', title: 'tmp' },
-      { workspaceId: 'ws-2', title: 'daily' },
-      { workspaceId: 'ws-3', title: 'quant' },
-      { workspaceId: 'ws-4', title: 'perf' },
-      { workspaceId: 'ws-5', title: 'literature' },
+      { workspaceId: 'ws-1', title: 'tmp', path: '/tmp' },
+      { workspaceId: 'ws-2', title: 'daily', path: '/daily' },
+      { workspaceId: 'ws-3', title: 'quant', path: '/quant' },
+      { workspaceId: 'ws-4', title: 'perf', path: '/perf' },
+      { workspaceId: 'ws-5', title: 'literature', path: '/lit' },
     ],
     archivedSessionIds: [],
     state: 'idle',
@@ -67,6 +67,7 @@ function propsOf(): McpScopeSectionProps {
     removeServer: ok,
     toggleWorkspace: ok,
     toggleWorkspaces: ok,
+    toggleWorkspaceServers: ok,
     setServerEnabled: ok,
     unsetCredential: ok,
     useRuntime: ((selector: (s: unknown) => unknown) => selector(runtime)) as unknown as McpScopeSectionProps['useRuntime'],
@@ -94,14 +95,12 @@ describe('section repaint discipline', () => {
     root.render(<McpScopeSection {...propsOf()} />)
     tracked.push({ root, host })
     await flush()
-    // Open every card's workspace list so the update has the most to churn.
-    const manage = en['row.manage'].split('(')[0]!.trim()
-    for (const button of Array.from(host.querySelectorAll('button'))) {
-      if ((button.textContent ?? '').includes(manage)) (button as HTMLButtonElement).click()
-    }
+    // Open the server detail so the largest subtree (workspace switches) is on
+    // screen; the commit then changes one switch and nothing else.
+    host.querySelector<HTMLElement>('[data-server="alpha"] button')!.click()
     await flush()
-    const rows = host.querySelectorAll('.' + styles.wsRow).length
-    expect(rows).toBeGreaterThan(0)
+    const switches = host.querySelectorAll('.' + styles.scopeRow).length
+    expect(switches).toBe(5)
     const counts = { added: 0, removed: 0 }
     const observer = new MutationObserver((records) => {
       for (const record of records) {
@@ -117,5 +116,6 @@ describe('section repaint discipline', () => {
     await flush()
     observer.disconnect()
     expect(counts).toEqual({ added: 0, removed: 0 })
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="' + t('server.workspacesTitle') + ': tmp"]')!.checked).toBe(true)
   })
 })

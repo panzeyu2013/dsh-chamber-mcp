@@ -59,7 +59,7 @@ export interface RuntimeActionResult {
 export interface RuntimeTestResult {
   ok: boolean
   toolCount?: number
-  /** Stable failure code when the probe failed (localized by the card). */
+  /** Stable failure code when the probe failed (localized by the detail). */
   code?: string
   /** Host-generated fallback message for an unknown code. */
   error?: string
@@ -80,12 +80,12 @@ export interface RuntimeRefreshOptions {
    * Refresh only this server's view: the host projects that one entry and the
    * store MERGES it into the current map, leaving every other server entry
    * untouched. A failure rejects with its RuntimeCallError and leaves the
-   * global snapshot exactly as it was (the card renders its own error).
+   * global snapshot exactly as it was (the detail renders its own error).
    */
   server?: string
 }
 
-/** Observable runtime store + the actions the cards call. */
+/** Observable runtime store + the actions the views call. */
 export interface RuntimeStore {
   getSnapshot(): RuntimeSnapshot
   subscribe(listener: () => void): () => void
@@ -439,7 +439,7 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
   let trailing = false
   /**
    * Per-server passes, deduped per server NAME only. They never join the full
-   * pass and the full pass never joins them: a card's per-server retry must not
+   * pass and the full pass never joins them: a detail's per-server retry must not
    * be answered with — or swallowed by — another pass's result.
    */
   const serverInFlight = new Map<string, Promise<void>>()
@@ -694,7 +694,7 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
    * merges those entries into the current map (any other entry the host
    * returned is merged too, never dropped). No loading flip and no failure
    * snapshot: a failure rejects with its RuntimeCallError and leaves the global
-   * snapshot exactly as it was, so the asking card can render its own error.
+   * snapshot exactly as it was, so the asking detail can render its own error.
    */
   async function refreshServer(server: string): Promise<void> {
     const running = serverInFlight.get(server)
@@ -730,7 +730,7 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
   /**
    * Refresh the runtime status. Without `server` the whole map is replaced and
    * failures degrade the section; with `server` only that view is re-pulled and
-   * merged, and a failure rejects (the card owns the error).
+   * merged, and a failure rejects (the detail owns the error).
    */
   async function refresh(refreshOptions?: RuntimeRefreshOptions): Promise<void> {
     // An EXPLICIT refresh re-arms DISCOVERY — a shell that answered late deserves

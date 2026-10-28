@@ -8,8 +8,9 @@
 // and that the injected tag is created once and disposed correctly.
 import { afterEach, describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { AddServerForm, EMPTY_DRAFT } from '../../src/client/add-form.tsx'
-import { ServerCard } from '../../src/client/server-card.tsx'
+import { EMPTY_DRAFT } from '../../src/client/draft.ts'
+import { ServerListView } from '../../src/client/views/server-list.tsx'
+import { ServerEditor } from '../../src/client/views/server-editor.tsx'
 import {
   STYLE_PLUGIN,
   STYLE_TAG_ID,
@@ -22,6 +23,7 @@ import { en } from '../../src/client/locales.ts'
 import type { SettingsKey } from '../../src/client/locales.ts'
 import type { SectionT } from '../../src/client/section.tsx'
 import type { McpScopeDoc } from '../../src/shared/model.ts'
+import type { RuntimeSnapshot } from '../../src/client/runtime.ts'
 
 /** Locale reader of the section namespace (en dictionary, `{name}` interpolation). */
 const t = ((key: SettingsKey, params?: Record<string, string | number>) =>
@@ -56,6 +58,7 @@ const THEME_TOKENS = new Set([
   '--dsw-alias-bg-layer-1',
   '--dsw-alias-bg-layer-2',
   '--dsw-alias-bg-layer-3',
+  '--dsw-alias-bg-mask-1',
   '--dsw-alias-bg-module-platform',
   '--dsw-alias-border-l2',
   '--dsw-alias-border-l3',
@@ -82,6 +85,7 @@ const THEME_TOKENS = new Set([
   // The panel card's hairline is drawn by this elevation shorthand (declared by
   // the theme as `0 0 0 .5px var(--dsw-elevation-stroke-color)`, and already
   // read by the pinned ui-primitives sheets) — not by a `border`.
+  '--dsw-elevation-panel',
   '--dsw-elevation-stroke',
 ])
 
@@ -186,34 +190,35 @@ describe('mcp-scope stylesheet', () => {
     )
   })
 
-  it('lets the card gap own the vertical rhythm: every card paragraph resets its margin', () => {
-    // The card is a `gap: 8px` flex column; a paragraph that keeps the UA margin
-    // doubles the space around its own line (the reported give-up line opened
-    // ~20px instead of 8px). Every paragraph class the card renders must reset it.
+  it('lets the section gap own the vertical rhythm: every paragraph resets its margin', () => {
+    // The detail/list/editor surfaces are flex columns whose gap owns the
+    // rhythm; a paragraph that keeps the UA margin doubles the space around its
+    // own line. Every paragraph class those views render resets it.
     for (const selector of [
-      '.mcpScope_statusText',
-      '.mcpScope_statusErrorText',
+      '.mcpScope_detailSectionHint',
       '.mcpScope_hint',
-      '.mcpScope_noticeOk',
-      '.mcpScope_confirmText',
       '.mcpScope_empty',
+      '.mcpScope_emptyBody',
+      '.mcpScope_editorNote',
+      '.mcpScope_availabilityHint',
+      '.mcpScope_dangerHint',
+      '.mcpScope_toolTruncate',
     ]) {
       const rule = rules(css).find((candidate) => candidate.selector === selector)
       expect(rule, `no rule for ${selector}`).toBeDefined()
-      expect(rule!.body, `${selector} keeps a UA margin inside the 8px-gap card`).toMatch(
+      expect(rule!.body, `${selector} keeps a UA margin inside the flex column`).toMatch(
         /(?:^|[;{\s])margin:\s*0\s*;/,
       )
     }
   })
 
-  it('paints the official panel card recipe: r14 + elevation stroke + 12/14 inset, no border', () => {
-    const card = rules(css).find((rule) => rule.selector === '.mcpScope_card')
-    expect(card, 'no rule for .mcpScope_card').toBeDefined()
-    expect(card!.body).toMatch(/border-radius:\s*14px/)
-    expect(card!.body).toMatch(/box-shadow:\s*var\(--dsw-elevation-stroke\)/)
-    expect(card!.body).toMatch(/padding:\s*12px 14px/)
+  it('paints the row surface recipe: r12 + elevation stroke, no border', () => {
+    const row = rules(css).find((rule) => rule.selector === '.mcpScope_serverRow')
+    expect(row, 'no rule for .mcpScope_serverRow').toBeDefined()
+    expect(row!.body).toMatch(/border-radius:\s*12px/)
+    expect(row!.body).toMatch(/box-shadow:\s*var\(--dsw-elevation-stroke\)/)
     // The hairline is the elevation stroke now — a border would double it.
-    expect(card!.body).not.toMatch(/border\s*:/)
+    expect(row!.body).not.toMatch(/border\s*:/)
   })
 
   it('spends the deepseek accent only on interactive and selected states', () => {
@@ -226,15 +231,14 @@ describe('mcp-scope stylesheet', () => {
     // selected + focused controls (the accent states)
     expect(bodyOf('.mcpScope_switchInput:checked + .mcpScope_switch')).toContain(`background: ${accent}`)
     expect(bodyOf('.mcpScope_switchInput:focus-visible + .mcpScope_switch')).toContain(accent)
-    expect(bodyOf('.mcpScope_focusRing:focus-visible')).toContain(accent)
     // primary control fill
     expect(bodyOf('.mcpScope_buttonPrimary')).toContain('var(--dsw-alias-button-info-fill)')
     expect(bodyOf('.mcpScope_buttonPrimary:hover:not(:disabled)')).toContain('var(--dsw-alias-button-info-hover)')
-    // normal state (rows, banner, card surface) stays monochrome
-    expect(bodyOf('.mcpScope_wsLabel')).toContain('var(--dsw-alias-label-primary)')
-    expect(bodyOf('.mcpScope_staleBanner')).not.toContain(accent)
-    expect(bodyOf('.mcpScope_card')).not.toContain('state-business-primary')
-    expect(bodyOf('.mcpScope_card')).not.toContain('button-info')
+    // normal state (scope labels, notice strip, row surface) stays monochrome
+    expect(bodyOf('.mcpScope_scopeName')).toContain('var(--dsw-alias-label-primary)')
+    expect(bodyOf('.mcpScope_inlineNoticeInfo')).not.toContain(accent)
+    expect(bodyOf('.mcpScope_serverRow')).not.toContain('state-business-primary')
+    expect(bodyOf('.mcpScope_serverRow')).not.toContain('button-info')
     // and no rule outside the interactive set paints it
     const accentRules = rules(css)
       .filter((rule) => /--dsw-alias-(?:state-business-primary|button-info-(?:fill|hover))/.test(rule.body))
@@ -246,7 +250,10 @@ describe('mcp-scope stylesheet', () => {
         '.mcpScope_buttonPrimary',
         '.mcpScope_buttonPrimary:hover:not(:disabled)',
         '.mcpScope_choiceInput:focus-visible + .mcpScope_choicePill',
-        '.mcpScope_focusRing:focus-visible',
+        '.mcpScope_detailBack:focus-visible',
+        '.mcpScope_editorAdvanced:focus-visible',
+        '.mcpScope_editorErrorLink:focus-visible',
+        '.mcpScope_filterChip:focus-visible',
         '.mcpScope_iconButton:focus-visible',
         // the registered-tools notice is a shipped-chrome disclosure row: only
         // its keyboard focus rings (the row's and each source's) spend the
@@ -254,12 +261,14 @@ describe('mcp-scope stylesheet', () => {
         '.mcpScope_injectionHead:focus-visible',
         '.mcpScope_injectionServerHead:focus-visible',
         '.mcpScope_input:focus',
-        '.mcpScope_linkButton:focus-visible',
+        '.mcpScope_revealButton:focus-visible',
+        '.mcpScope_searchInput:focus',
+        '.mcpScope_serverRowButton:focus-visible',
         '.mcpScope_switchInput:checked + .mcpScope_switch',
-        // the card-local workspace filter keeps the brand focus border
-        '.mcpScope_wsFilterInput:focus',
         '.mcpScope_switchInput:focus-visible + .mcpScope_switch',
+        '.mcpScope_tab:focus-visible',
         '.mcpScope_textarea:focus',
+        '.mcpScope_toolDisclosure:focus-visible',
         '.mcpScope_toolHead:focus-visible',
       ].sort(),
     )
@@ -271,7 +280,7 @@ describe('mcp-scope stylesheet', () => {
     const styled = cssClassesOf(css)
     expect([...styled].filter((name) => !exported.has(name))).toEqual([]) // no dead rule
     expect([...exported].filter((name) => !styled.has(name))).toEqual([]) // no unstyled class
-    expect(cx(styles.card, false, undefined, styles.button)).toBe(`${styles.card} ${styles.button}`)
+    expect(cx(styles.serverRow, false, undefined, styles.button)).toBe(`${styles.serverRow} ${styles.button}`)
     expect(cx()).toBe('')
   })
 
@@ -298,45 +307,29 @@ describe('mcp-scope stylesheet', () => {
   })
 
   it('keeps the layout guards that stop hostile content from widening the column', () => {
-    // jsdom cannot measure layout, so the contract is pinned lexically here and
-    // measured for real in the browser harness (§9.4 of docs/design.md):
-    // header names and credential refs are not length-capped by the document
-    // schema, and a working directory is an arbitrary host path.
+    // jsdom cannot measure layout, so the contract is pinned lexically here.
     const ruleOf = (selector: string): string => {
       const rule = rules(css).find((candidate) => candidate.selector === selector)
-      if (rule === undefined) throw new Error(`no rule for ${selector}`)
+      if (rule === undefined) throw new Error('no rule for ' + selector)
       return rule.body
     }
-    expect(ruleOf('.mcpScope_badges')).toMatch(/flex-wrap:\s*wrap/)
-    expect(ruleOf('.mcpScope_badge')).toMatch(/max-width:\s*100%/)
-    for (const part of ['.mcpScope_badgeKey', '.mcpScope_badgeRef']) {
-      expect(ruleOf(part), `${part} must be able to truncate`).toMatch(/min-width:\s*0/)
-      expect(ruleOf(part)).toMatch(/text-overflow:\s*ellipsis/)
-    }
-    expect(ruleOf('.mcpScope_code')).toMatch(/text-overflow:\s*ellipsis/)
+    // Long server names, workspace titles, credential refs and host paths must
+    // truncate or wrap instead of widening the 720px settings column.
+    expect(ruleOf('.mcpScope_serverRowName')).toMatch(/text-overflow:\s*ellipsis/)
+    expect(ruleOf('.mcpScope_serverRowName')).toMatch(/max-width:\s*42%/)
+    expect(ruleOf('.mcpScope_scopeName')).toMatch(/min-width:\s*0/)
+    expect(ruleOf('.mcpScope_scopeName')).toMatch(/text-overflow:\s*ellipsis/)
+    expect(ruleOf('.mcpScope_configValue')).toMatch(/overflow-wrap:\s*anywhere/)
     expect(ruleOf('.mcpScope_hint')).toMatch(/overflow-wrap:\s*anywhere/)
-    expect(ruleOf('.mcpScope_noticeText')).toMatch(/overflow-wrap:\s*anywhere/)
-    // The label is the whole text RUN (name + state word) so every pixel of it
-    // toggles; the name itself carries the truncation.
-    expect(ruleOf('.mcpScope_wsLabel')).toMatch(/display:\s*flex/)
-    expect(ruleOf('.mcpScope_wsLabel')).toMatch(/cursor:\s*pointer/)
-    // The label fills the row's full 28px band: no dead strip beside the switch.
-    expect(ruleOf('.mcpScope_wsLabel')).toMatch(/align-self:\s*stretch/)
-    expect(ruleOf('.mcpScope_wsName')).toMatch(/text-overflow:\s*ellipsis/)
-    // The card-local filter keeps the field geometry but not the official field
-    // fill: bg-layer-1 reads as a white slab against the card's bg-layer-3.
-    expect(ruleOf('.mcpScope_wsFilterInput')).toMatch(/background:\s*transparent/)
-    expect(ruleOf('.mcpScope_wsFilterInput')).toMatch(/border-color:\s*var\(--dsw-alias-border-l3\)/)
-    // The card's surface shows through the transparent fill, and the official
-    // placeholder token (label-dimmed) is tuned for a white field: the inline
-    // filter takes one step up so the hint stays readable on the card.
-    expect(ruleOf('.mcpScope_wsFilterInput::placeholder')).toMatch(/color:\s*var\(--dsw-alias-label-secondary\)/)
-    expect(ruleOf('.mcpScope_wsFilterInput::placeholder')).toMatch(/opacity:\s*1/)
-    // The rows are a responsive grid: one column in a narrow panel, more as the
-    // settings panel widens, so a long workspace list is not a 20-row stack.
-    expect(ruleOf('.mcpScope_wsList')).toMatch(/display:\s*grid/)
-    expect(ruleOf('.mcpScope_wsList')).toMatch(
-      /grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(200px,\s*1fr\)\)/,
+    expect(ruleOf('.mcpScope_detailTitle')).toMatch(/overflow-wrap:\s*anywhere/)
+    expect(ruleOf('.mcpScope_credentialName')).toMatch(/overflow-wrap:\s*anywhere/)
+    expect(ruleOf('.mcpScope_searchField')).toMatch(/min-width:\s*0/)
+    expect(ruleOf('.mcpScope_searchInput')).toMatch(/width:\s*100%/)
+    // The scope rows are a responsive grid: one column in a narrow panel, more
+    // as it widens, so a long workspace list is not a 20-row stack.
+    expect(ruleOf('.mcpScope_scopeGrid')).toMatch(/display:\s*grid/)
+    expect(ruleOf('.mcpScope_scopeGrid')).toMatch(
+      /grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(220px,\s*1fr\)\)/,
     )
     // The switch's native input fills its box, so the box's slop IS the hit
     // area: 44x28 around the unchanged 36x20 track.
@@ -344,32 +337,20 @@ describe('mcp-scope stylesheet', () => {
     expect(ruleOf('.mcpScope_switchBox')).toMatch(/margin:\s*-4px/)
     expect(ruleOf('.mcpScope_switch')).toMatch(/width:\s*36px/)
     expect(ruleOf('.mcpScope_switch')).toMatch(/height:\s*20px/)
-    // EVERY container of a switch holds the whole 28px hit box (4 + 20 + 4):
-    // anything shorter lets two neighbours' hit boxes overlap, and the later
-    // absolutely positioned input wins that band.
-    expect(ruleOf('.mcpScope_wsRow')).toMatch(/min-height:\s*28px/)
-    expect(ruleOf('.mcpScope_toggleRow')).toMatch(/min-height:\s*28px/)
-    expect(ruleOf('.mcpScope_cardHead')).toMatch(/min-height:\s*28px/)
-    // ...and a WRAPPING container keeps its lines further apart than the slop.
-    expect(ruleOf('.mcpScope_cardHead')).toMatch(/row-gap:\s*10px/)
-    // The keyboard ring's OUTER edge lands exactly on the hit box, not on the
-    // bare track: a 2px offset plus the ring's own width equals the 4px slop.
-    expect(ruleOf('.mcpScope_switchInput:focus-visible + .mcpScope_switch')).toMatch(/outline-offset:\s*2px/)
-    // The track and thumb are decoration. jsdom cannot hit-test, so this pins
-    // the fix that stops the ON-state thumb — promoted into the positioned
-    // paint layer by its checked `transform`, and later in DOM order than the
-    // input — from swallowing every click on the knob; the geometry itself is
-    // verified in a real browser.
     expect(ruleOf('.mcpScope_switch')).toMatch(/pointer-events:\s*none/)
-    // ...and no 4x28 dead column is left beside a live switch: the hit box ends
-    // at track+40, so both labels reach back 4px over that band (the padding
-    // puts the text back where it was).
-    for (const label of ['.mcpScope_wsLabel', '.mcpScope_toggleLabel']) {
-      expect(ruleOf(label), label + ' must cover the switch hit-box band').toMatch(/margin-left:\s*-4px/)
-      expect(ruleOf(label)).toMatch(/padding-left:\s*4px/)
-    }
-    expect(ruleOf('.mcpScope_rowInput')).toMatch(/min-width:\s*0/)
-    expect(ruleOf('.mcpScope_cardHead')).toMatch(/flex-wrap:\s*wrap/)
+    // The scope row is 30px tall so the whole 28px hit box stays inside it.
+    expect(ruleOf('.mcpScope_scopeRow')).toMatch(/min-height:\s*30px/)
+    // The keyboard ring's OUTER edge lands exactly on the hit box.
+    expect(ruleOf('.mcpScope_switchInput:focus-visible + .mcpScope_switch')).toMatch(/outline-offset:\s*2px/)
+    // The row and its top line wrap rather than overflow on a narrow panel.
+    expect(ruleOf('.mcpScope_serverRowTop')).toMatch(/flex-wrap:\s*wrap/)
+    expect(ruleOf('.mcpScope_serverRowButton')).toMatch(/width:\s*100%/)
+    // The editor footer stays reachable in a long form, and the dialog stays
+    // inside the viewport.
+    expect(ruleOf('.mcpScope_editorFooter')).toMatch(/position:\s*sticky/)
+    expect(ruleOf('.mcpScope_editorFooter')).toMatch(/bottom:\s*0/)
+    expect(ruleOf('.mcpScope_modal')).toMatch(/max-height:/)
+    expect(ruleOf('.mcpScope_modalActions')).toMatch(/flex-wrap:\s*wrap/)
   })
 
   it('mounts one style tag with the official tag convention, idempotently, and disposes it', () => {
@@ -415,95 +396,96 @@ describe('mcp-scope stylesheet', () => {
 })
 
 describe('components consume the style seat', () => {
-  it('renders the card, its capsule actions, tags, badges and switch from the class map', () => {
+  it('renders the server list, its status pills and scope summary from the class map', () => {
     const doc: McpScopeDoc = {
-      servers: [],
+      servers: [{ serverName: 'fixture', transport: 'stdio', command: 'node', args: ['a.js'], envKeys: ['TOK'] }],
       overrides: { 'ws-1': { fixture: true } },
     }
+    const runtime: RuntimeSnapshot = {
+      phase: 'ready',
+      servers: { fixture: { name: 'fixture', state: 'connected', attempts: 0, maxAttempts: 10, toolCount: 3 } },
+    }
     const markup = renderToStaticMarkup(
-      <ServerCard
+      <ServerListView
         t={t}
-        server={{ serverName: 'fixture', transport: 'stdio', command: 'node', args: ['a.js'], envKeys: ['TOK'] }}
         doc={doc}
-        credentials={{ TOK: { configured: true, writable: true } }}
-        writable
+        runtime={runtime}
+        runtimePhase="ready"
         workspaceStatus="ready"
         workspaces={[{ workspaceId: 'ws-1', path: '/w', title: 'work', sessionIds: [] }]}
-        onRefresh={async () => {}}
-        onEdit={() => {}}
-        onRemove={async () => ({ ok: true })}
-        onToggle={async () => ({ ok: true })}
-        onToggleAll={async () => ({ ok: true })}
-        onSetEnabled={async () => ({ ok: true })}
-        onUnsetCredential={async () => ({ ok: true })}
+        query=""
+        onQueryChange={() => {}}
+        filter="all"
+        onFilterChange={() => {}}
+        onOpen={() => {}}
+        onAdd={() => {}}
+        onImport={() => {}}
+        writable
       />,
     )
     for (const name of [
-      styles.card,
-      styles.cardHead,
-      styles.cardName,
+      styles.section,
+      styles.searchToolbar,
+      styles.filterChips,
+      styles.filterChip,
+      styles.filterChipActive,
+      styles.serverList,
+      styles.serverRow,
+      styles.serverRowButton,
+      styles.serverRowTop,
+      styles.serverRowName,
       styles.tag,
-      styles.cardMeta,
-      styles.cardActions,
-      styles.cardRefresh,
-      styles.button,
-      styles.buttonDanger,
-      styles.buttonOutline,
-      styles.code,
-      styles.badges,
-      styles.badge,
-      styles.badgeOk,
-      styles.badgeKey,
-      styles.linkButton,
-      styles.wsBlock,
-      styles.wsList,
-      styles.wsRow,
-      styles.switchBox,
-      styles.switchInput,
-      styles.switch,
-      styles.switchThumb,
-      styles.wsLabel,
-      styles.wsName,
+      styles.serverRowStats,
+      styles.serverRowMeta,
+      styles.statusPill,
+      styles.statusPillDot,
+      styles.statusPillOk,
+      styles.serverRowChevron,
     ]) {
-      expect(markup, `missing ${name}`).toContain(name)
+      expect(markup, 'missing ' + name).toContain(name)
     }
-    // the switch stays a real, controlled checkbox behind its painted track
-    expect(markup).toMatch(/<input[^>]*role="switch"[^>]*>/)
+    expect(markup).toContain(t('server.scopeCount', { enabled: 1, total: 1 }))
   })
 
-  it('renders the staged form, its fields, choice pills and footer from the class map', () => {
+  it('renders the editor, its grouped fields, choices and sticky footer from the class map', () => {
     const markup = renderToStaticMarkup(
-      <AddServerForm
+      <ServerEditor
         t={t}
-        titleKey="add.title"
+        mode="add"
         initial={EMPTY_DRAFT}
         existingNames={[]}
         writable
+        credentials={{}}
         onSave={async () => ({ ok: true })}
-        onClose={() => {}}
+        onCancel={() => {}}
+        onSaved={() => {}}
       />,
     )
     for (const name of [
-      styles.form,
-      styles.formTitle,
-      styles.field,
+      styles.editor,
+      styles.editorHead,
+      styles.editorTitle,
+      styles.editorSub,
+      styles.editorSource,
+      styles.editorGrid,
+      styles.editorField,
       styles.fieldLabel,
-      styles.fieldHint,
       styles.input,
       styles.choices,
       styles.choice,
       styles.choiceInput,
       styles.choicePill,
-      styles.rowsGroup,
-      styles.row,
-      styles.rowInput,
+      styles.editorSection,
+      styles.editorSectionTitle,
+      styles.editorFooter,
       styles.button,
       styles.buttonOutline,
       styles.buttonMd,
       styles.buttonPrimary,
-      styles.formActions,
     ]) {
-      expect(markup, `missing ${name}`).toContain(name)
+      expect(markup, 'missing ' + name).toContain(name)
     }
+    expect(markup).toContain('mcp-scope-editor-name')
+    expect(markup).toContain(t('editor.saveAndTest'))
   })
 })

@@ -721,6 +721,19 @@ function envRows(raw: Record<string, unknown>): { key: string; value: string }[]
     }
     if (rows.length > 0) return rows
   }
+  // This plugin's own "Copy JSON" emits the credential-reference list as
+  // envKeys (values are write-only and never exported). Read it back so a
+  // copied definition can be imported without silently losing every ref.
+  const envKeys = raw.envKeys
+  if (Array.isArray(envKeys)) {
+    const rows: { key: string; value: string }[] = []
+    for (const entry of envKeys) {
+      if (typeof entry !== 'string') continue
+      const key = entry.trim()
+      if (key !== '') rows.push({ key, value: '' })
+    }
+    if (rows.length > 0) return rows
+  }
   return []
 }
 
@@ -804,6 +817,61 @@ function convert(name: string | undefined, raw: Record<string, unknown>): Import
     args: [...rest, ...args],
     ...(cwd !== undefined ? { cwd } : {}),
     headers: [],
+  }
+}
+
+/** One server extracted from a pasted snippet (name optional when unnamed). */
+export interface ImportCandidate {
+  name?: string
+  server: ImportedServer
+}
+
+/** Outcome of a candidate-list parse (business failure, never a throw). */
+export type ImportCandidatesOutcome =
+  | { ok: true; candidates: ImportCandidate[] }
+  | { ok: false; reason: 'empty' | 'invalid' | 'unsupported' }
+
+/**
+ * Parse EVERY server in one MCP JSON snippet, in discovery order, so the editor
+ * can offer a real candidate list instead of silently taking the first entry.
+ * The same tolerant candidate extraction as {@link parseMcpSnippet} is used;
+ * the first JSON candidate that names servers wins (an example snippet above
+ * the real config must not shadow it). Pasted text is never evaluated.
+ */
+export function parseMcpSnippetCandidates(text: string): ImportCandidatesOutcome {
+  const trimmed = normalizeInput(text).trim()
+  if (trimmed === '') return { ok: false, reason: 'empty' }
+  try {
+    let parsedAny = false
+    let unnamed: [string | undefined, Record<string, unknown>][] | undefined
+    for (const candidate of jsonCandidates(trimmed)) {
+      let value: unknown
+      try {
+        value = JSON.parse(candidate) as unknown
+      } catch {
+        continue
+      }
+      parsedAny = true
+      const entries = findServerEntries(value)
+      if (entries.length === 0) continue
+      const named = entries.filter(([name]) => name !== undefined)
+      if (named.length > 0) {
+        return {
+          ok: true,
+          candidates: named.map(([name, entry]) => ({ name, server: convert(name, entry) })),
+        }
+      }
+      unnamed ??= entries
+    }
+    if (unnamed !== undefined) {
+      return {
+        ok: true,
+        candidates: unnamed.map(([name, entry]) => ({ name, server: convert(name, entry) })),
+      }
+    }
+    return { ok: false, reason: parsedAny ? 'unsupported' : 'invalid' }
+  } catch {
+    return { ok: false, reason: 'invalid' }
   }
 }
 

@@ -50,9 +50,9 @@ dsh plugin --profile web add file:./.smoke/dsh-chamber-mcp-<version>.tgz
 # 装完重启一次实例（profile 的 bundle 列表变了）
 ```
 
-1. 打开 *设置 → MCP 服务器* → **添加服务器**。两种传输：**stdio**（名称、命令、参数、可选工作目录、环境变量键）与 **Streamable HTTP**（URL、请求头行）。支持粘贴导入（整条命令行、`.env` 行、请求头行）与单服务器 JSON 导入。
-2. 新服务器**对每个工作区都是关的**。点卡片上的 **管理工作区 (N 开)** 展开全部工作区逐个打开——这一步就是"这对（服务器 × 工作区）生效"的全部含义；工作区多于一个时还有 **全部开启 / 全部关闭**。服务器名旁的开关是**全局**开关：停用即不启动、哪里都不注册工具，配置留在盘上。
-3. 每张卡片带实时状态（connected / connecting / reconnecting / failed / stopped / disabled / unknown）、**连接** / **断开** / **测试**，以及 **工具 (N)**（展开已同步的工具名）；**编辑** 重开表单，**移除** 到处停掉并清掉不再被引用的凭据 ref。分区头有名称过滤与 **刷新状态**。
+1. 打开 *设置 → MCP 服务器* → **添加服务器**，或从空状态直接 **从剪贴板导入**。两种传输：**stdio**（名称、命令、参数、可选工作目录、环境变量键）与 **Streamable HTTP**（URL、请求头行）。编辑器支持整条命令行 / `.env` / 请求头行粘贴，以及单服务器或多服务器 JSON（多服务器时先选一个）；保存后自动测试连接。
+2. 列表行只显示**状态、范围与工具数**。点一行进入详情：**Workspaces** 区块逐个开关这台服务器的工作区（改动立即生效，可撤销），**Availability** 的 **允许运行** 才是全局开关（不允许 = 不启动、哪里都不注册工具，配置留在盘上）。新服务器默认**对每个工作区都是关的**。
+3. 页签 **Workspaces** 反过来回答"这个 workspace 能用哪些服务器"，支持跨服务器批量开启/关闭。详情还包含 **Tools**（搜索、复制）、**Configuration**（定义与凭据引用、复制 JSON）、实时状态 / 诊断、以及 **Danger zone** 的移除（会具体列出受影响的 workspace 和将被清理的凭据）。列表支持名称过滤和状态筛选。
 
 ## 一次会话能拿到什么
 
@@ -128,7 +128,7 @@ dsh plugin --profile web remove dsh-chamber-mcp   # 之后重启实例
 | --- | --- |
 | [`docs/README.en.md`](docs/README.en.md) | 本 README 的英文版 |
 | [`docs/design.md`](docs/design.md) | 架构：宿主机/浏览器两半、监管器与注入模型、设置文档、上游契约与刻意偏离、UI 布局参考 |
-| [`docs/acceptance.md`](docs/acceptance.md) | 需求与裁剪矩阵（R1–R4 / E1–E8 / C1–C6） |
+| [`docs/acceptance.md`](docs/acceptance.md) | 需求与裁剪矩阵（R1–R4 / E1–E11 / C1–C6） |
 | [`docs/RELEASE.md`](docs/RELEASE.md) | 发布与 CI 运行手册 |
 
 ## License

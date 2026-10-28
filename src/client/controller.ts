@@ -27,7 +27,6 @@ import {
   MCP_SCOPE_NAMESPACE,
   canonicalDoc,
   credentialRefsOf,
-  isEnabled,
   pruneEmptyOverrideRows,
   removeServerDisabled,
   removeServerOverrides,
@@ -35,7 +34,6 @@ import {
   setDisabledKey,
   setServerDisabled,
   validateDoc,
-  type DisabledServers,
   type McpScopeDoc,
   type ServerDef,
   type WorkspaceOverrides,
@@ -466,10 +464,20 @@ export interface McpScopeFace {
   /**
    * Batch per-workspace switch: every named workspace moves to `off` in ONE
    * revision-fenced mutation (one path op per workspace, never a whole-map
-   * rewrite), used by the card's "all on / all off" controls.
+   * rewrite), used by the server detail's "all on / all off" controls.
    */
   toggleWorkspaces(serverName: string, off: boolean, workspaceIds: readonly string[]): Promise<SaveOutcome>
-  /** Global enable/disable of one server (the card's enable switch). */
+  /**
+   * Batch server switch for ONE workspace (the workspace-centric view): every
+   * named server moves to `enabled` in one revision-fenced mutation. The
+   * mirror image of {@link toggleWorkspaces}, with one path op per server.
+   */
+  toggleWorkspaceServers(
+    workspaceId: string,
+    serverNames: readonly string[],
+    enabled: boolean,
+  ): Promise<SaveOutcome>
+  /** Global enable/disable of one server (the detail's Availability switch). */
   setServerEnabled(serverName: string, enabled: boolean): Promise<SaveOutcome>
   /** Clear one stored credential literal (badge "Clear" affordance). */
   unsetCredential(ref: string): Promise<SaveOutcome>
@@ -491,6 +499,14 @@ export class McpScopeController {
   private unsubscribeScope: (() => void) | undefined
   /** Bumped at every describe start; stale runs must not publish (FE-6). */
   private credentialsGeneration = 0
+  /**
+   * Serializes every mutation across section mounts. The section also has a
+   * queue, but that queue dies with its component; a settings panel closed
+   * mid-write and reopened would otherwise read a stale revision and hit a
+   * spurious fence conflict. The tail is swallowed so one failure never
+   * blocks the next write.
+   */
+  private writeTail: Promise<unknown> = Promise.resolve()
 
   constructor(scope: ConfigFormPort, credentials: CredentialsGateway) {
     this.scope = scope
@@ -513,6 +529,8 @@ export class McpScopeController {
       removeServer: (serverName) => self.removeServer(serverName),
       toggleWorkspace: (workspaceId, serverName, off) => self.toggleWorkspace(workspaceId, serverName, off),
       toggleWorkspaces: (serverName, off, workspaceIds) => self.toggleWorkspaces(serverName, off, workspaceIds),
+      toggleWorkspaceServers: (workspaceId, serverNames, enabled) =>
+        self.toggleWorkspaceServers(workspaceId, serverNames, enabled),
       setServerEnabled: (serverName, enabled) => self.setServerEnabled(serverName, enabled),
       unsetCredential: (ref) => self.unsetCredential(ref),
     }
@@ -610,6 +628,19 @@ export class McpScopeController {
 
   /** Save one staged server: secrets first, then ONE atomic doc mutation. */
   async addServer(input: ServerSaveInput): Promise<SaveOutcome> {
+    return this.enqueueWrite(() => this.addServerNow(input))
+  }
+
+  private enqueueWrite<T>(task: () => Promise<T>): Promise<T> {
+    const next = this.writeTail.then(task, task)
+    this.writeTail = next.then(
+      () => undefined,
+      () => undefined,
+    )
+    return next
+  }
+
+  private async addServerNow(input: ServerSaveInput): Promise<SaveOutcome> {
     const base = this.snapshot
     if (base.status === 'loading' || base.status === 'unavailable') {
       return { ok: false, reason: base.status === 'unavailable' ? 'save-failed' : 'invalid' }
@@ -630,6 +661,13 @@ export class McpScopeController {
    * as a conflict instead of silently appending.
    */
   async replaceServer(oldServerName: string, input: ServerSaveInput): Promise<SaveOutcome> {
+    return this.enqueueWrite(() => this.replaceServerNow(oldServerName, input))
+  }
+
+  private async replaceServerNow(
+    oldServerName: string,
+    input: ServerSaveInput,
+  ): Promise<SaveOutcome> {
     const base = this.snapshot
     if (base.status === 'loading' || base.status === 'unavailable') {
       return { ok: false, reason: base.status === 'unavailable' ? 'save-failed' : 'invalid' }
@@ -648,12 +686,22 @@ export class McpScopeController {
     const carried = renamed
       ? renameDisabledKey(base.doc.disabled, oldServerName, input.server.serverName)
       : base.doc.disabled
-    const disabled = setDisabledKey(carried, input.server.serverName, input.enabled === false)
+    // Availability is owned by the detail page. A definition save that does
+    // not explicitly stage it must not resurrect a server another surface
+    // disabled (an editor draft can be older than the current document).
+    const disabled =
+      input.enabled === undefined
+        ? carried
+        : setDisabledKey(carried, input.server.serverName, input.enabled === false)
     return this.submitPlan(base, { servers, overrides, disabled }, input.secrets)
   }
 
   /** Remove one server; credentials orphaned by the removal are cleared. */
   async removeServer(serverName: string): Promise<SaveOutcome> {
+    return this.enqueueWrite(() => this.removeServerNow(serverName))
+  }
+
+  private async removeServerNow(serverName: string): Promise<SaveOutcome> {
     const base = this.snapshot
     const target = base.doc.servers.find((server) => server.serverName === serverName)
     if (!target) return { ok: true }
@@ -671,9 +719,22 @@ export class McpScopeController {
 
   /** Turn one server on or off for one workspace (atomic single-purpose mutation). */
   async toggleWorkspace(workspaceId: string, serverName: string, enabled: boolean): Promise<SaveOutcome> {
+    return this.enqueueWrite(() => this.toggleWorkspaceNow(workspaceId, serverName, enabled))
+  }
+
+  private async toggleWorkspaceNow(
+    workspaceId: string,
+    serverName: string,
+    enabled: boolean,
+  ): Promise<SaveOutcome> {
     const base = this.snapshot
     if (base.status === 'loading' || base.status === 'unavailable') {
       return { ok: false, reason: 'save-failed' }
+    }
+    // A stale row (removed in another tab) must not write an orphan override:
+    // a later re-add with the same name would otherwise start ENABLED there.
+    if (!base.doc.servers.some((server) => server.serverName === serverName)) {
+      return { ok: false, reason: 'conflict' }
     }
     const ops = toggleOp(base.doc, workspaceId, serverName, enabled)
     if (ops.length === 0) return { ok: true }
@@ -686,6 +747,10 @@ export class McpScopeController {
    * other document write (revision fence + landed re-read). No secrets.
    */
   async setServerEnabled(serverName: string, enabled: boolean): Promise<SaveOutcome> {
+    return this.enqueueWrite(() => this.setServerEnabledNow(serverName, enabled))
+  }
+
+  private async setServerEnabledNow(serverName: string, enabled: boolean): Promise<SaveOutcome> {
     const base = this.snapshot
     if (base.status === 'loading' || base.status === 'unavailable') {
       return { ok: false, reason: 'save-failed' }
@@ -704,6 +769,14 @@ export class McpScopeController {
     enabled: boolean,
     workspaceIds: readonly string[],
   ): Promise<SaveOutcome> {
+    return this.enqueueWrite(() => this.toggleWorkspacesNow(serverName, enabled, workspaceIds))
+  }
+
+  private async toggleWorkspacesNow(
+    serverName: string,
+    enabled: boolean,
+    workspaceIds: readonly string[],
+  ): Promise<SaveOutcome> {
     const base = this.snapshot
     if (base.status === 'loading' || base.status === 'unavailable') {
       return { ok: false, reason: 'save-failed' }
@@ -718,8 +791,46 @@ export class McpScopeController {
     return this.applyOps(plan.ops, base.revision, next)
   }
 
+  /**
+   * Batch server switch for one workspace. The workspace-centric view can
+   * toggle many servers at once, so this builds the whole next document and
+   * emits ONE revision-fenced mutation (one path op per server) instead of
+   * racing N independent writes.
+   */
+  async toggleWorkspaceServers(
+    workspaceId: string,
+    serverNames: readonly string[],
+    enabled: boolean,
+  ): Promise<SaveOutcome> {
+    return this.enqueueWrite(() => this.toggleWorkspaceServersNow(workspaceId, serverNames, enabled))
+  }
+
+  private async toggleWorkspaceServersNow(
+    workspaceId: string,
+    serverNames: readonly string[],
+    enabled: boolean,
+  ): Promise<SaveOutcome> {
+    const base = this.snapshot
+    if (base.status === 'loading' || base.status === 'unavailable') {
+      return { ok: false, reason: 'save-failed' }
+    }
+    const known = new Set(base.doc.servers.map((server) => server.serverName))
+    let next = base.doc
+    for (const serverName of serverNames) {
+      if (!known.has(serverName)) continue
+      next = overrideDoc(next, workspaceId, serverName, enabled)
+    }
+    const plan = buildSaveOps(base.doc, next)
+    if (plan.ops.length === 0) return { ok: true }
+    return this.applyOps(plan.ops, base.revision, next)
+  }
+
   /** Clear one stored credential literal (write-only domain, no doc write). */
   async unsetCredential(ref: string): Promise<SaveOutcome> {
+    return this.enqueueWrite(() => this.unsetCredentialNow(ref))
+  }
+
+  private async unsetCredentialNow(ref: string): Promise<SaveOutcome> {
     if (!CREDENTIAL_REF_PATTERN.test(ref)) return { ok: false, reason: 'invalid' }
     try {
       await this.credentials.unset(ref)
@@ -730,10 +841,19 @@ export class McpScopeController {
     return { ok: true }
   }
 
-  /** Whether the snapshot's badge map proves a stored value for `ref`. */
-  private wasConfigured(base: McpStoreSnapshot, ref: string): boolean {
-    const view = base.credentials[ref]
-    return view !== undefined && view.configured === true
+  /**
+   * Tri-state credential knowledge from the snapshot's badge map:
+   * `configured` (a stored value exists), `unset` (describe proved none), or
+   * `unknown` (describe failed / has not run). Unknown is NOT "unset": a save
+   * failure must never delete a value it could not see.
+   */
+  private credentialStateOf(
+    views: Readonly<Record<string, CredentialInfo>>,
+    ref: string,
+  ): 'configured' | 'unset' | 'unknown' {
+    const view = views[ref]
+    if (view === undefined) return 'unknown'
+    return view.configured === true ? 'configured' : 'unset'
   }
 
   /**
@@ -742,10 +862,11 @@ export class McpScopeController {
    * auto-cleanup of the values this attempt newly stored, (3) one
    * revision-fenced mutation carrying the whole plan, whose landing is
    * verified by re-read. When the document write is refused or conflicts,
-   * the credentials this attempt stored that had NO stored value before are
+   * the credentials this attempt stored that were CONFIRMED UNSET before are
    * auto-unset: a cancelled/failed add must never leave an untraceable
-   * literal behind (FE-1 / UX-02). Refs that carried a stored value before
-   * the save are never unset — the old value cannot be restored.
+   * literal behind (FE-1 / UX-02). Refs with a stored value OR an unknown
+   * badge state are never unset — the old value cannot be restored, and a
+   * failed describe must not be read as "there was nothing there".
    */
   private async submitPlan(
     base: McpStoreSnapshot,
@@ -757,7 +878,26 @@ export class McpScopeController {
     for (const secret of dirty) {
       if (!CREDENTIAL_REF_PATTERN.test(secret.ref)) return { ok: false, reason: 'invalid' }
     }
-    const preconfigured = new Set(dirty.filter((s) => this.wasConfigured(base, s.ref)).map((s) => s.ref))
+    // Fresh describe for exactly the dirty refs: the bound snapshot may predate
+    // a credential the user just typed, and "unknown" must never be mistaken
+    // for "unset" in the failure cleanup below. A describe failure leaves the
+    // refs unknown (protected).
+    let credentialViews: Readonly<Record<string, CredentialInfo>> = base.credentials
+    const dirtyRefs = [...new Set(dirty.map((secret) => secret.ref))]
+    if (dirtyRefs.length > 0) {
+      try {
+        const fresh = await this.credentials.describe(dirtyRefs)
+        credentialViews = { ...base.credentials, ...fresh }
+      } catch {
+        /* degraded: every dirty ref stays unknown/protected */
+      }
+    }
+    // Refs that are NOT confirmed unset are protected from failure cleanup.
+    const protectedRefs = new Set(
+      dirty
+        .filter((secret) => this.credentialStateOf(credentialViews, secret.ref) !== 'unset')
+        .map((secret) => secret.ref),
+    )
     const failedRefs: string[] = []
     const newlyStored: string[] = []
     for (const secret of dirty) {
@@ -771,7 +911,7 @@ export class McpScopeController {
     if (failedRefs.length > 0) {
       // Abort-on-secret-failure: partial writes of THIS attempt are undone
       // (new values only); the doc itself is untouched.
-      await this.cleanupNewlyStored(newlyStored, preconfigured)
+      await this.cleanupNewlyStored(newlyStored, protectedRefs)
       return { ok: false, reason: 'secret-write-failed', refs: failedRefs }
     }
     const plan = buildSaveOps(base.doc, next)
@@ -782,8 +922,10 @@ export class McpScopeController {
         // (new refs only), then report. Refs that already held a value keep
         // the newly typed literal — the old value cannot be restored — and
         // that fact is surfaced for honest copy.
-        await this.cleanupNewlyStored(newlyStored, preconfigured)
-        const kept = dirty.filter((secret) => preconfigured.has(secret.ref)).map((secret) => secret.ref)
+        await this.cleanupNewlyStored(newlyStored, protectedRefs)
+        const kept = dirty
+          .filter((secret) => this.credentialStateOf(credentialViews, secret.ref) !== 'unset')
+          .map((secret) => secret.ref)
         return kept.length > 0 ? { ...written, keptSecretRefs: kept } : written
       }
     }
@@ -802,10 +944,10 @@ export class McpScopeController {
    */
   private async cleanupNewlyStored(
     newlyStored: readonly string[],
-    preconfigured: ReadonlySet<string>,
+    protectedRefs: ReadonlySet<string>,
   ): Promise<void> {
     const referenced = new Set(credentialRefsOfDoc(this.snapshot.doc))
-    const cleanup = newlyStored.filter((ref) => !preconfigured.has(ref) && !referenced.has(ref))
+    const cleanup = newlyStored.filter((ref) => !protectedRefs.has(ref) && !referenced.has(ref))
     if (cleanup.length > 0) await this.unsetQuietly(cleanup)
   }
 

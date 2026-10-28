@@ -1,29 +1,19 @@
 // @vitest-environment jsdom
-// Render evidence for the MCP section UI: the settings.section component
-// renders server cards, per-workspace rows and the staged add/edit form from
-// a live store snapshot, with all copy arriving through the locale seat (en
-// dictionary). Live-harness tests exercise the real async flows end to end:
-// per-card action failures surface as role="alert" banners inside the card,
-// a successful add/edit announces through a role="status" note near the list
-// and moves focus to the affected card header, and the workspace-list
-// loading/error phases gate the per-card rows.
-import { afterEach, describe, expect, it } from 'vitest'
+/**
+ * Render evidence for the Phase 0-4 settings surface:
+ * servers list -> server detail -> editor, workspaces list -> workspace detail,
+ * optimistic scope/allow writes, confirmations, validation and persistent
+ * feedback. Every test drives the real section with injected store faces.
+ */
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { McpScopeSection, type McpScopeSectionProps } from '../../src/client/section.tsx'
-// pull the slot/locale module augmentations (register-site decls) into this program
 import type {} from '../../src/client/index.ts'
-import { en, zh, countKey, type SettingsKey } from '../../src/client/locales.ts'
-import { styles } from '../../src/client/styles.ts'
-import { EMPTY_DRAFT, evaluateDraft } from '../../src/client/add-form.tsx'
+import { en, type SettingsKey } from '../../src/client/locales.ts'
 import type { CredentialInfo } from '@deepseek-ai/dsh-credentials/types'
 import type { McpScopeDoc, WorkspaceOverrides } from '../../src/shared/model.ts'
 import type { SaveOutcome, ServerSaveInput } from '../../src/client/controller.ts'
-import type {
-  RuntimeSnapshot,
-  RuntimeTestResult,
-  RuntimeToolEntry,
-  ServerRuntimeView,
-} from '../../src/client/runtime.ts'
+import type { RuntimeSnapshot, RuntimeTestResult, RuntimeToolEntry } from '../../src/client/runtime.ts'
 
 function t(key: SettingsKey, params?: Record<string, string | number>): string {
   return en[key].replace(/\{(\w+)\}/g, (_, name) => String(params?.[name] ?? ''))
@@ -38,7 +28,7 @@ interface LiveState {
   writable: boolean
   wsState: 'idle' | 'loading' | 'error'
   wsPhase: 'pending' | 'ready'
-  wsItems: { workspaceId: string; title: string }[]
+  wsItems: { workspaceId: string; title: string; path: string }[]
   runtime?: RuntimeSnapshot
 }
 
@@ -48,6 +38,7 @@ interface Actions {
   removeServer?(name: string): Promise<SaveOutcome>
   toggleWorkspace?(workspaceId: string, serverName: string, enabled: boolean): Promise<SaveOutcome>
   toggleWorkspaces?(serverName: string, enabled: boolean, workspaceIds: readonly string[]): Promise<SaveOutcome>
+  toggleWorkspaceServers?(workspaceId: string, serverNames: readonly string[], enabled: boolean): Promise<SaveOutcome>
   setServerEnabled?(serverName: string, enabled: boolean): Promise<SaveOutcome>
   unsetCredential?(ref: string): Promise<SaveOutcome>
   connectServer?(serverName: string): Promise<unknown>
@@ -59,24 +50,21 @@ interface Actions {
 
 const OK = async () => ({ ok: true as const })
 const CONFLICT = async () => ({ ok: false as const, reason: 'conflict' as const })
-
-function snapshotOf(live: LiveState): {
-  status: 'ready'
-  doc: McpScopeDoc
-  revision: number
-  writable: boolean
-  credentials: Record<string, CredentialInfo>
-  credentialsAt: number
-} {
-  return { status: 'ready', doc: live.doc, revision: live.revision, writable: live.writable, credentials: live.credentials, credentialsAt: 0 }
-}
-
 const NOOP = async () => {}
 const NOOP_REFRESH = async () => {}
 const EMPTY_RUNTIME: RuntimeSnapshot = { phase: 'ready', servers: {} }
 
-// Test-only casts: the composed props re-state framework types that collapse
-// to opaque cross-package shapes in this dev tree (see docs/design.md §7).
+function snapshotOf(live: LiveState) {
+  return {
+    status: 'ready' as const,
+    doc: live.doc,
+    revision: live.revision,
+    writable: live.writable,
+    credentials: live.credentials,
+    credentialsAt: 0,
+  }
+}
+
 function propsOf(live: LiveState, actions: Actions): McpScopeSectionProps {
   const wsState = {
     items: live.wsItems,
@@ -97,14 +85,14 @@ function propsOf(live: LiveState, actions: Actions): McpScopeSectionProps {
     removeServer: actions.removeServer ?? OK,
     toggleWorkspace: actions.toggleWorkspace ?? OK,
     toggleWorkspaces: actions.toggleWorkspaces ?? OK,
+    toggleWorkspaceServers: actions.toggleWorkspaceServers ?? OK,
     setServerEnabled: actions.setServerEnabled ?? OK,
     unsetCredential: actions.unsetCredential ?? OK,
-    useRuntime: ((selector: (s: unknown) => unknown) =>
-      selector(live.runtime ?? EMPTY_RUNTIME)) as unknown as McpScopeSectionProps['useRuntime'],
+    useRuntime: ((selector: (s: unknown) => unknown) => selector(live.runtime ?? EMPTY_RUNTIME)) as unknown as McpScopeSectionProps['useRuntime'],
     refreshRuntime: actions.refreshRuntime ?? NOOP_REFRESH,
     connectServer: actions.connectServer ?? NOOP,
     disconnectServer: actions.disconnectServer ?? NOOP,
-    testServer: actions.testServer ?? (async () => ({ ok: true })),
+    testServer: actions.testServer ?? (async () => ({ ok: true, toolCount: 2 })),
     loadTools: actions.loadTools ?? (async () => ({ tools: [], truncated: false, total: 0 })),
   }
 }
@@ -116,6 +104,8 @@ interface Mounted {
   text(): string
   unmount(): void
 }
+
+const tracked: Mounted[] = []
 
 function mountSection(doc: McpScopeDoc, actions: Actions = {}, patch: Partial<LiveState> = {}): Mounted {
   const live: LiveState = {
@@ -147,35 +137,64 @@ function mountSection(doc: McpScopeDoc, actions: Actions = {}, patch: Partial<Li
   return mounted
 }
 
-const tracked: Mounted[] = []
 afterEach(() => {
   for (const mounted of tracked.splice(0)) mounted.unmount()
+  sessionStorage.clear()
+})
+beforeEach(() => {
+  sessionStorage.clear()
 })
 
-function buttonsOf(host: HTMLElement): HTMLElement[] {
-  return Array.from(host.querySelectorAll('button'))
+function buttonsOf(root: ParentNode): HTMLButtonElement[] {
+  return Array.from(root.querySelectorAll<HTMLButtonElement>('button'))
 }
 
-function buttonByText(host: HTMLElement, text: string): HTMLElement | undefined {
-  return buttonsOf(host).find((button) => (button.textContent ?? '').includes(text))
+function buttonByText(root: ParentNode, text: string): HTMLButtonElement | undefined {
+  return buttonsOf(root).find((button) => (button.textContent ?? '').includes(text))
 }
 
-/** Set an input's value through the native setter (React onChange sees it). */
-function setValue(input: HTMLInputElement, value: string): void {
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!
+function setValue(input: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  const proto = input instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')!.set!
   setter.call(input, value)
   input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
-function inputById(host: HTMLElement, id: string): HTMLInputElement {
-  const input = host.querySelector<HTMLInputElement>(`#${id}`)
-  if (input === null) throw new Error(`missing input #${id}`)
-  return input
+function serverRow(mounted: Mounted, name: string): HTMLElement {
+  const row = mounted.host.querySelector<HTMLElement>('[data-server="' + name + '"]')
+  if (row === null) throw new Error('missing server row ' + name)
+  return row
+}
+
+async function openServer(mounted: Mounted, name: string): Promise<HTMLElement> {
+  const row = serverRow(mounted, name)
+  row.querySelector('button')!.click()
+  await flush()
+  const detail = mounted.host.querySelector<HTMLElement>('[data-mcp-server-detail]')
+  if (detail === null) throw new Error('missing detail for ' + name)
+  return detail
+}
+
+async function openWorkspacesTab(mounted: Mounted): Promise<void> {
+  const tab = buttonsOf(mounted.host).find((button) => button.getAttribute('role') === 'tab' && (button.textContent ?? '').includes(t('tab.workspaces')))
+  if (tab === undefined) throw new Error('missing workspaces tab')
+  tab.click()
+  await flush()
+}
+
+function dialog(): HTMLElement {
+  const element = document.querySelector<HTMLElement>('[role="dialog"]')
+  if (element === null) throw new Error('missing dialog')
+  return element
 }
 
 const view = (configured: boolean, writable = true): CredentialInfo => ({ configured, writable })
 
-const stdioServer = (serverName: string, envKeys: string[] = [], extra: Partial<{ command: string; args: string[] }> = {}): ServerDefLike => ({
+const stdioServer = (
+  serverName: string,
+  envKeys: string[] = [],
+  extra: Partial<{ command: string; args: string[] }> = {},
+): McpScopeDoc['servers'][number] => ({
   serverName,
   transport: 'stdio',
   command: extra.command ?? 'node',
@@ -183,14 +202,16 @@ const stdioServer = (serverName: string, envKeys: string[] = [], extra: Partial<
   ...(envKeys.length > 0 ? { envKeys } : {}),
 })
 
-const httpServer = (serverName: string, url: string, headers: { name: string; ref: string }[]): ServerDefLike => ({
+const httpServer = (
+  serverName: string,
+  url: string,
+  headers: { name: string; ref: string }[],
+): McpScopeDoc['servers'][number] => ({
   serverName,
   transport: 'streamable-http',
   url,
   headers,
 })
-
-type ServerDefLike = McpScopeDoc['servers'][number]
 
 const overridesOf = (rows: Record<string, string[]>): WorkspaceOverrides => {
   const out: WorkspaceOverrides = {}
@@ -202,1134 +223,1073 @@ const overridesOf = (rows: Record<string, string[]>): WorkspaceOverrides => {
   return out
 }
 
-describe('McpScopeSection render', () => {
-  it('renders the section header, empty state and the add-server affordance', async () => {
+const WS = [
+  { workspaceId: 'ws-a', title: 'alpha', path: '/proj/alpha' },
+  { workspaceId: 'ws-b', title: 'beta', path: '/proj/beta' },
+  { workspaceId: 'ws-c', title: 'gamma', path: '/proj/gamma' },
+]
+
+function runtimeWith(name: string, state: 'connected' | 'failed' = 'connected'): RuntimeSnapshot {
+  return {
+    phase: 'ready',
+    servers: {
+      [name]: { name, state, attempts: 0, maxAttempts: 10, toolCount: 2, syncedAt: 1000 },
+    },
+  }
+}
+
+describe('servers list', () => {
+  it('renders an empty state with the add affordance', async () => {
     const mounted = mountSection({ servers: [], overrides: {} })
     await flush()
-    expect(mounted.text()).toContain(en.nav)
-    expect(mounted.text()).toContain(en['empty.servers'])
-    expect(mounted.text()).toContain(en['add.add'])
+    expect(mounted.text()).toContain(t('empty.serversTitle'))
+    expect(mounted.text()).toContain(t('empty.serversBody'))
+    expect(buttonByText(mounted.host, t('add.add'))).toBeDefined()
   })
 
-  it('renders server cards with pluralized summaries, definition details, badge tri-state and workspace rows', async () => {
-    const doc: McpScopeDoc = {
-      servers: [
-        stdioServer('fixture', ['TOK'], { command: 'node', args: ['a.js', '--x'] }),
-        httpServer('ctx', 'http://x/mcp', [{ name: 'Authorization', ref: 'AUTH' }]),
-      ],
-      overrides: overridesOf({ 'ws-b': ['fixture'] }),
-    }
-    const mounted = mountSection(doc, {}, {
-      wsItems: [
-        { workspaceId: 'ws-a', title: 'alpha' },
-        { workspaceId: 'ws-b', title: 'beta' },
-      ],
-    })
+
+  it('opens the import modal directly from the empty state', async () => {
+    const mounted = mountSection({ servers: [], overrides: {} })
     await flush()
-    const text = mounted.text()
-    // card identities + transports
-    expect(text).toContain('fixture')
-    expect(text).toContain('ctx')
-    expect(text).toContain(en['transport.stdio'])
-    expect(text).toContain(en['transport.http'])
-    // singular plural forms for count 1
-    expect(text).toContain(t(countKey('server.envKeys', 1), { count: 1 })) // '1 env key'
-    expect(text).toContain(t(countKey('server.headers', 1), { count: 1 })) // '1 header'
-    expect(text).toContain(t(countKey('server.enabledWorkspaces', 1), { count: 1 })) // 'On in 1 workspace'
-    // the never-enabled server reports the off-by-default state
-    expect(text).toContain(en['server.notEnabled'])
-    // definition details (UX-04): command + args line and http url
-    expect(text).toContain('node a.js --x')
-    expect(text).toContain('http://x/mcp')
-    // header names ride the badge rows
-    expect(text).toContain('Authorization')
-    expect(text).toContain('AUTH')
-    // workspace rows: ENABLED workspaces only — ws-b enables fixture, so ONLY
-    // that row renders; ws-a (default off) stays collapsed away.
-    expect(text).toContain('beta')
-    expect(text).not.toContain('alpha')
-    // No per-row state word: the row is the name plus the switch, nothing else
-    // (row.on/row.off are retired).
-    const enabledRow = mounted.host.querySelector('.' + styles.wsRow)
-    expect(enabledRow?.textContent).toBe('beta')
-    expect(text).toContain(t('row.manage', { count: 1 }))
-    // a card with zero enabled workspaces lists NOTHING: the OFF switches are
-    // the state, and the old summary line (row.allOffDefault) is retired — the
-    // only row in the whole section is the first card's enabled 'beta'.
-    expect(mounted.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(1)
-    // no describe has run: badges are neutral 'unknown', not 'Not configured'
-    expect(text).toContain(en['secret.unknown'])
-    expect(text).not.toContain(en['secret.unset'])
-    expect(text).not.toContain(en['secret.clear'])
+    buttonByText(mounted.host, t('empty.importClipboard'))!.click()
+    await flush()
+    expect(dialog().querySelector('textarea')).not.toBeNull()
   })
 
-  it('pluralizes multi-count summaries and renders configured/unset badge states from describe views', async () => {
-    const doc: McpScopeDoc = {
-      servers: [stdioServer('multi', ['TOK', 'KEY2'])],
-      overrides: overridesOf({ 'ws-a': ['multi'], 'ws-b': ['multi'] }),
-    }
+
+  it('keeps focus inside the auto-opened import dialog instead of the name field behind it', async () => {
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, t('empty.importClipboard'))!.click()
+    await flush()
+    const modal = dialog()
+    expect(modal.contains(document.activeElement)).toBe(true)
+    // Tab must remain trapped even if focus was somehow moved outside.
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    document.body.focus()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    await flush()
+    expect(modal.contains(document.activeElement)).toBe(true)
+  })
+
+  it('renders one scannable row per server with status, scope and tools', async () => {
     const mounted = mountSection(
-      doc,
+      {
+        servers: [stdioServer('alpha'), stdioServer('beta')],
+        overrides: overridesOf({ 'ws-a': ['alpha'], 'ws-b': ['alpha'] }),
+      },
       {},
-      {
-        credentials: { TOK: view(true), KEY2: view(false) },
-        wsItems: [
-          { workspaceId: 'ws-a', title: 'alpha' },
-          { workspaceId: 'ws-b', title: 'beta' },
-        ],
-      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
     )
     await flush()
-    const text = mounted.text()
-    expect(text).toContain(t(countKey('server.envKeys', 2), { count: 2 })) // '2 env keys'
-    expect(text).toContain(t(countKey('server.enabledWorkspaces', 2), { count: 2 })) // 'On in 2 workspaces'
-    // both enabled workspaces are the collapsed card's exception rows
-    expect(text).toContain('alpha')
-    expect(text).toContain('beta')
-    expect(text).toContain(en['secret.configured'])
-    expect(text).toContain(en['secret.unset'])
-    expect(text).toContain(en['secret.clear']) // only the configured ref is clearable
+    const alpha = serverRow(mounted, 'alpha')
+    expect(alpha.textContent).toContain('alpha')
+    expect(alpha.textContent).toContain(t('server.scopeCount', { enabled: 2, total: 3 }))
+    expect(alpha.textContent).toContain(t('status.tools', { count: 2 }))
+    expect(alpha.textContent).toContain(t('status.connected'))
+    const beta = serverRow(mounted, 'beta')
+    expect(beta.textContent).toContain(t('server.unusedTag'))
   })
 
-  it('surfaces the workspace-list loading and error phases instead of "no workspaces"', async () => {
-    const doc: McpScopeDoc = { servers: [stdioServer('solo', ['TOK'])], overrides: {} }
-    const loading = mountSection(doc, {}, { wsState: 'loading', wsPhase: 'pending', wsItems: [] })
-    await flush()
-    expect(loading.text()).toContain(en['workspaces.loading'])
-    expect(loading.text()).not.toContain(en['workspaces.empty'])
-    // The workspace list is not ready, so neither enablement summary renders.
-    expect(loading.text()).not.toContain(en['server.notEnabled'])
-    expect(loading.text()).not.toContain(t(countKey('server.enabledWorkspaces', 1), { count: 1 }))
-    loading.unmount()
-    const failed = mountSection(doc, {}, { wsState: 'error', wsPhase: 'ready', wsItems: [] })
-    await flush()
-    expect(failed.text()).toContain(en['workspaces.error'])
-    expect(failed.text()).not.toContain(en['workspaces.empty'])
-    expect(failed.text()).not.toContain(en['server.notEnabled'])
-    // settled list with zero workspaces is the only "empty" case
-    failed.unmount()
-    const empty = mountSection(doc, {}, { wsState: 'idle', wsPhase: 'ready', wsItems: [] })
-    await flush()
-    expect(empty.text()).toContain(en['workspaces.empty'])
-  })
-
-  it('shows a per-card role="alert" banner when a card action fails (not a section-top notice)', async () => {
-    const doc: McpScopeDoc = {
-      servers: [stdioServer('a', ['TOK'])],
-      // ws-1 explicitly ENABLES 'a', so its row is visible while collapsed
-      overrides: overridesOf({ 'ws-1': ['a'] }),
-    }
+  it('filters by name and by state, and clears the filters', async () => {
+    const servers = ['alpha', 'beta', 'gamma', 'delta', 'epsilon'].map((name) => stdioServer(name))
     const mounted = mountSection(
-      doc,
-      { toggleWorkspace: CONFLICT },
-      { wsItems: [{ workspaceId: 'ws-1', title: 'work' }] },
+      { servers, overrides: overridesOf({ 'ws-a': ['alpha'] }) },
+      {},
+      { wsItems: WS, runtime: runtimeWith('alpha') },
     )
     await flush()
-    expect(mounted.text()).not.toContain(en['error.conflict'])
-    // The card's first switch is the global enable toggle; this test targets
-    // the per-workspace row by id.
-    const switchInput = mounted.host.querySelector<HTMLInputElement>('#mcp-scope-a-ws-1')
-    if (switchInput === null) throw new Error('missing workspace switch')
-    switchInput.click()
+    const search = mounted.host.querySelector<HTMLInputElement>('input[type="search"]')!
+    setValue(search, 'bet')
     await flush()
-    const alerts = Array.from(mounted.host.querySelectorAll('[role="alert"]'))
-    expect(alerts.length).toBe(1)
-    expect(alerts[0]!.textContent).toContain(en['error.conflict'])
-  })
-
-  it('toggles a server globally and renders the disabled state from the document', async () => {
-    const calls: { name: string; enabled: boolean }[] = []
-    const doc: McpScopeDoc = {
-      servers: [stdioServer('a')],
-      overrides: {},
-      disabled: { a: true },
+    expect(mounted.host.querySelector('[data-server="beta"]')).not.toBeNull()
+    expect(mounted.host.querySelector('[data-server="alpha"]')).toBeNull()
+    setValue(search, '')
+    await flush()
+    const unused = buttonsOf(mounted.host).find((button) => button.textContent === t('filter.unused'))!
+    unused.click()
+    await flush()
+    expect(mounted.host.querySelector('[data-server="alpha"]')).toBeNull()
+    expect(mounted.host.querySelector('[data-server="beta"]')).not.toBeNull()
+    const clear = buttonsOf(mounted.host).find((button) => button.textContent === t('empty.clearFilter'))
+    if (clear !== undefined) {
+      clear.click()
+      await flush()
     }
-    const mounted = mountSection(doc, {
-      setServerEnabled: async (name, enabled) => {
-        calls.push({ name, enabled })
-        return { ok: true }
-      },
-    })
+  })
+})
+
+describe('server detail', () => {
+  it('opens the detail, shows scope/tools/config/availability and returns to the list', async () => {
+    const mounted = mountSection(
+      { servers: [httpServer('github', 'https://example.test/mcp', [{ name: 'Authorization', ref: 'TOKEN' }])], overrides: {} },
+      {},
+      { wsItems: WS, credentials: { TOKEN: view(true) }, runtime: runtimeWith('github') },
+    )
     await flush()
-    expect(mounted.text()).toContain(en['server.disabledTag'])
-    const toggle = mounted.host.querySelector<HTMLInputElement>('#mcp-scope-enable-a')
-    if (toggle === null) throw new Error('missing enable toggle')
-    expect(toggle.checked).toBe(false)
-    toggle.click()
+    await openServer(mounted, 'github')
+    const detail = mounted.host.querySelector('[data-mcp-server-detail="github"]')!
+    expect(detail.textContent).toContain(t('server.workspacesTitle'))
+    expect(detail.textContent).toContain(t('server.configTitle'))
+    expect(detail.textContent).toContain(t('server.availabilityTitle'))
+    expect(detail.textContent).toContain('https://example.test/mcp')
+    expect(detail.textContent).toContain(t('secret.configured'))
+    const back = buttonsOf(detail).find((button) => (button.textContent ?? '').includes(t('server.back')))!
+    back.click()
     await flush()
-    expect(calls).toEqual([{ name: 'a', enabled: true }])
+    expect(mounted.host.querySelector('[data-server="github"]')).not.toBeNull()
   })
 
-  it('batches per-workspace switches through the card\'s all-on/all-off controls', async () => {
-    const calls: { enabled: boolean; ids: readonly string[] }[] = []
-    const doc: McpScopeDoc = { servers: [stdioServer('a')], overrides: {} }
+
+  it('moves focus to the detail heading and back to the originating row', async () => {
     const mounted = mountSection(
-      doc,
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {},
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    expect(document.activeElement?.getAttribute('data-mcp-detail-title')).not.toBeNull()
+    buttonByText(detail, t('server.back'))!.click()
+    await flush()
+    expect(document.activeElement).toBe(serverRow(mounted, 'alpha').querySelector('button'))
+  })
+
+  it('toggles a workspace optimistically, reports the write, and offers Undo', async () => {
+    const calls: unknown[][] = []
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
       {
-        toggleWorkspaces: async (_name, enabled, ids) => {
-          calls.push({ enabled, ids })
+        toggleWorkspace: async (...args) => {
+          calls.push(args)
           return { ok: true }
         },
       },
-      {
-        wsItems: [
-          { workspaceId: 'ws-1', title: 'one' },
-          { workspaceId: 'ws-2', title: 'two' },
-        ],
-      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
     )
     await flush()
-    // The bulk switches live in the expanded (all-rows) view.
-    buttonByText(mounted.host, t('row.manage', { count: 0 }))!.click()
+    const detail = await openServer(mounted, 'alpha')
+    const switchInput = detail.querySelector<HTMLInputElement>('input[aria-label="' + t('server.workspacesTitle') + ': beta"]')!
+    expect(switchInput.checked).toBe(false)
+    switchInput.click()
     await flush()
-    buttonByText(mounted.host, en['row.allOn'])!.click()
-    await flush()
-    buttonByText(mounted.host, en['row.allOff'])!.click()
+    expect(calls).toEqual([['ws-b', 'alpha', true]])
+    expect(detail.querySelector<HTMLInputElement>('input[aria-label="' + t('server.workspacesTitle') + ': beta"]')!.checked).toBe(true)
+    expect(mounted.text()).toContain(t('toast.scopeOn', { server: 'alpha', workspace: 'beta' }))
+    const undo = buttonByText(mounted.host, t('toast.undo'))!
+    undo.click()
     await flush()
     expect(calls).toEqual([
-      { enabled: true, ids: ['ws-1', 'ws-2'] },
-      { enabled: false, ids: ['ws-1', 'ws-2'] },
+      ['ws-b', 'alpha', true],
+      ['ws-b', 'alpha', false],
     ])
   })
 
-  it('filters the card list by server name', async () => {
-    const doc: McpScopeDoc = {
-      servers: [stdioServer('alpha'), stdioServer('beta')],
-      overrides: {},
-    }
-    const mounted = mountSection(doc)
-    await flush()
-    const search = mounted.host.querySelector<HTMLInputElement>('input[type="search"]')
-    if (search === null) throw new Error('missing search input')
-    setValue(search, 'alp')
-    await flush()
-    expect(mounted.text()).toContain('alpha')
-    expect(mounted.text()).not.toContain('beta')
-    setValue(search, 'nope')
-    await flush()
-    expect(mounted.text()).toContain(t('search.none', { query: 'nope' }))
-  })
 
-  it('guards unsaved form changes behind an inline discard confirmation', async () => {
-    const mounted = mountSection({ servers: [], overrides: {} })
-    await flush()
-    buttonByText(mounted.host, en['add.add'])!.click()
-    await flush()
-    // A pristine form closes directly.
-    buttonByText(mounted.host, en['action.cancel'])!.click()
-    await flush()
-    expect(mounted.host.querySelector('form')).toBeNull()
-
-    buttonByText(mounted.host, en['add.add'])!.click()
-    await flush()
-    setValue(inputById(mounted.host, 'mcp-scope-add-name'), 'typed')
-    await flush()
-    buttonByText(mounted.host, en['action.cancel'])!.click()
-    await flush()
-    // Dirty: the form stays and asks.
-    expect(mounted.host.querySelector('form')).not.toBeNull()
-    expect(mounted.text()).toContain(en['dirty.confirm'])
-    buttonByText(mounted.host, en['dirty.keepEditing'])!.click()
-    await flush()
-    expect(mounted.host.querySelector('form')).not.toBeNull()
-    expect(mounted.text()).not.toContain(en['dirty.confirm'])
-    buttonByText(mounted.host, en['action.cancel'])!.click()
-    await flush()
-    buttonByText(mounted.host, en['dirty.discard'])!.click()
-    await flush()
-    expect(mounted.host.querySelector('form')).toBeNull()
-  })
-
-  it('imports one server from a pasted JSON snippet into the staged form', async () => {
-    const mounted = mountSection({ servers: [], overrides: {} })
-    await flush()
-    buttonByText(mounted.host, en['add.add'])!.click()
-    await flush()
-    buttonByText(mounted.host, en['add.importJson'])!.click()
-    await flush()
-    const textarea = mounted.host.querySelector<HTMLTextAreaElement>('textarea')
-    if (textarea === null) throw new Error('missing import textarea')
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!
-    setter.call(textarea, JSON.stringify({ mcpServers: { imported: { command: 'node server.js', env: { TOKEN: 's' } } } }))
-    textarea.dispatchEvent(new Event('input', { bubbles: true }))
-    await flush()
-    buttonByText(mounted.host, en['import.parse'])!.click()
-    await flush()
-    expect(inputById(mounted.host, 'mcp-scope-add-name').value).toBe('imported')
-    expect(inputById(mounted.host, 'mcp-scope-add-command').value).toBe('node')
-    const envKey = mounted.host.querySelector<HTMLInputElement>('[aria-label="' + en['add.envKey'] + ' 1"]')
-    expect(envKey?.value).toBe('TOKEN')
-  })
-
-  it('imports a brace-less opencode config section pasted from a real settings file', async () => {
-    const mounted = mountSection({ servers: [], overrides: {} })
-    await flush()
-    buttonByText(mounted.host, en['add.add'])!.click()
-    await flush()
-    buttonByText(mounted.host, en['add.importJson'])!.click()
-    await flush()
-    const textarea = mounted.host.querySelector<HTMLTextAreaElement>('textarea')
-    if (textarea === null) throw new Error('missing import textarea')
-    // The reported paste: an opencode `mcp` section without its outer braces.
-    const section = [
-      '"mcp": {',
-      '  "zotero": { "type": "local", "command": ["/Users/me/.local/bin/zotero-mcp"], "enabled": true },',
-      '  "iMCP": { "type": "local", "command": ["/Applications/iMCP.app/Contents/MacOS/imcp-server"], "enabled": true },',
-      '  "email": { "type": "local", "command": ["uvx", "mcp-email-server", "stdio"], "enabled": true }',
-      '}',
-    ].join('\n')
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!
-    setter.call(textarea, section)
-    textarea.dispatchEvent(new Event('input', { bubbles: true }))
-    await flush()
-    buttonByText(mounted.host, en['import.parse'])!.click()
-    await flush()
-    expect(inputById(mounted.host, 'mcp-scope-add-name').value).toBe('zotero')
-    expect(inputById(mounted.host, 'mcp-scope-add-command').value).toBe('/Users/me/.local/bin/zotero-mcp')
-    expect(mounted.text()).toContain(t('import.multiple', { name: 'zotero', others: 'iMCP, email' }))
-  })
-
-  it('flags two header rows that collapse onto the same credential ref', () => {
-    const draft = {
-      ...EMPTY_DRAFT,
-      name: 'srv',
-      transport: 'streamable-http' as const,
-      url: 'https://x/mcp',
-      headers: [
-        { name: 'X-Api-Key', ref: 'X_API_KEY', value: '' },
-        { name: 'X_Api_Key', ref: 'X_API_KEY', value: '' },
-        { name: '', ref: '', value: '' },
-      ],
-    }
-    expect(evaluateDraft(draft, []).headers).toEqual([undefined, 'validation.refDuplicate', undefined])
-  })
-
-  it('tells unreadable JSON apart from JSON without a server entry', async () => {
-    const mounted = mountSection({ servers: [], overrides: {} })
-    await flush()
-    buttonByText(mounted.host, en['add.add'])!.click()
-    await flush()
-    buttonByText(mounted.host, en['add.importJson'])!.click()
-    await flush()
-    const textarea = mounted.host.querySelector<HTMLTextAreaElement>('textarea')
-    if (textarea === null) throw new Error('missing import textarea')
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!
-    setter.call(textarea, '{nope')
-    textarea.dispatchEvent(new Event('input', { bubbles: true }))
-    await flush()
-    buttonByText(mounted.host, en['import.parse'])!.click()
-    await flush()
-    expect(mounted.text()).toContain(t('import.error'))
-    expect(mounted.text()).not.toContain(t('import.errorNoServer'))
-    setter.call(textarea, '{"hello":1}')
-    textarea.dispatchEvent(new Event('input', { bubbles: true }))
-    await flush()
-    buttonByText(mounted.host, en['import.parse'])!.click()
-    await flush()
-    expect(mounted.text()).toContain(t('import.errorNoServer'))
-  })
-
-  it('caps the "also found" note and reports how many names are left out', async () => {
-    const servers = Array.from({ length: 12 }, (_, index) => ({ command: 'node s' + index }))
-    const section = JSON.stringify({ mcpServers: Object.fromEntries(servers.map((s, i) => ['s' + i, s])) })
-    const mounted = mountSection({ servers: [], overrides: {} })
-    await flush()
-    buttonByText(mounted.host, en['add.add'])!.click()
-    await flush()
-    buttonByText(mounted.host, en['add.importJson'])!.click()
-    await flush()
-    const textarea = mounted.host.querySelector<HTMLTextAreaElement>('textarea')
-    if (textarea === null) throw new Error('missing import textarea')
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!
-    setter.call(textarea, section)
-    textarea.dispatchEvent(new Event('input', { bubbles: true }))
-    await flush()
-    buttonByText(mounted.host, en['import.parse'])!.click()
-    await flush()
-    const note = t('import.multiple', { name: 's0', others: 's1, s2, s3, s4, s5, s6, s7, s8' + t('import.more', { count: '3' }) })
-    expect(mounted.text()).toContain(note)
-    expect(mounted.text()).not.toContain('s11')
-  })
-
-  it('renders the runtime status row, drives connect and discloses the tool list', async () => {
-    const calls: string[] = []
-    const runtime: RuntimeSnapshot = {
-      phase: 'ready',
-      at: 1,
-      servers: {
-        a: {
-          name: 'a',
-          state: 'failed',
-          attempts: 3,
-          maxAttempts: 10,
-          toolCount: 2,
-          error: { code: 'connection-failed', message: 'boom' },
-        },
-      },
-    }
+  it('renders the global kill switch consistently in list, detail and workspace views', async () => {
+    const calls: unknown[][] = []
     const mounted = mountSection(
-      { servers: [stdioServer('a')], overrides: {} },
       {
-        connectServer: async (name) => {
-          calls.push('connect:' + name)
-          return {}
-        },
-        loadTools: async (name) => {
-          calls.push('tools:' + name)
-          return {
-            tools: [{ publicName: 'mcp__a__t', rawName: 't', description: 'does things' }],
-            truncated: true,
-            total: 2000,
-          }
-        },
+        servers: [stdioServer('alpha')],
+        overrides: overridesOf({ 'ws-a': ['alpha'] }),
+        disabled: { alpha: true },
       },
-      { runtime },
-    )
-    await flush()
-    expect(mounted.text()).toContain(en['status.failed'])
-    // The host message never crosses the wire; the card localizes the code.
-    expect(mounted.text()).toContain(en['runtime.error.connection-failed'])
-    expect(mounted.text()).not.toContain('boom')
-    buttonByText(mounted.host, en['action.connect'])!.click()
-    await flush()
-    expect(calls).toContain('connect:a')
-    buttonByText(mounted.host, en['tools.title'] + ' (2)')!.click()
-    await flush()
-    expect(calls).toContain('tools:a')
-    expect(mounted.text()).toContain('does things')
-    // Truncation reports the TRUE total, not the displayed count.
-    expect(mounted.text()).toContain(t('tools.truncated', { count: 1, total: 2000 }))
-  })
-
-  it('never reads runtime state through Object.prototype for prototype-name servers', async () => {
-    const mounted = mountSection(
-      { servers: [stdioServer('toString')], overrides: {} },
-      {},
-      { runtime: { phase: 'unavailable', servers: {}, error: 'offline' } },
-    )
-    await flush()
-    // Own-property lookup only: an inherited member must not look like a view.
-    expect(mounted.text()).toContain(en['runtime.unavailable'])
-    expect(buttonByText(mounted.host, en['action.connect'])).toBeUndefined()
-    expect(buttonByText(mounted.host, en['action.test'])).toBeUndefined()
-  })
-
-  it('reveals an out-of-range timeout instead of leaving Save dead', async () => {
-    const mounted = mountSection({ servers: [], overrides: {} })
-    await flush()
-    buttonByText(mounted.host, en['add.add'])!.click()
-    await flush()
-    setValue(inputById(mounted.host, 'mcp-scope-add-name'), 'ok')
-    setValue(inputById(mounted.host, 'mcp-scope-add-command'), 'node')
-    setValue(inputById(mounted.host, 'mcp-scope-add-timeout'), '500')
-    await flush()
-    expect(mounted.text()).toContain(en['validation.timeout'])
-    const save = buttonByText(mounted.host, en['action.save']) as HTMLButtonElement
-    expect(save.disabled).toBe(true)
-  })
-
-  it('degrades to a hint when the runtime channel is unavailable', async () => {
-    const mounted = mountSection(
-      { servers: [stdioServer('a')], overrides: {} },
-      {},
-      { runtime: { phase: 'unavailable', servers: {}, error: 'offline' } },
-    )
-    await flush()
-    expect(mounted.text()).toContain(en['runtime.unavailable'])
-    expect(mounted.text()).toContain(en['status.unknown'])
-  })
-
-  it('wires a real form: Enter submits through onSubmit, non-submit buttons stay type=button', async () => {
-    const mounted = mountSection({ servers: [], overrides: {} })
-    await flush()
-    buttonByText(mounted.host, en['add.add'])!.click()
-    await flush()
-    const form = mounted.host.querySelector('form')
-    if (form === null) throw new Error('add form must be a real <form>')
-    const buttons = Array.from(form.querySelectorAll('button'))
-    const save = buttonByText(mounted.host, en['action.save'])
-    const cancel = buttonByText(mounted.host, en['action.cancel'])
-    if (save === undefined || cancel === undefined) throw new Error('missing save/cancel')
-    expect(save.getAttribute('type')).toBe('submit')
-    expect(cancel.getAttribute('type')).toBe('button')
-    expect(buttons.every((b) => b.getAttribute('type') !== null)).toBe(true)
-    // autofocus lands on the server-name field
-    expect(document.activeElement?.id).toBe('mcp-scope-add-name')
-  })
-
-  it('announces a successful add near the list and focuses the new card header', async () => {
-    const doc: McpScopeDoc = { servers: [], overrides: {} }
-    const mounted = mountSection(doc, {
-      addServer: async (input) => {
-        mounted.live.doc = { servers: [...mounted.live.doc.servers, input.server], overrides: mounted.live.doc.overrides }
-        mounted.live.revision += 1
-        mounted.rerender()
-        return { ok: true }
-      },
-    })
-    await flush()
-    buttonByText(mounted.host, en['add.add'])!.click()
-    await flush()
-    setValue(inputById(mounted.host, 'mcp-scope-add-name'), 'git')
-    setValue(inputById(mounted.host, 'mcp-scope-add-command'), 'git-mcp')
-    // the form is a real <form>: submit event == Enter submission
-    const form = mounted.host.querySelector('form')
-    if (form === null) throw new Error('missing form')
-    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-    await flush()
-    // form closed, success announced with role=status near the list, card present
-    expect(mounted.text()).toContain(t('add.added', { name: 'git' }))
-    const status = mounted.host.querySelector('[role="status"]')
-    expect(status?.textContent).toContain('git')
-    expect(mounted.text()).toContain('git-mcp')
-    expect(buttonByText(mounted.host, en['action.cancel'])).toBeUndefined() // staged form closed
-    expect(document.activeElement?.id).toBe('mcp-scope-card-git')
-  })
-
-  it('keeps the form open with an inline role="alert" failure when a save is refused', async () => {
-    const mounted = mountSection({ servers: [], overrides: {} }, {
-      addServer: CONFLICT,
-    })
-    await flush()
-    buttonByText(mounted.host, en['add.add'])!.click()
-    await flush()
-    setValue(inputById(mounted.host, 'mcp-scope-add-name'), 'git')
-    setValue(inputById(mounted.host, 'mcp-scope-add-command'), 'git-mcp')
-    const save = buttonByText(mounted.host, en['action.save'])
-    if (save === undefined) throw new Error('missing save')
-    save.click()
-    await flush()
-    // form still open with its own alert; no section-top notice anywhere
-    expect(buttonByText(mounted.host, en['action.cancel'])).toBeDefined()
-    const alerts = Array.from(mounted.host.querySelectorAll('[role="alert"]'))
-    expect(alerts.length).toBe(1)
-    expect(alerts[0]!.textContent).toContain(en['error.conflict'])
-    // save button is usable again (not stuck in Saving)
-    expect(buttonByText(mounted.host, en['action.save'])).toBeDefined()
-    expect(mounted.text()).not.toContain(en['state.saving'])
-  })
-
-  it('opens the staged form prefilled from the document for edit and replaces the server on save', async () => {
-    const doc: McpScopeDoc = {
-      servers: [stdioServer('alpha', ['TOK'], { command: 'npx', args: [] })],
-      overrides: overridesOf({ 'ws-1': ['alpha'] }),
-    }
-    const mounted = mountSection(
-      doc,
       {
-        replaceServer: async (oldName, input) => {
-          mounted.live.doc = {
-            servers: mounted.live.doc.servers.map((s) => (s.serverName === oldName ? input.server : s)),
-            overrides: mounted.live.doc.overrides,
-          }
-          mounted.live.revision += 1
-          mounted.rerender()
+        setServerEnabled: async (...args) => {
+          calls.push(args)
           return { ok: true }
         },
       },
-      { wsItems: [{ workspaceId: 'ws-1', title: 'work' }] },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
     )
     await flush()
-    buttonByText(mounted.host, en['server.edit'])!.click()
+    expect(serverRow(mounted, 'alpha').textContent).toContain(t('server.disabledTag'))
+    const detail = await openServer(mounted, 'alpha')
+    const allow = detail.querySelector<HTMLInputElement>('input[aria-label="' + t('server.allowedLabel') + '"]')!
+    expect(allow.checked).toBe(false)
+    expect(detail.textContent).toContain(t('server.disabledNotice'))
+    const scopeSwitch = detail.querySelector<HTMLInputElement>(
+      'input[aria-label="' + t('server.workspacesTitle') + ': alpha"]',
+    )!
+    expect(scopeSwitch.checked).toBe(true)
+    expect(scopeSwitch.disabled).toBe(true)
+    allow.click()
     await flush()
-    expect(mounted.text()).toContain(en['edit.title'])
-    expect(inputById(mounted.host, 'mcp-scope-add-name').value).toBe('alpha')
-    expect(inputById(mounted.host, 'mcp-scope-add-command').value).toBe('npx')
-    setValue(inputById(mounted.host, 'mcp-scope-add-name'), 'alpha2')
-    setValue(inputById(mounted.host, 'mcp-scope-add-command'), 'npx2')
-    const save = buttonByText(mounted.host, en['action.save'])
-    if (save === undefined) throw new Error('missing save')
+    expect(calls).toEqual([['alpha', true]])
+    await openWorkspacesTab(mounted)
+    mounted.host.querySelector<HTMLElement>('[data-workspace="ws-a"] button')!.click()
+    await flush()
+    const workspaceDetail = mounted.host.querySelector('[data-mcp-workspace-detail="ws-a"]')!
+    expect(workspaceDetail.textContent).toContain(t('workspace.disabledServer'))
+    expect(workspaceDetail.querySelector<HTMLInputElement>('input[aria-label="alpha: alpha"]')!.disabled).toBe(true)
+  })
+
+  it('toggles availability immediately and exposes the disabled notice', async () => {
+    const calls: unknown[][] = []
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {
+        setServerEnabled: async (...args) => {
+          calls.push(args)
+          return { ok: true }
+        },
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    const allow = detail.querySelector<HTMLInputElement>('input[aria-label="' + t('server.allowedLabel') + '"]')!
+    expect(allow.checked).toBe(true)
+    allow.click()
+    await flush()
+    expect(calls).toEqual([['alpha', false]])
+    expect(mounted.text()).toContain(t('toast.allowOff', { server: 'alpha' }))
+  })
+
+  it('batches all visible workspaces through one write', async () => {
+    const calls: unknown[][] = []
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {
+        toggleWorkspaces: async (...args) => {
+          calls.push(args)
+          return { ok: true }
+        },
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    buttonByText(detail, t('row.allOn'))!.click()
+    await flush()
+    expect(calls).toEqual([['alpha', true, WS.map((workspace) => workspace.workspaceId)]])
+    expect(mounted.text()).toContain(t('toast.scopeBulk', { server: 'alpha', count: 3 }))
+  })
+
+
+  it('restores the exact pre-batch values when undoing a mixed bulk toggle', async () => {
+    const calls: unknown[][] = []
+    const mounted = mountSection(
+      {
+        servers: [stdioServer('alpha')],
+        overrides: overridesOf({ 'ws-a': ['alpha'] }),
+      },
+      {
+        toggleWorkspaces: async (...args) => {
+          calls.push(args)
+          return { ok: true }
+        },
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    buttonByText(detail, t('row.allOn'))!.click()
+    await flush()
+    expect(calls[0]).toEqual(['alpha', true, ['ws-a', 'ws-b', 'ws-c']])
+    buttonByText(mounted.host, t('toast.undo'))!.click()
+    await flush()
+    expect(calls.slice(1)).toEqual([
+      ['alpha', true, ['ws-a']],
+      ['alpha', false, ['ws-b', 'ws-c']],
+    ])
+    expect(mounted.text()).toContain(t('toast.undone'))
+  })
+
+
+  it('keeps a failed connection test visible and lets Retry run it again', async () => {
+    let calls = 0
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {
+        testServer: async () => {
+          calls += 1
+          return calls === 1
+            ? { ok: false, code: 'timeout', error: 'timed out' }
+            : { ok: true, toolCount: 2 }
+        },
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    buttonByText(detail, t('action.test'))!.click()
+    await flush()
+    expect(detail.textContent).toContain(t('runtime.error.timeout'))
+    buttonByText(detail, t('action.retry'))!.click()
+    await flush()
+    expect(calls).toBe(2)
+    expect(detail.textContent).toContain(t('server.testNote', { count: 2 }))
+  })
+
+  it('keeps runtime actions available and discloses tools with aria-expanded', async () => {
+    const calls: string[] = []
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {
+        loadTools: async (name) => {
+          calls.push(name)
+          return {
+            tools: [
+              { publicName: 'mcp__alpha__search', rawName: 'search', description: 'Search issues' },
+              { publicName: 'mcp__alpha__read', rawName: 'read', description: 'Read an issue' },
+            ],
+            truncated: false,
+            total: 2,
+          }
+        },
+        testServer: async () => ({ ok: true, toolCount: 2 }),
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    const toolsButton = buttonByText(detail, t('tools.title'))!
+    expect(toolsButton.getAttribute('aria-expanded')).toBe('false')
+    toolsButton.click()
+    await flush()
+    expect(toolsButton.getAttribute('aria-expanded')).toBe('true')
+    expect(calls).toEqual(['alpha'])
+    expect(detail.textContent).toContain('search')
+    expect(detail.textContent).toContain('Search issues')
+  })
+
+  it('keeps a failed action visible and offers retry instead of auto-dismissing', async () => {
+    let attempts = 0
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {
+        removeServer: async () => {
+          attempts += 1
+          return { ok: false, reason: 'conflict' }
+        },
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    buttonByText(detail, t('server.remove'))!.click()
+    await flush()
+    buttonByText(dialog(), t('server.removeAction'))!.click()
+    await flush()
+    expect(attempts).toBe(1)
+    expect(mounted.text()).toContain(t('error.conflict'))
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    expect(mounted.text()).toContain(t('error.conflict'))
+    expect(buttonByText(mounted.host, t('action.retry'))).toBeDefined()
+  })
+
+  it('confirms removal with specific scope and credential consequences', async () => {
+    const mounted = mountSection(
+      {
+        servers: [stdioServer('alpha', ['TOKEN']), stdioServer('beta')],
+        overrides: overridesOf({ 'ws-a': ['alpha'], 'ws-b': ['alpha'] }),
+      },
+      {},
+      { wsItems: WS, credentials: { TOKEN: view(true) }, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    buttonByText(detail, t('server.remove'))!.click()
+    await flush()
+    const text = dialog().textContent ?? ''
+    expect(text).toContain(t('server.removeTitle', { name: 'alpha' }))
+    expect(text).toContain(t('server.removeBody', { count: 2, refs: 'TOKEN' }))
+    const cancel = buttonByText(dialog(), t('server.keep'))!
+    cancel.click()
+    await flush()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+
+  it('focuses the safe action and closes the confirmation on Escape', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {},
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    buttonByText(detail, t('server.remove'))!.click()
+    await flush()
+    expect((document.activeElement?.textContent ?? '').includes(t('server.keep'))).toBe(true)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flush()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('warns that a cleared credential is shared with other servers', async () => {
+    const calls: string[] = []
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha', ['TOKEN']), stdioServer('beta', ['TOKEN'])], overrides: {} },
+      {
+        unsetCredential: async (ref) => {
+          calls.push(ref)
+          return { ok: true }
+        },
+      },
+      { wsItems: WS, credentials: { TOKEN: view(true) }, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    buttonByText(detail, t('server.clearCredential'))!.click()
+    await flush()
+    const text = dialog().textContent ?? ''
+    expect(text).toContain(t('server.clearConfirmTitle', { ref: 'TOKEN' }))
+    expect(text).toContain('beta')
+    buttonByText(dialog(), t('server.clearConfirmAction'))!.click()
+    await flush()
+    expect(calls).toEqual(['TOKEN'])
+    expect(mounted.text()).toContain(t('toast.cleared', { ref: 'TOKEN' }))
+  })
+})
+
+describe('workspaces view', () => {
+  it('lists workspaces and toggles one server from the workspace detail', async () => {
+    const calls: unknown[][] = []
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha'), stdioServer('beta')], overrides: {} },
+      {
+        toggleWorkspace: async (...args) => {
+          calls.push(args)
+          return { ok: true }
+        },
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    await openWorkspacesTab(mounted)
+    expect(mounted.host.querySelector('[data-workspace="ws-a"]')).not.toBeNull()
+    mounted.host.querySelector<HTMLElement>('[data-workspace="ws-a"] button')!.click()
+    await flush()
+    const detail = mounted.host.querySelector('[data-mcp-workspace-detail="ws-a"]')!
+    const switchInput = detail.querySelector<HTMLInputElement>('input[aria-label="alpha: alpha"]')!
+    switchInput.click()
+    await flush()
+    expect(calls).toEqual([['ws-a', 'alpha', true]])
+  })
+
+  it('batches every eligible server for one workspace through one write', async () => {
+    const calls: unknown[][] = []
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha'), stdioServer('beta'), stdioServer('gamma')], overrides: { 'ws-b': { gamma: true } } },
+      {
+        toggleWorkspaceServers: async (...args) => {
+          calls.push(args)
+          return { ok: true }
+        },
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    await openWorkspacesTab(mounted)
+    mounted.host.querySelector<HTMLElement>('[data-workspace="ws-a"] button')!.click()
+    await flush()
+    const detail = mounted.host.querySelector('[data-mcp-workspace-detail="ws-a"]')!
+    buttonByText(detail, t('row.allOn'))!.click()
+    await flush()
+    expect(calls).toEqual([['ws-a', ['alpha', 'beta', 'gamma'], true]])
+    expect(mounted.text()).toContain(t('toast.workspaceBulk', { count: 3, workspace: 'alpha' }))
+  })
+})
+
+describe('editor', () => {
+  it('keeps Save enabled and reveals the validation summary instead of failing silently', async () => {
+    const calls: ServerSaveInput[] = []
+    const mounted = mountSection(
+      { servers: [], overrides: {} },
+      {
+        addServer: async (input) => {
+          calls.push(input)
+          return { ok: true }
+        },
+      },
+    )
+    await flush()
+    buttonByText(mounted.host, t('add.add'))!.click()
+    await flush()
+    const save = buttonByText(mounted.host, t('editor.saveAndTest'))!
+    expect(save.disabled).toBe(false)
     save.click()
     await flush()
-    expect(mounted.text()).toContain(t('edit.saved', { name: 'alpha2' }))
-    expect(mounted.text()).toContain('npx2')
-    expect(mounted.live.doc.servers[0]?.serverName).toBe('alpha2')
-    expect(document.activeElement?.id).toBe('mcp-scope-card-alpha2')
+    expect(mounted.text()).toContain(t('editor.errorMany', { count: 2 }))
+    expect(calls).toHaveLength(0)
+    expect(document.activeElement?.id).toBe('mcp-scope-editor-name')
   })
 
-  it("refreshes only the clicked card's server and reports a rejection inline", async () => {
-    const calls: ({ silent?: boolean; server?: string } | undefined)[] = []
-    let fail = false
-    let release = (): void => {}
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const mounted = mountSection(
-      { servers: [stdioServer('a'), httpServer('b', 'http://x/mcp', [])], overrides: {} },
+  it('validates, saves, navigates to the detail and auto-tests the new server', async () => {
+    const added: ServerSaveInput[] = []
+    const tested: string[] = []
+    let mounted!: Mounted
+    mounted = mountSection(
+      { servers: [], overrides: {} },
       {
-        refreshRuntime: async (options) => {
-          calls.push(options)
-          if (options?.server === 'a') await gate
-          if (fail) throw new Error('runtime route is not mounted at this origin (HTTP 404)')
+        addServer: async (input) => {
+          added.push(input)
+          // The real controller publishes the new document before the section
+          // navigates; mirror that here so the detail is not misread as stale.
+          mounted.live.doc = {
+            servers: [...mounted.live.doc.servers, input.server],
+            overrides: mounted.live.doc.overrides,
+            disabled: mounted.live.doc.disabled,
+          }
+          return { ok: true }
+        },
+        testServer: async (name) => {
+          tested.push(name)
+          return { ok: true, toolCount: 2 }
         },
       },
+      { wsItems: WS },
     )
     await flush()
-    const refreshButton = (name: string): HTMLButtonElement => {
-      const button = mounted.host.querySelector<HTMLButtonElement>(
-        `button[aria-label="${en['runtime.refresh']}: ${name}"]`,
-      )
-      if (button === null) throw new Error(`missing refresh button for ${name}`)
-      return button
-    }
-    // Every card carries its own refresh affordance; the mount pass was full.
-    expect(refreshButton('a')).toBeDefined()
-    expect(refreshButton('b')).toBeDefined()
-    expect(calls.filter((options) => options?.server !== undefined)).toEqual([])
-
-    refreshButton('a').click()
+    buttonByText(mounted.host, t('add.add'))!.click()
     await flush()
-    // Exactly one request, scoped to the clicked server (never the whole table).
-    expect(calls.filter((options) => options?.server !== undefined)).toEqual([{ server: 'a', silent: true }])
-    expect(refreshButton('a').disabled).toBe(true)
-    expect(refreshButton('a').className).toContain(styles.cardRefreshBusy)
-    release()
+    setValue(document.getElementById('mcp-scope-editor-name') as HTMLInputElement, 'github')
+    setValue(document.getElementById('mcp-scope-editor-command') as HTMLInputElement, 'npx')
+    buttonByText(mounted.host, t('editor.saveAndTest'))!.click()
     await flush()
-    expect(refreshButton('a').disabled).toBe(false)
-    expect(refreshButton('a').className).not.toContain(styles.cardRefreshBusy)
-
-    // A rejection is owned by the card: localized line, host detail in title.
-    fail = true
-    refreshButton('a').click()
-    await flush()
-    const line = Array.from(mounted.host.querySelectorAll<HTMLParagraphElement>('p[title]')).find(
-      (node) => node.textContent === en['runtime.error'],
-    )
-    expect(line?.className).toContain(styles.statusErrorText)
-    expect(line?.getAttribute('title')).toContain('runtime route is not mounted')
+    expect(added).toHaveLength(1)
+    expect(added[0]!.server.serverName).toBe('github')
+    expect(mounted.host.querySelector('[data-mcp-server-detail="github"]')).not.toBeNull()
+    expect(tested).toEqual(['github'])
   })
 
-  it("marks a failed card's reconnect as the primary action and freezes refresh while reconnecting", async () => {
-    const doc: McpScopeDoc = { servers: [stdioServer('a')], overrides: {} }
-    const view = (state: 'failed' | 'reconnecting'): ServerRuntimeView => ({
-      name: 'a',
-      state,
-      attempts: 2,
-      maxAttempts: 5,
-      toolCount: 0,
-    })
-    const failed = mountSection(doc, {}, { runtime: { phase: 'ready', servers: { a: view('failed') } } })
-    await flush()
-    expect(buttonByText(failed.host, en['action.connect'])!.className).toContain(styles.buttonPrimary)
-    failed.unmount()
 
-    const reconnecting = mountSection(doc, {}, {
-      runtime: { phase: 'ready', servers: { a: view('reconnecting') } },
-    })
-    await flush()
-    const refresh = reconnecting.host.querySelector<HTMLButtonElement>(
-      `button[aria-label="${en['runtime.refresh']}: a"]`,
+  it('saving a disabled server definition preserves availability and skips auto-test', async () => {
+    const replaced: unknown[][] = []
+    const tested: string[] = []
+    let mounted!: Mounted
+    mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {}, disabled: { alpha: true } },
+      {
+        replaceServer: async (...args) => {
+          replaced.push(args)
+          mounted.live.doc = {
+            servers: [stdioServer('alpha')],
+            overrides: {},
+            disabled: { alpha: true },
+          }
+          return { ok: true }
+        },
+        testServer: async (name) => {
+          tested.push(name)
+          return { ok: true, toolCount: 0 }
+        },
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
     )
-    expect(refresh!.disabled).toBe(true)
-    expect(reconnecting.text()).toContain(t('status.retry', { attempt: 2, max: 5 }))
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    buttonByText(detail, t('server.edit'))!.click()
+    await flush()
+    buttonByText(mounted.host, t('editor.saveAndTest'))!.click()
+    await flush()
+    expect(replaced).toHaveLength(1)
+    const input = (replaced[0] as [string, ServerSaveInput])[1]
+    expect(input.enabled).toBeUndefined()
+    expect(tested).toEqual([])
   })
 
-  it('shows the attempt counter during a connecting retry and renders no global header refresh', async () => {
-    const doc: McpScopeDoc = { servers: [stdioServer('a'), stdioServer('b')], overrides: {} }
-    const connecting: ServerRuntimeView = {
-      name: 'a',
-      state: 'connecting',
-      attempts: 2,
-      maxAttempts: 5,
-      toolCount: 0,
-    }
-    const mounted = mountSection(doc, {}, { runtime: { phase: 'ready', servers: { a: connecting } } })
+
+  it('saves the HTTP branch with URL, header ref and secret', async () => {
+    const added: ServerSaveInput[] = []
+    const mounted = mountSection(
+      { servers: [], overrides: {} },
+      {
+        addServer: async (input) => {
+          added.push(input)
+          return { ok: true }
+        },
+      },
+      { wsItems: WS },
+    )
     await flush()
-    // The section header no longer offers a global refresh: Add is its only action.
-    const sectionHeader = mounted.host.querySelector('header')
-    expect(sectionHeader).not.toBeNull()
+    buttonByText(mounted.host, t('add.add'))!.click()
+    await flush()
+    document.getElementById('mcp-scope-editor-transport-http')!.click()
+    await flush()
+    setValue(document.getElementById('mcp-scope-editor-name') as HTMLInputElement, 'remote')
+    setValue(document.getElementById('mcp-scope-editor-url') as HTMLInputElement, 'https://example.test/mcp')
+    setValue(
+      document.getElementById('mcp-scope-editor-header-name-0') as HTMLInputElement,
+      'Authorization',
+    )
+    setValue(
+      mounted.host.querySelector<HTMLInputElement>('input[aria-label="' + t('add.secretValueLabel') + ' 1"]')!,
+      'bearer',
+    )
+    buttonByText(mounted.host, t('editor.saveAndTest'))!.click()
+    await flush()
+    expect(added).toHaveLength(1)
+    expect(added[0]!.server).toEqual({
+      serverName: 'remote',
+      transport: 'streamable-http',
+      url: 'https://example.test/mcp',
+      headers: [{ name: 'Authorization', ref: 'AUTHORIZATION' }],
+    })
+    expect(added[0]!.secrets).toEqual([{ ref: 'AUTHORIZATION', value: 'bearer' }])
+  })
+
+  it('imports a single server from a JSON snippet', async () => {
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, t('add.add'))!.click()
+    await flush()
+    buttonByText(mounted.host, t('add.importJson'))!.click()
+    await flush()
+    const textarea = dialog().querySelector('textarea')!
+    setValue(textarea, JSON.stringify({ mcpServers: { github: { command: 'npx', args: ['-y', 'server-github'] } } }))
+    buttonByText(dialog(), t('import.parse'))!.click()
+    await flush()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect((document.getElementById('mcp-scope-editor-name') as HTMLInputElement).value).toBe('github')
+    expect((document.getElementById('mcp-scope-editor-command') as HTMLInputElement).value).toBe('npx')
+  })
+
+
+  it('opens the advanced section and focuses the timeout when that is the first invalid field', async () => {
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, t('add.add'))!.click()
+    await flush()
+    setValue(document.getElementById('mcp-scope-editor-name') as HTMLInputElement, 'github')
+    setValue(document.getElementById('mcp-scope-editor-command') as HTMLInputElement, 'npx')
+    const advanced = buttonByText(mounted.host, t('editor.advanced'))!
+    advanced.click()
+    await flush()
+    setValue(document.getElementById('mcp-scope-editor-timeout') as HTMLInputElement, '1')
+    advanced.click()
+    await flush()
+    expect(advanced.getAttribute('aria-expanded')).toBe('false')
+    buttonByText(mounted.host, t('editor.saveAndTest'))!.click()
+    await flush()
+    expect(advanced.getAttribute('aria-expanded')).toBe('true')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(document.activeElement?.id).toBe('mcp-scope-editor-timeout')
+  })
+
+
+  it('returns focus to the list after discarding the editor', async () => {
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, t('add.add'))!.click()
+    await flush()
+    setValue(document.getElementById('mcp-scope-editor-name') as HTMLInputElement, 'draft')
+    buttonByText(mounted.host, t('action.cancel'))!.click()
+    await flush()
+    buttonByText(dialog(), t('dirty.discard'))!.click()
+    await flush()
+    expect(mounted.host.querySelector('#mcp-scope-editor-name')).toBeNull()
+    expect(document.activeElement?.textContent ?? '').toContain(t('add.add'))
+  })
+
+  it('shows and hides a typed secret value', async () => {
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, t('add.add'))!.click()
+    await flush()
+    const secret = mounted.host.querySelector<HTMLInputElement>('input[aria-label="' + t('add.secretValueLabel') + ' 1"]')!
+    expect(secret.type).toBe('password')
+    buttonsOf(mounted.host)
+      .find((button) => (button.getAttribute('aria-label') ?? '').startsWith(t('editor.showSecret')))!
+      .click()
+    await flush()
+    expect(mounted.host.querySelector<HTMLInputElement>('input[aria-label="' + t('add.secretValueLabel') + ' 1"]')!.type).toBe('text')
+  })
+
+
+  it('restores a persisted draft without secret values', async () => {
+    sessionStorage.setItem(
+      'mcp-scope.draft.v2:add',
+      JSON.stringify({
+        name: 'restored',
+        transport: 'stdio',
+        command: 'node',
+        cwd: '',
+        args: ['server.js'],
+        env: [{ key: 'TOKEN', value: '' }],
+        url: '',
+        headers: [{ name: '', ref: '', value: '' }],
+        enabled: true,
+        timeoutMs: '',
+      }),
+    )
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, t('add.add'))!.click()
+    await flush()
+    expect(mounted.text()).toContain(t('editor.restored'))
+    expect((document.getElementById('mcp-scope-editor-name') as HTMLInputElement).value).toBe('restored')
+    expect(mounted.host.querySelector<HTMLInputElement>('input[aria-label="' + t('add.secretValueLabel') + ' 1"]')!.value).toBe('')
+  })
+
+
+  it('never writes a typed secret into the persisted draft', async () => {
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, t('add.add'))!.click()
+    await flush()
+    setValue(document.getElementById('mcp-scope-editor-name') as HTMLInputElement, 'github')
+    setValue(document.getElementById('mcp-scope-editor-command') as HTMLInputElement, 'node')
+    setValue(
+      mounted.host.querySelector<HTMLInputElement>('input[aria-label="' + t('add.secretValueLabel') + ' 1"]')!,
+      'supersecret',
+    )
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    const raw = sessionStorage.getItem('mcp-scope.draft.v2:add')
+    expect(raw).not.toBeNull()
+    expect(raw).not.toContain('supersecret')
+    const persisted = JSON.parse(raw!) as { command: string; env: { key: string; value: string }[] }
+    expect(persisted.command).toBe('node')
+    expect(persisted.env[0]!.value).toBe('')
+  })
+
+  it('selects one server from a multi-server JSON snippet', async () => {
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, t('add.add'))!.click()
+    await flush()
+    buttonByText(mounted.host, t('add.importJson'))!.click()
+    await flush()
+    setValue(
+      dialog().querySelector('textarea')!,
+      JSON.stringify({
+        mcpServers: {
+          alpha: { command: 'node', args: ['a.js'] },
+          beta: { command: 'node', args: ['b.js'] },
+        },
+      }),
+    )
+    buttonByText(dialog(), t('import.parse'))!.click()
+    await flush()
+    expect(dialog().textContent).toContain(t('editor.importCandidates'))
+    buttonByText(dialog(), t('editor.importUse', { name: 'beta' }))!.click()
+    await flush()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect((document.getElementById('mcp-scope-editor-name') as HTMLInputElement).value).toBe('beta')
+  })
+
+  it('rolls an optimistic toggle back when the write fails', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      { toggleWorkspace: CONFLICT },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    const input = detail.querySelector<HTMLInputElement>(
+      'input[aria-label="' + t('server.workspacesTitle') + ': beta"]',
+    )!
+    input.click()
+    await flush()
     expect(
-      Array.from(sectionHeader!.querySelectorAll('button')).some((button) =>
-        (button.textContent ?? '').includes(en['runtime.refresh']),
-      ),
+      detail.querySelector<HTMLInputElement>(
+        'input[aria-label="' + t('server.workspacesTitle') + ': beta"]',
+      )!.checked,
     ).toBe(false)
-    // An ATTEMPT reports 'connecting', not 'reconnecting' — the counter still names it.
-    expect(mounted.text()).toContain(en['status.connecting'])
-    expect(mounted.text()).toContain(t('status.retry', { attempt: 2, max: 5 }))
-
-    // The counter belongs to retries, not to a healthy generation.
-    mounted.live.runtime = { phase: 'ready', servers: { a: { ...connecting, state: 'connected' } } }
-    mounted.rerender()
-    await flush()
-    expect(mounted.text()).toContain(en['status.connected'])
-    expect(mounted.text()).not.toContain(t('status.retry', { attempt: 2, max: 5 }))
-
-    // Nor to a given-up card: the host counts the attempt that exhausted the
-    // budget, so a counter here would read "attempt 6/5" next to the give-up
-    // line that already names the exhausted budget.
-    mounted.live.runtime = {
-      phase: 'ready',
-      servers: { a: { ...connecting, state: 'failed', attempts: 5, maxAttempts: 5 } },
-    }
-    mounted.rerender()
-    await flush()
-    expect(mounted.text()).toContain(en['status.failed'])
-    expect(mounted.text()).not.toContain(t('status.retry', { attempt: 5, max: 5 }))
+    expect(mounted.text()).toContain(t('error.conflict'))
+    expect(buttonByText(mounted.host, t('action.retry'))).toBeDefined()
   })
 
-  it('keeps the stale views behind one banner and retries the full refresh from it', async () => {
-    const calls: ({ silent?: boolean; server?: string } | undefined)[] = []
-    const doc: McpScopeDoc = { servers: [stdioServer('a')], overrides: {} }
-    const staleView: ServerRuntimeView = {
-      name: 'a',
-      state: 'connected',
-      attempts: 0,
-      maxAttempts: 5,
-      toolCount: 3,
-    }
-    const mounted = mountSection(
-      doc,
-      {
-        refreshRuntime: async (options) => {
-          calls.push(options)
-        },
-      },
-      { runtime: { phase: 'error', at: 9, servers: { a: staleView }, error: 'polls are failing' } },
-    )
-    await flush()
-    expect(mounted.text()).toContain(en['runtime.stale'])
-    expect(mounted.text()).toContain(en['status.connected']) // the kept view still renders
-    expect(mounted.text()).toContain(t('status.tools', { count: 3 }))
-    buttonByText(mounted.host, en['action.retry'])!.click()
-    await flush()
-    // The banner retries the WHOLE snapshot, not one card's view.
-    expect(calls.filter((options) => options?.server === undefined)).toHaveLength(2)
-    expect(calls.filter((options) => options?.server !== undefined)).toHaveLength(0)
-    mounted.unmount()
 
-    // Without a kept view there is nothing stale: no banner, today's message.
-    const empty = mountSection(doc, {}, {
-      runtime: { phase: 'unavailable', servers: {}, error: 'no runtime route' },
-    })
-    await flush()
-    expect(empty.text()).not.toContain(en['runtime.stale'])
-    expect(empty.text()).toContain(en['runtime.unavailable'])
-  })
-
-  it('collapses workspace rows to enabled exceptions, summarizes the default-off state and never writes on expansion', async () => {
-    const writes: string[] = []
+  it('keeps the queue moving after a failed write and clears the saving indicator', async () => {
+    let calls = 0
     const mounted = mountSection(
-      { servers: [stdioServer('a')], overrides: overridesOf({ 'ws-1': ['a'] }) },
+      { servers: [stdioServer('alpha')], overrides: {} },
       {
         toggleWorkspace: async () => {
-          writes.push('toggle')
-          return { ok: true }
-        },
-        toggleWorkspaces: async () => {
-          writes.push('toggleAll')
-          return { ok: true }
-        },
-        setServerEnabled: async () => {
-          writes.push('enabled')
-          return { ok: true }
+          calls += 1
+          return calls === 1 ? { ok: false, reason: 'save-failed' } : { ok: true }
         },
       },
-      {
-        wsItems: [
-          { workspaceId: 'ws-1', title: 'one' },
-          { workspaceId: 'ws-2', title: 'two' },
-        ],
-      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
     )
     await flush()
-    // Default: the ENABLED row only; the default-off row is collapsed away.
-    expect(mounted.text()).toContain('one')
-    expect(mounted.text()).not.toContain('two')
-    buttonByText(mounted.host, t('row.manage', { count: 1 }))!.click()
+    const detail = await openServer(mounted, 'alpha')
+    detail
+      .querySelector<HTMLInputElement>('input[aria-label="' + t('server.workspacesTitle') + ': beta"]')!
+      .click()
+    detail
+      .querySelector<HTMLInputElement>('input[aria-label="' + t('server.workspacesTitle') + ': gamma"]')!
+      .click()
     await flush()
-    // Expanded: ALL rows + the bulk switches, and no default-off note line: the
-    // OFF switches carry that state (server.defaultOff is retired).
-    expect(mounted.text()).toContain('two')
-    // No state word anywhere: the rows are names plus switches.
-    expect(Array.from(mounted.host.querySelectorAll('.' + styles.wsRow)).map((row) => row.textContent))
-      .toEqual(['one', 'two'])
-    expect(buttonByText(mounted.host, en['row.allOn'])).toBeDefined()
-    expect(buttonByText(mounted.host, en['row.allOff'])).toBeDefined()
-    expect(writes).toEqual([]) // expansion is local UI state, not a settings write
-    buttonByText(mounted.host, t('row.manageHide', { count: 1 }))!.click()
-    await flush()
-    expect(mounted.text()).not.toContain('two')
-    expect(writes).toEqual([])
-    mounted.unmount()
-
-    // Zero enabled workspaces: no rows and no summary line either.
-    const none = mountSection(
-      { servers: [stdioServer('a')], overrides: {} },
-      {},
-      {
-        wsItems: [
-          { workspaceId: 'ws-1', title: 'one' },
-          { workspaceId: 'ws-2', title: 'two' },
-        ],
-      },
-    )
-    await flush()
-    expect(none.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(0)
-    // ...and nothing stands in for them: no hint line in that card at all.
-    expect(none.host.querySelectorAll('.' + styles.hint)).toHaveLength(0)
-    expect(none.text()).not.toContain('one')
-    expect(none.text()).not.toContain('two')
+    expect(calls).toBe(2)
+    expect(mounted.text()).toContain(t('error.saveFailed'))
+    expect(mounted.text()).not.toContain(t('section.saving'))
   })
 
-  it('orders the card actions edit-then-remove and outlines the remove button', async () => {
-    const mounted = mountSection(
-      { servers: [stdioServer('alpha')], overrides: {} },
-      {},
-      { wsItems: [{ workspaceId: 'ws-1', title: 'work' }] },
-    )
-    await flush()
-    const actionTexts = Array.from(mounted.host.querySelectorAll('header button')).map((button) =>
-      button.textContent?.trim(),
-    )
-    const editIndex = actionTexts.indexOf(en['server.edit'])
-    const removeIndex = actionTexts.indexOf(en['server.remove'])
-    expect(editIndex).toBeGreaterThanOrEqual(0)
-    expect(removeIndex).toBeGreaterThan(editIndex)
-    const remove = buttonByText(mounted.host, en['server.remove'])
-    expect(remove?.className).toContain(styles.buttonOutline)
-    expect(remove?.className).toContain(styles.buttonDanger)
-    // Edit is the same capsule without the destructive variant: one control
-    // group, the red LABEL (one shared frame) being the only difference.
-    const edit = buttonByText(mounted.host, en['server.edit'])
-    expect(edit?.className).toContain(styles.buttonOutline)
-    expect(edit?.className).not.toContain(styles.buttonDanger)
-  })
-
-  it('keeps the workspace exception control reachable with a SINGLE workspace', async () => {
-    const writes: { workspaceId: string; enabled: boolean }[] = []
-    const mounted = mountSection(
-      { servers: [stdioServer('alpha')], overrides: {} },
-      {
-        toggleWorkspace: async (workspaceId, _serverName, enabled) => {
-          writes.push({ workspaceId, enabled })
-          return { ok: true }
-        },
-      },
-      { wsItems: [{ workspaceId: 'ws-1', title: 'only-one' }] },
-    )
-    await flush()
-    // Collapsed: the only workspace is default-off, so the summary line renders
-    // instead of a row; the manage control must still be reachable.
-    expect(mounted.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(0)
-    const toggle = buttonByText(mounted.host, t('row.manage', { count: 0 }))
-    expect(toggle).toBeDefined()
-    toggle?.click()
-    await flush()
-    const rows = mounted.host.querySelectorAll('.' + styles.wsRow)
-    expect(rows).toHaveLength(1)
-    expect(mounted.text()).toContain('only-one')
-    const input = rows[0]?.querySelector('input')
-    expect(input).not.toBeNull()
-    input?.click()
-    await flush()
-    expect(writes).toEqual([{ workspaceId: 'ws-1', enabled: true }])
-  })
-
-  it('carries NO state word: the switch alone says on/off, and the label toggles', async () => {
-    const writes: { workspaceId: string; enabled: boolean }[] = []
-    const mounted = mountSection(
-      { servers: [stdioServer('alpha')], overrides: { 'ws-1': { alpha: true } } },
-      {
-        toggleWorkspace: async (workspaceId, _serverName, enabled) => {
-          writes.push({ workspaceId, enabled })
-          return { ok: true } as const
-        },
-      },
-      {
-        wsItems: [
-          { workspaceId: 'ws-1', title: 'one' },
-          { workspaceId: 'ws-2', title: 'two' },
-        ],
-      },
-    )
-    await flush()
-    // ws-1 is ON: the collapsed card lists it, and the row is the name plus the
-    // switch — no "On" word, no "Off" word (the switch carries the state).
-    const onRow = mounted.host.querySelector('.' + styles.wsRow)
-    expect(onRow?.textContent).toBe('one')
-    // The whole text run stays the label, so clicking it toggles.
-    const label = onRow?.querySelector('.' + styles.wsLabel)
-    expect(label?.lastElementChild?.textContent).toBe('one')
-    label?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    await flush()
-    expect(writes).toEqual([{ workspaceId: 'ws-1', enabled: false }])
-
-    // OFF rows read the same way: name only.
-    mounted.live.doc.overrides = {}
-    mounted.rerender()
-    await flush()
-    buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
-    await flush()
-    const rows = Array.from(mounted.host.querySelectorAll('.' + styles.wsRow))
-    expect(rows.map((row) => row.textContent)).toEqual(['one', 'two'])
-  })
-
-  it('orders the expanded list enabled-first and FREEZES it while it is open', async () => {
-    const mounted = mountSection(
-      { servers: [stdioServer('alpha')], overrides: { 'ws-2': { alpha: true } } },
-      {},
-      {
-        wsItems: [
-          { workspaceId: 'ws-1', title: 'one' },
-          { workspaceId: 'ws-2', title: 'two' },
-          { workspaceId: 'ws-3', title: 'three' },
-        ],
-      },
-    )
-    await flush()
-    buttonByText(mounted.host, t('row.manage', { count: 1 }))?.click()
-    await flush()
-    const titles = (): (string | null)[] =>
-      Array.from(mounted.host.querySelectorAll('.' + styles.wsName)).map((el) => el.textContent)
-    // Enabled first; everything else keeps the host order.
-    expect(titles()).toEqual(['two', 'one', 'three'])
-    // Turning another workspace on mid-view must NOT move a row under the pointer.
-    mounted.live.doc.overrides['ws-1'] = { alpha: true }
-    mounted.rerender()
-    await flush()
-    expect(titles()).toEqual(['two', 'one', 'three'])
-    // Collapse and re-open: the order is computed again from the current state.
-    buttonByText(mounted.host, t('row.manageHide', { count: 2 }))?.click()
-    await flush()
-    buttonByText(mounted.host, t('row.manage', { count: 2 }))?.click()
-    await flush()
-    expect(titles()).toEqual(['one', 'two', 'three'])
-  })
-
-  it('gives a long list a name filter, and the bulk pair acts on what is SHOWN', async () => {
-    const writes: { ids: string[]; enabled: boolean }[] = []
-    const mounted = mountSection(
-      { servers: [stdioServer('alpha')], overrides: {} },
-      {
-        toggleWorkspaces: async (_serverName, enabled, workspaceIds) => {
-          writes.push({ ids: Array.from(workspaceIds), enabled })
-          return { ok: true } as const
-        },
-      },
-      {
-        wsItems: [
-          { workspaceId: 'ws-1', title: 'tmp' },
-          { workspaceId: 'ws-2', title: 'daily' },
-          { workspaceId: 'ws-3', title: 'quant' },
-          { workspaceId: 'ws-4', title: 'literature' },
-          { workspaceId: 'ws-5', title: 'perf' },
-        ],
-      },
-    )
-    await flush()
-    buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
-    await flush()
-    const block = mounted.host.querySelector('.' + styles.wsBlock)
-    const filter = block?.querySelector<HTMLInputElement>('input[type="search"]')
-    expect(filter).not.toBeNull()
-    expect(filter?.getAttribute('placeholder')).toBe(t('wsFilter.placeholder'))
-    const names = (): (string | null)[] =>
-      Array.from(mounted.host.querySelectorAll('.' + styles.wsName)).map((el) => el.textContent)
-
-    setValue(filter as HTMLInputElement, 'da')
-    await flush()
-    expect(names()).toEqual(['daily'])
-    // The pair names what it will touch, and touches only that.
-    const allOn = buttonByText(mounted.host, t('row.allOnShown', { count: 1 }))
-    expect(allOn).toBeDefined()
-    allOn?.click()
-    await flush()
-    expect(writes).toEqual([{ ids: ['ws-2'], enabled: true }])
-
-    // A query that matches nothing says so, and cannot fire a bulk write.
-    const emptyFilter = block?.querySelector<HTMLInputElement>('input[type="search"]')
-    setValue(emptyFilter as HTMLInputElement, 'zzz')
-    await flush()
-    expect(mounted.text()).toContain(t('wsFilter.none', { query: 'zzz' }))
-    expect(mounted.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(0)
-    const dead = buttonByText(mounted.host, t('row.allOnShown', { count: 0 }))
-    expect((dead as HTMLButtonElement | undefined)?.disabled).toBe(true)
-
-    // Clearing brings the whole list back, unfiltered labels and all.
-    const clearedFilter = block?.querySelector<HTMLInputElement>('input[type="search"]')
-    setValue(clearedFilter as HTMLInputElement, '')
-    await flush()
-    expect(names()).toEqual(['tmp', 'daily', 'quant', 'literature', 'perf'])
-    expect(buttonByText(mounted.host, t('row.allOn'))).toBeDefined()
-  })
-
-  it('never strands a query behind a filter input that is gone', async () => {
-    const mounted = mountSection(
-      { servers: [stdioServer('alpha')], overrides: {} },
-      {},
-      {
-        wsItems: [
-          { workspaceId: 'ws-1', title: 'tmp' },
-          { workspaceId: 'ws-2', title: 'daily' },
-          { workspaceId: 'ws-3', title: 'quant' },
-          { workspaceId: 'ws-4', title: 'literature' },
-          { workspaceId: 'ws-5', title: 'perf' },
-        ],
-      },
-    )
-    await flush()
-    buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
-    await flush()
-    const block = mounted.host.querySelector('.' + styles.wsBlock)
-    setValue(block?.querySelector<HTMLInputElement>('input[type="search"]') as HTMLInputElement, 'da')
-    await flush()
-    const names = (): (string | null)[] =>
-      Array.from(mounted.host.querySelectorAll('.' + styles.wsName)).map((el) => el.textContent)
-    expect(names()).toEqual(['daily'])
-
-    // The list shrinks below the threshold: the input disappears, so the query
-    // must stop narrowing (otherwise rows stay hidden with no way to clear it).
-    mounted.live.wsItems.splice(2)
-    mounted.rerender()
-    await flush()
-    expect(mounted.host.querySelector('.' + styles.wsBlock + ' input[type="search"]')).toBeNull()
-    expect(names()).toEqual(['tmp', 'daily'])
-    expect(mounted.text()).not.toContain(t('wsFilter.none', { query: 'da' }))
-
-    // Growing back to a filterable list starts unfiltered (the query was dropped,
-    // not merely hidden).
-    mounted.live.wsItems.push(
-      { workspaceId: 'ws-3', title: 'quant' },
-      { workspaceId: 'ws-4', title: 'literature' },
-      { workspaceId: 'ws-5', title: 'perf' },
-    )
-    mounted.rerender()
-    await flush()
-    expect(mounted.host.querySelector('.' + styles.wsBlock + ' input[type="search"]')).not.toBeNull()
-    expect(names()).toEqual(['tmp', 'daily', 'quant', 'literature', 'perf'])
-  })
-
-  it('leaves a short list without a filter input', async () => {
-    const mounted = mountSection(
-      { servers: [stdioServer('alpha')], overrides: {} },
-      {},
-      {
-        wsItems: [
-          { workspaceId: 'ws-1', title: 'one' },
-          { workspaceId: 'ws-2', title: 'two' },
-        ],
-      },
-    )
-    await flush()
-    buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
-    await flush()
-    expect(mounted.host.querySelector('.' + styles.wsBlock + ' input[type="search"]')).toBeNull()
-  })
-
-  it('follows a LIVE workspace list: a new workspace starts off, a deleted one leaves nothing behind', async () => {
-    const mounted = mountSection(
-      { servers: [stdioServer('alpha')], overrides: { 'ws-1': { alpha: true } } },
-      {},
-      { wsItems: [{ workspaceId: 'ws-1', title: 'one' }] },
-    )
-    await flush()
-    // ws-1 is enabled, so the collapsed card counts it.
-    expect(buttonByText(mounted.host, t('row.manage', { count: 1 }))).toBeDefined()
-
-    // A workspace created while the card is on screen arrives switched OFF: the
-    // count does not move and no write happens.
-    mounted.live.wsItems.push({ workspaceId: 'ws-2', title: 'two' })
-    mounted.rerender()
-    await flush()
-    expect(buttonByText(mounted.host, t('row.manage', { count: 1 }))).toBeDefined()
-
-    buttonByText(mounted.host, t('row.manage', { count: 1 }))?.click()
-    await flush()
-    const inputs = Array.from(mounted.host.querySelectorAll<HTMLInputElement>('.' + styles.wsRow + ' input'))
-    expect(inputs).toHaveLength(2)
-    expect(inputs[0]?.checked).toBe(true)
-    expect(inputs[1]?.checked).toBe(false)
-    expect(mounted.text()).toContain('two')
-
-    // DELETING a workspace drops its row and its pair from the count. A deleted
-    // workspace can leave a record in the settings document (the host keeps what
-    // the last write put there) and nothing may surface from it: the rows and the
-    // count both come from the live list.
-    mounted.live.wsItems.splice(0, 1)
-    mounted.rerender()
-    await flush()
-    expect(mounted.text()).not.toContain('one')
-    expect(mounted.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(1)
-    expect(buttonByText(mounted.host, t('row.manageHide', { count: 0 }))).toBeDefined()
-    buttonByText(mounted.host, t('row.manageHide', { count: 0 }))?.click()
-    await flush()
-    // Nothing is enabled any more, so the collapsed card shows no rows and no
-    // stand-in line, and the count reads zero — no phantom "one".
-    expect(mounted.host.querySelectorAll('.' + styles.wsRow)).toHaveLength(0)
-    expect(mounted.host.querySelectorAll('.' + styles.hint)).toHaveLength(0)
-    expect(buttonByText(mounted.host, t('row.manage', { count: 0 }))).toBeDefined()
-  })
-
-  it('leads the expanded list with the bulk pair', async () => {
-    const mounted = mountSection(
-      { servers: [stdioServer('alpha')], overrides: {} },
-      {},
-      {
-        wsItems: [
-          { workspaceId: 'ws-1', title: 'one' },
-          { workspaceId: 'ws-2', title: 'two' },
-        ],
-      },
-    )
-    await flush()
-    buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
-    await flush()
-    const allOn = buttonByText(mounted.host, t('row.allOn'))
-    const list = mounted.host.querySelector('.' + styles.wsList)
-    expect(allOn).toBeDefined()
-    expect(list).not.toBeNull()
-    // A long workspace list would push a trailing pair past the fold.
-    expect(allOn?.compareDocumentPosition(list as Node)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-  })
-
-  it('queues workspace toggles: no other row dims, and the writes land in order', async () => {
-    const calls: string[] = []
-    let release: (outcome: { ok: true }) => void = () => {}
-    const first = new Promise<{ ok: true }>((resolve) => {
-      release = resolve
-    })
+  it('serializes writes from two switches through one queue', async () => {
+    const order: string[] = []
+    const resolvers: Array<() => void> = []
     const mounted = mountSection(
       { servers: [stdioServer('alpha')], overrides: {} },
       {
         toggleWorkspace: async (workspaceId) => {
-          calls.push(workspaceId)
-          // The first write parks until released; a second must not even START
-          // before it (the controller judges a save against the document it
-          // read, so overlapping writes would report a spurious conflict).
-          return calls.length === 1 ? first : { ok: true as const }
+          order.push(workspaceId)
+          await new Promise<void>((resolve) => resolvers.push(resolve))
+          return { ok: true }
         },
       },
-      { wsItems: [{ workspaceId: 'ws-1', title: 'one' }, { workspaceId: 'ws-2', title: 'two' }] },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
     )
     await flush()
-    buttonByText(mounted.host, t('row.manage', { count: 0 }))?.click()
+    const detail = await openServer(mounted, 'alpha')
+    detail
+      .querySelector<HTMLInputElement>('input[aria-label="' + t('server.workspacesTitle') + ': beta"]')!
+      .click()
+    detail
+      .querySelector<HTMLInputElement>('input[aria-label="' + t('server.workspacesTitle') + ': gamma"]')!
+      .click()
     await flush()
-    const rows = Array.from(mounted.host.querySelectorAll('.' + styles.wsRow))
-    const inputs = Array.from(mounted.host.querySelectorAll<HTMLInputElement>('.' + styles.wsRow + ' input'))
-    expect(inputs).toHaveLength(2)
-
-    inputs[0]?.click()
+    expect(order).toEqual(['ws-b'])
+    expect(mounted.text()).toContain(t('section.saving'))
+    resolvers[0]!()
     await flush()
-    // Only the writing row is marked; NO row is disabled, so a card full of
-    // switches never dims and brightens on every toggle.
-    expect(rows[0]?.getAttribute('data-pending')).toBe('true')
-    expect(rows[1]?.getAttribute('data-pending')).toBeNull()
-    expect(inputs.map((input) => input.disabled)).toEqual([false, false])
-    expect(calls).toEqual(['ws-1'])
-
-    // The second click QUEUES behind the first instead of being refused.
-    inputs[1]?.click()
+    expect(order).toEqual(['ws-b', 'ws-c'])
+    resolvers[1]!()
     await flush()
-    expect(calls).toEqual(['ws-1'])
-
-    release({ ok: true })
-    await flush()
-    expect(calls).toEqual(['ws-1', 'ws-2'])
-    expect(rows[0]?.getAttribute('data-pending')).toBeNull()
-    expect(inputs.map((input) => input.disabled)).toEqual([false, false])
   })
 
-  it('zh dictionary mirrors the en key set', () => {
-    expect(Object.keys(zh).sort()).toEqual(Object.keys(en).sort())
+  it('opens edit mode with the definition and warns on rename', async () => {
+    const replaced: unknown[][] = []
+    let mounted!: Mounted
+    mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {
+        replaceServer: async (...args) => {
+          replaced.push(args)
+          mounted.live.doc = {
+            ...mounted.live.doc,
+            servers: [stdioServer('renamed')],
+          }
+          return { ok: true }
+        },
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    buttonByText(detail, t('server.edit'))!.click()
+    await flush()
+    expect((document.getElementById('mcp-scope-editor-name') as HTMLInputElement).value).toBe('alpha')
+    setValue(document.getElementById('mcp-scope-editor-name') as HTMLInputElement, 'renamed')
+    await flush()
+    expect(mounted.text()).toContain(t('editor.renameWarning', { old: 'alpha', new: 'renamed' }))
+    buttonByText(mounted.host, t('editor.saveAndTest'))!.click()
+    await flush()
+    expect(replaced).toHaveLength(1)
+    expect((replaced[0] as [string, ServerSaveInput])[0]).toBe('alpha')
+    expect((replaced[0] as [string, ServerSaveInput])[1].server.serverName).toBe('renamed')
+    expect(mounted.host.querySelector('[data-mcp-server-detail="renamed"]')).not.toBeNull()
+  })
+
+  it('searches tools and reports a no-match state instead of an empty sync claim', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {
+        loadTools: async () => ({
+          tools: [{ publicName: 'mcp__alpha__search', rawName: 'search', description: 'Search issues' }],
+          truncated: false,
+          total: 1,
+        }),
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    buttonByText(detail, t('tools.title'))!.click()
+    await flush()
+    const search = detail.querySelector<HTMLInputElement>('input[aria-label="' + t('server.toolsSearch') + '"]')!
+    setValue(search, 'zzz')
+    await flush()
+    expect(detail.textContent).toContain(t('tools.noMatch'))
+  })
+
+
+  it('keeps a dismiss control reachable while a destructive write is pending', async () => {
+    let release!: () => void
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {
+        removeServer: () =>
+          new Promise((resolve) => {
+            release = () => resolve({ ok: true })
+          }),
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    buttonByText(detail, t('server.remove'))!.click()
+    await flush()
+    buttonByText(dialog(), t('server.removeAction'))!.click()
+    await flush()
+    const dismiss = buttonByText(dialog(), t('action.dismiss'))
+    expect(dismiss).not.toBeNull()
+    expect(dismiss!.disabled).toBe(false)
+    dismiss!.click()
+    await flush()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    release()
+    await flush()
+    expect(mounted.host.querySelector('[data-mcp-server-detail="alpha"]')).not.toBeNull()
+    expect(mounted.text()).toContain(t('toast.removed', { name: 'alpha' }))
+  })
+
+
+  it('an older pending removal never closes a newer confirmation', async () => {
+    let releaseAlpha!: () => void
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha'), stdioServer('beta')], overrides: {} },
+      {
+        removeServer: (name) =>
+          name === 'alpha'
+            ? new Promise((resolve) => {
+                releaseAlpha = () => resolve({ ok: true })
+              })
+            : Promise.resolve({ ok: true }),
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    let detail = await openServer(mounted, 'alpha')
+    buttonByText(detail, t('server.remove'))!.click()
+    await flush()
+    buttonByText(dialog(), t('server.removeAction'))!.click()
+    await flush()
+    buttonByText(dialog(), t('action.dismiss'))!.click()
+    await flush()
+    buttonByText(mounted.host, t('server.back'))!.click()
+    await flush()
+    detail = await openServer(mounted, 'beta')
+    buttonByText(detail, t('server.remove'))!.click()
+    await flush()
+    expect(dialog().textContent).toContain(t('server.removeTitle', { name: 'beta' }))
+    releaseAlpha()
+    await flush()
+    expect(dialog().textContent).toContain(t('server.removeTitle', { name: 'beta' }))
+  })
+
+  it('retries a failed removal with the same action', async () => {
+    let attempts = 0
+    let mounted!: Mounted
+    mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {
+        removeServer: async () => {
+          attempts += 1
+          if (attempts === 1) return { ok: false, reason: 'save-failed' }
+          mounted.live.doc = { servers: [], overrides: {}, disabled: {} }
+          return { ok: true }
+        },
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    buttonByText(detail, t('server.remove'))!.click()
+    await flush()
+    buttonByText(dialog(), t('server.removeAction'))!.click()
+    await flush()
+    expect(attempts).toBe(1)
+    buttonByText(mounted.host, t('action.retry'))!.click()
+    await flush()
+    expect(attempts).toBe(2)
+    expect(mounted.host.querySelector('[data-server="alpha"]')).toBeNull()
+    expect(document.activeElement?.textContent ?? '').toContain(t('add.add'))
+  })
+
+  it('guards unsaved changes with a discard confirmation', async () => {
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, t('add.add'))!.click()
+    await flush()
+    setValue(document.getElementById('mcp-scope-editor-name') as HTMLInputElement, 'draft')
+    buttonByText(mounted.host, t('action.cancel'))!.click()
+    await flush()
+    expect(dialog().textContent).toContain(t('editor.discardTitle'))
+    buttonByText(dialog(), t('dirty.keepEditing'))!.click()
+    await flush()
+    expect(mounted.host.querySelector('#mcp-scope-editor-name')).not.toBeNull()
+  })
+})
+
+describe('degraded and read-only states', () => {
+  it('renders the workspace-list loading and error phases', async () => {
+    const loading = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {},
+      { wsState: 'loading', wsPhase: 'pending' },
+    )
+    await flush()
+    await openServer(loading, 'alpha')
+    expect(loading.text()).toContain(t('workspaces.loading'))
+    loading.unmount()
+    const error = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {},
+      { wsState: 'error' },
+    )
+    await flush()
+    await openServer(error, 'alpha')
+    expect(error.text()).toContain(t('workspaces.error'))
+  })
+
+
+  it('falls back to the list when the open workspace disappears externally', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: overridesOf({ 'ws-a': ['alpha'] }) },
+      {},
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    await openWorkspacesTab(mounted)
+    mounted.host.querySelector<HTMLElement>('[data-workspace="ws-a"] button')!.click()
+    await flush()
+    expect(mounted.host.querySelector('[data-mcp-workspace-detail="ws-a"]')).not.toBeNull()
+    mounted.live.wsItems = WS.filter((workspace) => workspace.workspaceId !== 'ws-a')
+    mounted.rerender()
+    await flush()
+    expect(mounted.host.querySelector('[data-mcp-workspace-detail]')).toBeNull()
+    expect(mounted.host.querySelector('[data-workspace="ws-b"]')).not.toBeNull()
+    expect(mounted.live.doc.overrides).toEqual(overridesOf({ 'ws-a': ['alpha'] }))
+  })
+
+  it('hides write affordances and disables switches when the document is read-only', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: overridesOf({ 'ws-a': ['alpha'] }) },
+      {},
+      { writable: false, wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    expect(buttonByText(mounted.host, t('add.add'))).toBeUndefined()
+    expect(mounted.text()).toContain(t('state.readonly'))
+    await openServer(mounted, 'alpha')
+    const swaps = Array.from(mounted.host.querySelectorAll<HTMLInputElement>('input[role="switch"]'))
+    expect(swaps.length).toBeGreaterThan(0)
+    expect(swaps.every((input) => input.disabled)).toBe(true)
+    expect(buttonByText(mounted.host, t('server.remove'))).toBeUndefined()
+  })
+})
+
+describe('polling and unmount', () => {
+  it('issues one initial refresh and leaves no timer behind after unmount', async () => {
+    const refreshes: unknown[] = []
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {
+        refreshRuntime: async (options) => {
+          refreshes.push(options)
+        },
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    expect(refreshes.length).toBeGreaterThanOrEqual(1)
+    mounted.unmount()
+    const count = refreshes.length
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(refreshes.length).toBe(count)
   })
 })

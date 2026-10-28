@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { countKey, en, zh, type SettingsKey } from '../../src/client/locales.js'
+import { en, zh, type SettingsKey } from '../../src/client/locales.js'
 
 const PLACEHOLDER = /\{(\w+)\}/g
 
@@ -56,31 +56,32 @@ describe('locales: en/zh parity', () => {
     expect(zhDict['server.newWorkspaceDefault']).toBeUndefined()
   })
 
-  it('carries the card-retry, stale-banner and default-off panel copy in both locales', () => {
-    expect(zh['runtime.stale']).toBe('状态可能过期')
+  it('carries the new list/detail/workspaces/editor copy in both locales', () => {
+    expect(en['tab.servers']).toBe('Servers')
+    expect(en['tab.workspaces']).toBe('Workspaces')
+    expect(zh['section.subtitle']).toContain('MCP 服务器')
+    expect(en['server.allowedLabel']).toBe('Allowed to run')
+    expect(zh['server.allowedLabel']).toBe('允许运行')
+    expect(en['server.allowedHint']).toContain('does not enable')
+    expect(en['server.disabledNotice'].length).toBeGreaterThan(0)
+    expect(zh['server.disabledNotice'].length).toBeGreaterThan(0)
+    expect(en['server.clearConfirmShared']).toContain('{servers}')
+    expect(en['editor.saveAndTest']).toBe('Save and test')
+    expect(zh['editor.saveAndTest']).toBe('保存并测试')
+    expect(en['toast.undo']).toBe('Undo')
+    expect(zh['toast.scopeBulk']).toContain('{count}')
     expect(en['runtime.stale'].length).toBeGreaterThan(0)
+    expect(zh['runtime.stale']).toBe('状态可能过期')
     expect(en['action.retry']).toBe('Retry')
     expect(zh['action.retry']).toBe('重试')
-    // The manage control counts the ENABLED workspaces; both labels are new.
-    expect(en['row.manage']).toContain('Manage workspaces')
-    expect(en['row.manage']).toContain('{count}')
-    expect(zh['row.manage']).toContain('管理 workspace')
-    expect(zh['row.manage']).toContain('{count}')
-    expect(en['row.manageHide'].length).toBeGreaterThan(0)
-    // The enable switch is the default-off copy surface now.
-    expect(en['server.enableToggle']).toBe('Allow server')
-    expect(zh['server.enableToggle']).toBe('允许使用该服务器')
-    // No default-off summary pair survives either: the collapsed card renders
-    // nothing when the server is off everywhere (row.allOffDefault retired).
+    // Retired card-era controls must not creep back into the dictionary.
     const enDict = en as Record<string, string>
     const zhDict = zh as Record<string, string>
+    for (const retired of ['row.manage', 'server.enableToggle', 'server.removeConfirmTitle', 'dirty.confirm', 'action.save']) {
+      expect(enDict[retired], retired).toBeUndefined()
+      expect(zhDict[retired], retired).toBeUndefined()
+    }
     expect(enDict['row.allOffDefault.other']).toBeUndefined()
     expect(zhDict['row.allOffDefault.other']).toBeUndefined()
-    expect(enDict['row.allOffDefault.one']).toBeUndefined()
-    // The count-plural machinery itself still works on a live family: the
-    // singular form is its own sentence with the same placeholder contract.
-    expect(countKey('server.enabledWorkspaces', 2)).toBe('server.enabledWorkspaces.other')
-    expect(placeholdersOf(en['server.enabledWorkspaces.one'])).toEqual(['count'])
-    expect(en['server.enabledWorkspaces.one']).not.toBe(en['server.enabledWorkspaces.other'])
   })
 })

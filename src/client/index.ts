@@ -90,8 +90,8 @@ export type {
   RemoteResultLike,
 } from './controller.js'
 export type { McpScopeSectionProps, SectionT, SnapshotHook } from './section.js'
-export type { ServerCardProps } from './server-card.js'
-export type { AddServerFormProps, AddDraft, AddProblems } from './add-form.js'
+export type { ServerEditorProps } from './views/server-editor.js'
+export type { AddDraft, AddProblems } from './draft.js'
 export type { WorkspaceItem, WorkspaceListHook, WorkspaceListStatus } from './workspaces.js'
 
 /** Fold the Remote result union: business failures become thrown errors. */
@@ -192,7 +192,7 @@ export function apply(ctx: Context): void {
   // The chamber desktop mounts this UI into the SHELL's own document: its asset
   // URLs are root-relative, no base global is injected, and a root-relative
   // plugin request is answered by the shell's static layer with
-  // `404 {"error":"not_found"}` — which is why every card read "unknown" there.
+  // `404 {"error":"not_found"}` — which is why every status read "unknown" there.
   // The shell provides the instance prefix to the plugins it mounts as
   // `chamberBasePath`, so that service is the authoritative signal. It is NOT
   // reachable by property access: cordis answers a service no fiber provided —
