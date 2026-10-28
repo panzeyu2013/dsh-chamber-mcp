@@ -454,6 +454,7 @@ describe('components consume the style seat', () => {
         mode="add"
         initial={EMPTY_DRAFT}
         existingNames={[]}
+        backLabel="All servers"
         writable
         credentials={{}}
         onSave={async () => ({ ok: true })}

@@ -832,13 +832,15 @@ export type ImportCandidatesOutcome =
   | { ok: false; reason: 'empty' | 'invalid' | 'unsupported' }
 
 /**
- * Parse EVERY server in one MCP JSON snippet, in discovery order, so the editor
- * can offer a real candidate list instead of silently taking the first entry.
- * The same tolerant candidate extraction as {@link parseMcpSnippet} is used;
- * the first JSON candidate that names servers wins (an example snippet above
- * the real config must not shadow it). Pasted text is never evaluated.
+ * Winning entry group of one pasted snippet: the first JSON candidate that
+ * names servers (an example snippet above the real config must not shadow it),
+ * else the first candidate that holds any server entry at all.
  */
-export function parseMcpSnippetCandidates(text: string): ImportCandidatesOutcome {
+type SnippetScan =
+  | { ok: true; entries: [string | undefined, Record<string, unknown>][] }
+  | { ok: false; reason: 'empty' | 'invalid' | 'unsupported' }
+
+function scanServerSnippet(text: string): SnippetScan {
   const trimmed = normalizeInput(text).trim()
   if (trimmed === '') return { ok: false, reason: 'empty' }
   try {
@@ -854,70 +856,47 @@ export function parseMcpSnippetCandidates(text: string): ImportCandidatesOutcome
       parsedAny = true
       const entries = findServerEntries(value)
       if (entries.length === 0) continue
-      const named = entries.filter(([name]) => name !== undefined)
-      if (named.length > 0) {
-        return {
-          ok: true,
-          candidates: named.map(([name, entry]) => ({ name, server: convert(name, entry) })),
-        }
-      }
+      if (entries.some(([name]) => name !== undefined)) return { ok: true, entries }
       unnamed ??= entries
     }
-    if (unnamed !== undefined) {
-      return {
-        ok: true,
-        candidates: unnamed.map(([name, entry]) => ({ name, server: convert(name, entry) })),
-      }
-    }
+    if (unnamed !== undefined) return { ok: true, entries: unnamed }
     return { ok: false, reason: parsedAny ? 'unsupported' : 'invalid' }
   } catch {
+    // Contract: nothing a clipboard can hold may throw into the settings UI.
     return { ok: false, reason: 'invalid' }
   }
 }
 
 /**
- * Parse one MCP JSON snippet. Business failures are returned, never thrown;
- * the first NAMED server found wins (an example snippet pasted above the real
- * config must not shadow it) and the other names are reported. The snippet is
- * read as JSON/JSONC only — pasted text is never evaluated.
+ * Parse EVERY server in one MCP JSON snippet, in discovery order, so the editor
+ * can offer a real candidate list instead of silently taking the first entry.
+ * Pasted text is never evaluated.
+ */
+export function parseMcpSnippetCandidates(text: string): ImportCandidatesOutcome {
+  const scan = scanServerSnippet(text)
+  if (!scan.ok) return scan
+  const named = scan.entries.filter(([name]) => name !== undefined)
+  const list = named.length > 0 ? named : scan.entries
+  return { ok: true, candidates: list.map(([name, entry]) => ({ name, server: convert(name, entry) })) }
+}
+
+/**
+ * Parse ONE server out of a snippet: the winning group's FIRST entry wins (a
+ * named entry shadows the unnamed example above it, exactly like the editor's
+ * candidate list) and the other names are reported. Kept as the single-server
+ * derivation over {@link scanServerSnippet}, so the tolerant JSONC reading
+ * exists once.
  */
 export function parseMcpSnippet(text: string): ImportOutcome {
-  const trimmed = normalizeInput(text).trim()
-  if (trimmed === '') return { ok: false, reason: 'empty' }
-  try {
-    let parsedAny = false
-    let unnamed: [string | undefined, Record<string, unknown>][] | undefined
-    for (const candidate of jsonCandidates(trimmed)) {
-      let value: unknown
-      try {
-        value = JSON.parse(candidate) as unknown
-      } catch {
-        continue
-      }
-      parsedAny = true
-      const entries = findServerEntries(value)
-      if (entries.length === 0) continue
-      if (entries.some(([name]) => name !== undefined)) {
-        const [firstName, firstEntry] = entries[0]!
-        return {
-          ok: true,
-          server: convert(firstName, firstEntry),
-          others: entries.slice(1).map(([name]) => name).filter((name): name is string => name !== undefined),
-        }
-      }
-      unnamed ??= entries
-    }
-    if (unnamed !== undefined) {
-      const [firstName, firstEntry] = unnamed[0]!
-      return {
-        ok: true,
-        server: convert(firstName, firstEntry),
-        others: unnamed.slice(1).map(([name]) => name).filter((name): name is string => name !== undefined),
-      }
-    }
-    return { ok: false, reason: parsedAny ? 'unsupported' : 'invalid' }
-  } catch {
-    // Contract: nothing a clipboard can hold may throw into the settings UI.
-    return { ok: false, reason: 'invalid' }
+  const scan = scanServerSnippet(text)
+  if (!scan.ok) return scan
+  const [firstName, firstEntry] = scan.entries[0]!
+  return {
+    ok: true,
+    server: convert(firstName, firstEntry),
+    others: scan.entries
+      .slice(1)
+      .map(([name]) => name)
+      .filter((name): name is string => name !== undefined),
   }
 }

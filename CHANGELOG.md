@@ -43,15 +43,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   helpers to `view-model.ts`, and the views to `src/client/views/`.
 - **Runtime polling is 10 s while visible, backing off to 30 s after a failed
   pass** (was 5 s); Test remains reachable without a current runtime view.
-- The server section no longer renders per-card workspace blocks or a global
-  header refresh; per-server refresh lives in the detail and the stale banner
-  owns the full-table retry.
+- The server section no longer renders per-card workspace blocks; per-server
+  refresh lives in the detail and the stale banner owns the full-table retry.
+  (The section header has carried no refresh control since 0.1.0.)
+- **A wire `unknown` runtime state reads "Status unknown"** (never "Not
+  started"), and a server the snapshot has no row for yet reads as unknown
+  instead of a fabricated "Stopped".
+- **The workspace name filter stays on screen while it narrows the list**, so a
+  workspace disappearing under the five-workspace threshold cannot strand rows
+  behind a filter nobody can clear.
 
 ### Fixed
 
-- **Bulk Undo restores the pre-batch scope of every row.** A mixed "all on"
-  followed by Undo no longer flips originally-on rows off; both server→
-  workspaces and workspace→servers batches restore the captured mix.
+- **Bulk Undo restores the pre-batch scope of every row in ONE mutation.** A
+  mixed "all on" followed by Undo no longer flips originally-on rows off; both
+  server→workspaces and workspace→servers batches write the captured mix back
+  through a single revision-fenced save (`restoreScopeValues`), so a failure
+  cannot leave the document half restored.
+- **A document that finishes loading no longer breaks the panel.** The status
+  early returns used to sit above a `useMemo`, so `loading → ready` (or a
+  dropped namespace) changed the hook count and React threw.
+- **A failed bulk scope write reverts the rows it still owns and reports once.**
+  Rows superseded by a newer click keep their newer value; a batch whose rows
+  were all superseded stays silent instead of offering a Retry that replays the
+  stale targets, and an Undo with nothing left to restore says so.
 - **Copy JSON and import agree on credential references.** The plugin's
   `envKeys` shape is read back as reference-only env rows, so a copied server
   no longer loses its environment keys on import.

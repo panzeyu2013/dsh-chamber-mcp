@@ -477,6 +477,16 @@ export interface McpScopeFace {
     serverNames: readonly string[],
     enabled: boolean,
   ): Promise<SaveOutcome>
+  /**
+   * Restore an arbitrary set of (workspace, server) enable records in ONE
+   * revision-fenced mutation. This is what a bulk Undo needs: the pre-batch
+   * state is a MIX of on and off rows, and writing it back as two successive
+   * single-value batches would leave a half-restored document if the second
+   * write failed.
+   */
+  restoreScopeValues(
+    entries: readonly { workspaceId: string; serverName: string; enabled: boolean }[],
+  ): Promise<SaveOutcome>
   /** Global enable/disable of one server (the detail's Availability switch). */
   setServerEnabled(serverName: string, enabled: boolean): Promise<SaveOutcome>
   /** Clear one stored credential literal (badge "Clear" affordance). */
@@ -531,6 +541,7 @@ export class McpScopeController {
       toggleWorkspaces: (serverName, off, workspaceIds) => self.toggleWorkspaces(serverName, off, workspaceIds),
       toggleWorkspaceServers: (workspaceId, serverNames, enabled) =>
         self.toggleWorkspaceServers(workspaceId, serverNames, enabled),
+      restoreScopeValues: (entries) => self.restoreScopeValues(entries),
       setServerEnabled: (serverName, enabled) => self.setServerEnabled(serverName, enabled),
       unsetCredential: (ref) => self.unsetCredential(ref),
     }
@@ -820,6 +831,39 @@ export class McpScopeController {
       if (!known.has(serverName)) continue
       next = overrideDoc(next, workspaceId, serverName, enabled)
     }
+    const plan = buildSaveOps(base.doc, next)
+    if (plan.ops.length === 0) return { ok: true }
+    return this.applyOps(plan.ops, base.revision, next)
+  }
+
+  /**
+   * Restore a mixed set of enable records in one mutation (bulk Undo). Rows
+   * whose server vanished from the document are skipped: writing an orphan
+   * override would let a later re-add of that name start ENABLED there.
+   * Nothing restorable answers a conflict instead of a silent success.
+   */
+  async restoreScopeValues(
+    entries: readonly { workspaceId: string; serverName: string; enabled: boolean }[],
+  ): Promise<SaveOutcome> {
+    return this.enqueueWrite(() => this.restoreScopeValuesNow(entries))
+  }
+
+  private async restoreScopeValuesNow(
+    entries: readonly { workspaceId: string; serverName: string; enabled: boolean }[],
+  ): Promise<SaveOutcome> {
+    const base = this.snapshot
+    if (base.status === 'loading' || base.status === 'unavailable') {
+      return { ok: false, reason: 'save-failed' }
+    }
+    const known = new Set(base.doc.servers.map((server) => server.serverName))
+    let next = base.doc
+    let restorable = 0
+    for (const entry of entries) {
+      if (!known.has(entry.serverName)) continue
+      restorable += 1
+      next = overrideDoc(next, entry.workspaceId, entry.serverName, entry.enabled)
+    }
+    if (restorable === 0) return { ok: false, reason: 'conflict' }
     const plan = buildSaveOps(base.doc, next)
     if (plan.ops.length === 0) return { ok: true }
     return this.applyOps(plan.ops, base.revision, next)

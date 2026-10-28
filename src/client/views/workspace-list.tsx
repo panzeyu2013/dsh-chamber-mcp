@@ -21,7 +21,6 @@ export interface WorkspaceListViewProps {
   query: string
   onQueryChange(query: string): void
   onOpen(workspaceId: string): void
-  writable: boolean
 }
 
 export function WorkspaceListView(props: WorkspaceListViewProps): ReactNode {
@@ -68,7 +67,7 @@ export function WorkspaceListView(props: WorkspaceListViewProps): ReactNode {
         </div>
       )}
       {visible.length === 0 ? (
-        <EmptyState compact title={t('list.emptyFiltered')} />
+        <EmptyState compact title={t('empty.workspacesFiltered')} />
       ) : (
         <ul className={styles.serverList}>
           {visible.map((workspace) => {

@@ -38,6 +38,8 @@ export interface ServerEditorProps {
   initial: AddDraft
   /** Original name in edit mode (draft persistence key + rename warning). */
   originalName?: string
+  /** Label of the back control: it names the view the editor returns to. */
+  backLabel: string
   existingNames: readonly string[]
   writable: boolean
   credentials: Readonly<Record<string, CredentialInfo>>
@@ -550,7 +552,7 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
     >
       <div className={styles.editorHead}>
         <button type="button" className={styles.detailBack} disabled={saving} onClick={requestClose}>
-          <span aria-hidden="true">←</span> {t('editor.back')}
+          <span aria-hidden="true">←</span> {props.backLabel}
         </button>
         <h2 className={styles.editorTitle}>{t(props.mode === 'add' ? 'add.title' : 'edit.title')}</h2>
         <p className={styles.editorSub}>{t('editor.subtitle')}</p>

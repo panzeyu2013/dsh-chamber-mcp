@@ -68,6 +68,7 @@ function propsOf(): McpScopeSectionProps {
     toggleWorkspace: ok,
     toggleWorkspaces: ok,
     toggleWorkspaceServers: ok,
+    restoreScopeValues: ok,
     setServerEnabled: ok,
     unsetCredential: ok,
     useRuntime: ((selector: (s: unknown) => unknown) => selector(runtime)) as unknown as McpScopeSectionProps['useRuntime'],

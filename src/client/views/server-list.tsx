@@ -180,7 +180,10 @@ export function ServerListView(props: ServerListViewProps): ReactNode {
           {servers.map((server) => {
             const disabled = isServerDisabled(doc, server.serverName)
             const view = runtimeOf(runtime, server.serverName)
-            const state = disabled ? 'disabled' : (view?.state ?? (runtime.phase === 'unavailable' || runtime.phase === 'error' ? 'unknown' : 'stopped'))
+            // A missing view means "we do not know yet" (the row usually lands
+            // one refresh later), never "stopped": that word claims a state the
+            // snapshot did not report.
+            const state = disabled ? 'disabled' : (view?.state ?? 'unknown')
             const scope = scopeOf(doc, server, workspaces, workspaceStatus)
             const serviceUnavailable =
               runtime.phase === 'unavailable' || runtime.phase === 'error'

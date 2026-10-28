@@ -228,10 +228,10 @@ breaking a child's creation.
 | `src/server-context.ts` | per-server publication of the `mcp:<serverName>` instructions section and the `mcpResources` provider (the official `registerServerContext` shape) |
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture on the 2.0 server packages (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe; publishes instructions, oversized under `FIXTURE_HUGE_INSTRUCTIONS=1`; serves one resource and one URI TEMPLATE so the resource provider's list/templates/read paths are exercised end to end; `FIXTURE_NO_RESOURCES=1` declares no resources capability and registers none) |
-| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (12 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`, `tests/delegation.spec.ts`; repo total 536 tests / 28 files) |
+| `tests/tools.spec.ts`, `tests/host/{model,transport,server,server-context,agents,settings,manager,index,routes}.spec.ts` | the 9 `tests/host/` suites plus `tests/tools.spec.ts`, all green (14 client suites under `tests/client/`, 5 acceptance suites under `tests/acceptance/`, `tests/delegation.spec.ts`; repo total 583 tests / 30 files) |
 
 Run: `npm run typecheck` (both tsconfigs) and
-`node node_modules/vitest/vitest.mjs run` — both fully green (536 tests / 28 files).
+`node node_modules/vitest/vitest.mjs run` — both fully green (583 tests / 30 files).
 
 ### (a) API signatures and runtime assumptions
 
@@ -774,8 +774,10 @@ written — through the platform's own seams rather than a new channel:
   clears an entry once it reflects the intended value. Failures roll the
   switch back, persist an inline error with Retry, and never auto-dismiss.
   Successful toggles raise a `role="status"` toast with Undo. A single-row
-  Undo writes the inverse; a BULK Undo restores each row's pre-batch value
-  (it never inverts the batch target, which would flip originally-on rows).
+  Undo writes the inverse; a BULK Undo restores each row's pre-batch value in
+  ONE mutation (`restoreScopeValues`) — never as two half-atomic writes — and
+  a failed batch reports only while it still owns a row, so a batch superseded
+  by newer clicks cannot leave a banner whose Retry replays the stale target.
 - **One write queue, two levels.** Every user-triggered document mutation
   (scope, allow, add/edit, remove, credential clear) runs through the section's
   serial queue (`src/client/hooks/use-write-queue.ts`) for ordering and the
@@ -834,13 +836,13 @@ written — through the platform's own seams rather than a new channel:
 | `src/client/hooks/use-write-queue.ts` | section-level serial UI write queue (ordering/pending state; the controller tail survives mounts) |
 | `src/client/draft.ts` | pure staged-draft model (validation, import prefill, wire materialization) |
 | `src/client/view-model.ts` | pure runtime-status, credential-sharing, scope and time helpers |
-| `src/client/import.ts` | 0.0.3 single-server JSON import (`mcpServers` / VS Code `servers` / opencode `mcp`, flat and array shapes → draft; tolerant of a brace-less or torn section (with or without the `mcp` wrapper, dangling separators/closers included), comments, trailing commas, fences and prose; candidates are tried until one resolves a server, so an example snippet above the real config cannot shadow it; discovery is iterative and bounded, so a deeply nested paste cannot throw; `env` takes a map or a `{name,value}` list; secrets land write-only) |
+| `src/client/import.ts` | tolerant JSON import with multi-server candidate selection and one shared scanner (`parseMcpSnippet` is the single-server derivation) (`mcpServers` / VS Code `servers` / opencode `mcp`, flat and array shapes → draft; tolerant of a brace-less or torn section (with or without the `mcp` wrapper, dangling separators/closers included), comments, trailing commas, fences and prose; candidates are tried until one resolves a server, so an example snippet above the real config cannot shadow it; discovery is iterative and bounded, so a deeply nested paste cannot throw; `env` takes a map or a `{name,value}` list; secrets land write-only) |
 | `src/client/runtime.ts` | runtime store over the three host routes: status/action/tool-list reads (`refresh`/`act`/`test`/`tools`); pending-action state lives in the detail view (§6) |
 | `src/client/styles.ts` | style seat: the plugin's stylesheet, its class-name map, and the `data-plugin-css` tag mount (§9) |
 | `src/client/nav-icon.ts` | settings sidebar glyph: paints the plugin's plug mark into OUR nav row (§9.4), because the shell picks the mark from a hardcoded map by section id and the registration carries no icon option |
 | `src/client/workspaces.ts` | minimal workspace-row narrowing (typed items) |
 | `src/client/tool-card/{names,icon,row,view,register}.ts(x)` | transcript lane: MCP tool identity from the session's request header, the keyed tool view, and its registration lifecycle (§6, §5(f)) |
-| `tests/client/{controller,locales,styles,section-render,section-repaint,tool-card,tool-register,import,runtime,injection,injection-row}.spec.ts(x)` | browser-half vitest suites (11 files; the section suites cover list/detail/workspaces/editor, optimistic rollback, queue ordering, draft restore and focus) |
+| `tests/client/{controller,locales,styles,section-render,section-repaint,tool-card,tool-register,import,runtime,injection,injection-row,draft,view-model,nav-icon}.spec.ts(x)` | browser-half vitest suites (14 files; the section suites cover list/detail/workspaces/editor, document-status transitions, optimistic rollback, queue ordering, draft restore and focus) |
 | `tests/acceptance/{copy,store,host-route,styles,section}.acceptance.spec.ts(x)` | independent acceptance suites (contract C1–C4) driven through the real components/manager |
 | `src/client/injection.ts` (contract) + `tests/client/injection.spec.ts` | see §5(f) for the notice and §6 for the lane |
 
@@ -984,10 +986,11 @@ derives, each traceable to source:
   optional and claiming them obliges consuming `renderSlot`.
 - The section's own props are declared explicitly in
   `McpScopeSectionProps` (section.tsx): owner `close`, locale `t`, framework
-  hooks `useDoc` + `useWorkspaces`, the seven document actions (`addServer`,
+  hooks `useDoc` + `useWorkspaces`, the nine document actions (`addServer`,
   `replaceServer`, `removeServer`, `toggleWorkspace`, `toggleWorkspaces`,
-  `setServerEnabled`, `unsetCredential`) plus the runtime members, re-stated
-  with locally-resolvable types. Reason: the official composed type
+  `toggleWorkspaceServers`, `restoreScopeValues`, `setServerEnabled`,
+  `unsetCredential`) plus the runtime members, re-stated with
+  locally-resolvable types. Reason: the official composed type
   (`PropsRuntime`/`InjectFace`/`SnapshotSelectorHook`) rides
   `@deepseek-ai/dsh-client-store` re-exports that are **not installed in this
   dev tree**, so every hook member collapses to `any` there; the register
@@ -1169,7 +1172,7 @@ it goes missing). Switch the token outright when 0.1.7 leaves the peer range.
 | `border: 1px dashed rgba(127,127,127,.5)` form box | the panel's editing surface (`bg-module-platform`, r12, 14/16 padding) |
 | raw `<button>` (OS default chrome) | `ui-primitives` Button capsules: `size="sm"` (h28/r14) for row and header actions, the figma `md` capsule (h36/r18) for the form footer; `outline` for dismiss/secondary, `primary` for commit, danger tint for destructive actions |
 | raw `<input>` (OS default chrome) | official field vocabulary: h34/r8, `border-l4` hairline, `bg-layer-1`, 13px, `brand-primary` focus border, `label-dimmed` placeholder, dimmed when disabled, error border when invalid |
-| raw `<input type="checkbox" role="switch">` | the Switch primitive's look (36×20 track, `brand-primary` when on, 16px thumb, 120ms slide) driven by the same controlled checkbox through `:checked`. The invisible input fills its box, so the box carries a 4px slop (with a cancelling negative margin) — a 44×28 target around the unchanged track, and the workspace ROW is 28px tall so that whole target stays inside its own row: at a 20px row two neighbours' hit boxes overlapped by 6px and the lower input, painting later, stole the band (the bottom ~2px of a switch toggled the row below). The keyboard ring draws that same box (`outline-offset: 2px` plus the ring's own 2px, so the ring's outer edge IS the hit box), the row's label stretches to the full 28px band AND reaches 4px back over the gap the hit box leaves empty (`margin-left: -4px; padding-left: 4px`, so no 4x28 dead column sits beside a live switch), and the track/thumb are `pointer-events: none`: the checked thumb's `transform` promotes it into the positioned paint layer AFTER the absolutely positioned input in DOM order, so without that line a real browser hit-tests the knob to the thumb and the click does nothing (the input must stay the topmost target; the decoration must not be hit-testable). In a workspace row the label spans the WHOLE text run and NO per-row state word is rendered at all — the switch carries on/off by itself (`role="switch"` + `checked`; a column of identical labels is noise, and the word used to swallow clicks as an inert sibling of the label). The expanded block LEADS with the bulk pair so a long list cannot push it past the fold, and past five workspaces it grows a name filter whose narrowing scopes that pair (`All on (N shown)`, and the pair is inert when nothing matches); the query is dropped when its input goes away, so deleting workspaces down past the threshold cannot strand hidden rows behind a control that is no longer there. That inline filter keeps the field GEOMETRY but not the official field fill: `bg-layer-1` reads as a white slab against the card's `bg-layer-3`, so it takes a transparent fill with the `border-l3` hairline our outline buttons use (the brand focus border stays). The rows are a responsive `auto-fill / minmax(200px, 1fr)` grid (a truncated name keeps its full text in `title`), and the row order is frozen when the list opens (enabled first) so a toggle never moves a row out from under the pointer. Row toggles are QUEUED behind one another rather than blocking: the controller judges a save against the document it read, so overlapping writes would report a spurious conflict — but making every row inert for the duration dimmed all switches on each toggle and read as the card blinking. The queue keeps the writes serial and only the row whose write is running carries `data-pending`/`aria-busy` |
+| raw `<input type="checkbox" role="switch">` | the Switch primitive's look (36×20 track, `brand-primary` when on, 16px thumb, 120ms slide) driven by the same controlled checkbox through `:checked`. The invisible input fills its box, so the box carries a 4px slop (with a cancelling negative margin) — a 44×28 target around the unchanged track, and the workspace row keeps a 30px minimum height so that whole target stays inside its own row: at a 20px row two neighbours' hit boxes overlapped by 6px and the lower input, painting later, stole the band (the bottom ~2px of a switch toggled the row below). The keyboard ring draws that same box (`outline-offset: 2px` plus the ring's own 2px, so the ring's outer edge IS the hit box), the switch box carries that slop through `padding: 4px; margin: -4px` (the 44×28 target lands on the row's 30px band without moving the track), the label is a plain `flex: 1` ellipsis element, and the track/thumb are `pointer-events: none`: the checked thumb's `transform` promotes it into the positioned paint layer AFTER the absolutely positioned input in DOM order, so without that line a real browser hit-tests the knob to the thumb and the click does nothing (the input must stay the topmost target; the decoration must not be hit-testable). In a workspace row the label spans the WHOLE text run and NO per-row state word is rendered at all — the switch carries on/off by itself (`role="switch"` + `checked`; a column of identical labels is noise, and the word used to swallow clicks as an inert sibling of the label). The detail block leads with the bulk pair in its header actions so a long list cannot push it past the fold, and from five workspaces it grows a name filter whose narrowing scopes that pair (`All on (N shown)`, and the pair is inert when nothing matches); the field stays on screen while a query is active (the threshold check ORs the query in), so deleting workspaces down past the threshold cannot strand hidden rows behind a control that is no longer there. That inline filter keeps the field GEOMETRY but not the official field fill: `bg-layer-1` reads as a white slab against the settings page, so it takes a transparent fill with the `border-l3` hairline our outline buttons use (the brand focus border stays). The rows are a responsive `auto-fill / minmax(220px, 1fr)` grid (a truncated workspace title keeps the workspace PATH in `title`), and they keep the workspace list's order — no state sorting — so a toggle never moves a row out from under the pointer. Row toggles are QUEUED behind one another rather than blocking: the controller judges a save against the document it read, so overlapping writes would report a spurious conflict — but making every row inert for the duration dimmed all switches on each toggle and read as the panel blinking. The queue keeps the writes serial and only the row whose write is running carries `data-pending`/`aria-busy` |
 | native radios | the Pill primitive's pill (24px/r12, ghost-active fill + inset ring when selected) over the same real radios |
 | literal-colour banners (`#c0392b` / green box) | token notices: failures on the danger tint with `state-error` text, the saved note as `state-success` text |
 | opaque spans for transport/summary/credentials | the Tag pill (999px + `corner-shape: round`, 11/17) with the Tag tone palette: `outline` for the transport, `success`/`warning` (10%/12% `color-mix`) for configured/unconfigured refs, neutral for unknown |
@@ -1250,11 +1253,11 @@ slots, never replacing the shell.
 ```
 [搜索服务器…]  [全部] [已连接] [需关注] [未使用]
 ┌──────────────────────────────────────────────────────────────┐
-│ ● github        流式 HTTP   2/3 个 workspace   12 个工具   › │
+│ ● github        流式 HTTP   2/3 已启用         12 个工具   › │
 │   已连接 · 同步于 14:03                                      │
 ├──────────────────────────────────────────────────────────────┤
 │ ○ filesystem    stdio       未在任何 workspace 使用         › │
-│   未启动 · 未在任何 workspace 使用                           │
+│   状态未知 · 未在任何 workspace 使用                         │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -1266,7 +1269,7 @@ and opens the detail; it carries no switch and no destructive action.
 ```
 ← 所有服务器
 github  [已连接]  流式 HTTP                  [断开] [测试] [刷新状态]
-12 个工具 · 3/5 个 workspace
+12 个工具 · 3/5 已启用
 
 Workspaces (3/5)                          [全部开启] [全部关闭]
 [搜索 workspace…]
@@ -1301,8 +1304,8 @@ enabled-workspace count and the orphaned credential refs.
 ```
 [ 服务器 ] [ Workspaces ]
 
-alpha  · 3/5 个服务器已启用  ›
-beta   · 0/5 个服务器已启用  ›
+alpha  · 3/5 已启用  ›
+beta   · 0/5 已启用  ›
 ```
 
 Selecting one workspace opens its server switches:
@@ -1310,7 +1313,7 @@ Selecting one workspace opens its server switches:
 ```
 ← 所有 Workspaces
 alpha
-3/5 个服务器已启用                     [全部开启] [全部关闭]
+3/5 已启用                             [全部开启] [全部关闭]
 [搜索服务器…]
 ● github      [switch]   已连接
 ● filesystem  [switch]   已停止

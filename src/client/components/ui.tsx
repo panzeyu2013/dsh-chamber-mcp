@@ -68,13 +68,12 @@ export type StatusTone = 'ok' | 'warn' | 'error' | 'idle'
 export interface StatusBadgeProps {
   tone: StatusTone
   label: string
-  detail?: string
 }
 
 /** Dot + text: colour is never the only carrier of the state. */
 export function StatusBadge(props: StatusBadgeProps): JSX.Element {
   return (
-    <span className={cx(styles.statusPill, toneClass(props.tone))} title={props.detail}>
+    <span className={cx(styles.statusPill, toneClass(props.tone))}>
       <span className={styles.statusPillDot} aria-hidden="true" />
       <span>{props.label}</span>
     </span>
@@ -428,7 +427,6 @@ export interface CopyButtonProps {
   copiedLabel: string
   failedLabel: string
   className?: string
-  onDone?(ok: boolean): void
 }
 
 export function CopyButton(props: CopyButtonProps): JSX.Element {
@@ -440,7 +438,7 @@ export function CopyButton(props: CopyButtonProps): JSX.Element {
     },
     [],
   )
-  const { text, onDone } = props
+  const { text } = props
   const copy = useCallback(async (): Promise<void> => {
     let ok = false
     try {
@@ -452,10 +450,9 @@ export function CopyButton(props: CopyButtonProps): JSX.Element {
       ok = false
     }
     setState(ok ? 'ok' : 'fail')
-    onDone?.(ok)
     if (timer.current !== undefined) window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => setState('idle'), 4000)
-  }, [onDone, text])
+  }, [text])
   const label = state === 'ok' ? props.copiedLabel : state === 'fail' ? props.failedLabel : props.label
   return (
     <button

@@ -118,7 +118,9 @@ export function ServerDetail(props: ServerDetailProps): ReactNode {
   // pending "disable everywhere" must disable the workspace switches at once.
   const disabled = !props.allowValue
   const serviceUnavailable = props.runtimePhase === 'unavailable' || props.runtimePhase === 'error'
-  const state = disabled ? 'disabled' : (runtime?.state ?? (serviceUnavailable ? 'unknown' : 'stopped'))
+  // No view = "unknown", never "stopped": the snapshot may simply not have
+  // answered for this server yet.
+  const state = disabled ? 'disabled' : (runtime?.state ?? 'unknown')
   const busyPhase = state === 'connecting' || state === 'reconnecting'
   const statusLabel = disabled
     ? t('status.disabled')
@@ -266,7 +268,11 @@ export function ServerDetail(props: ServerDetailProps): ReactNode {
           ),
     [needle, workspaces],
   )
-  const wsFilterVisible = workspaces.length >= 5
+  // The filter must stay reachable while it is narrowing the list: a workspace
+  // disappearing in another tab can take the count under the threshold, and a
+  // hidden input would strand the remaining rows behind a query nobody can
+  // clear. The sibling list views keep the same invariant.
+  const wsFilterVisible = workspaces.length >= 5 || needle !== ''
   const wsFiltered = wsFilterVisible && needle !== ''
   const rowsDisabled = !props.writable || disabled || props.allowPending
   const bulkIds = visibleWorkspaces.map((workspace) => workspace.workspaceId)
@@ -281,17 +287,20 @@ export function ServerDetail(props: ServerDetailProps): ReactNode {
             tool.description.toLowerCase().includes(toolNeedle),
         )
   const toolCount = Math.max(runtime?.toolCount ?? 0, tools?.tools.length ?? 0)
-  const diagnosticText = [
-    'server: ' + server.serverName,
-    'transport: ' + server.transport,
-    'state: ' + String(state),
-    maybeError !== undefined ? 'code: ' + maybeError.code : undefined,
-    maybeError !== undefined ? 'message: ' + maybeError.message : undefined,
-    runtime !== undefined ? 'attempts: ' + runtime.attempts + '/' + runtime.maxAttempts : undefined,
-    runtime?.syncedAt !== undefined ? 'syncedAt: ' + new Date(runtime.syncedAt).toISOString() : undefined,
-  ]
-    .filter((line): line is string => line !== undefined)
-    .join('\n')
+  // Machine-readable on purpose: this is pasted into bug reports, so it must
+  // stay copy that carries no locale and no user-facing prose.
+  const diagnosticText = JSON.stringify(
+    {
+      server: server.serverName,
+      transport: server.transport,
+      state: String(state),
+      ...(maybeError !== undefined ? { code: maybeError.code, message: maybeError.message } : {}),
+      ...(runtime !== undefined ? { attempts: runtime.attempts, maxAttempts: runtime.maxAttempts } : {}),
+      ...(runtime?.syncedAt !== undefined ? { syncedAt: new Date(runtime.syncedAt).toISOString() } : {}),
+    },
+    null,
+    2,
+  )
 
   return (
     <div className={styles.detail} data-mcp-server-detail={server.serverName}>

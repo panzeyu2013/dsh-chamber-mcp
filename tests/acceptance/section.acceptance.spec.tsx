@@ -198,6 +198,60 @@ describe('C4 correctness: off-by-default and optimistic writes', () => {
     await flush()
     expect(mounted.calls.writes).toEqual([])
   })
+
+  it('[correctness] a document that was still loading finishes into the list', async () => {
+    const mounted = mountSection({
+      doc: { servers: [stdioServer(SERVER)], overrides: {} },
+      wsItems: WS,
+      runtime: runtimeWith([SERVER]),
+      docStatus: 'loading',
+    })
+    await flush()
+    expect(mounted.text()).toContain(text('state.loading'))
+    mounted.setDocStatus('ready')
+    await flush()
+    expect(rowOf(mounted, SERVER)).not.toBeNull()
+    mounted.setDocStatus('unavailable')
+    await flush()
+    expect(mounted.text()).toContain(text('state.unavailable'))
+    mounted.setDocStatus('ready')
+    await flush()
+    expect(rowOf(mounted, SERVER)).not.toBeNull()
+  })
+
+  it('[correctness] a failed bulk write leaves every row on the committed value and reports once', async () => {
+    let failBatch!: (outcome: { ok: false; reason: 'conflict' }) => void
+    const mounted = mountSection({
+      doc: { servers: [stdioServer(SERVER)], overrides: {} },
+      wsItems: WS,
+      runtime: runtimeWith([SERVER]),
+      actions: {
+        toggleWorkspaces: () =>
+          new Promise((resolve) => {
+            failBatch = resolve
+          }),
+        toggleWorkspace: async () => ({ ok: true }),
+      },
+    })
+    await flush()
+    const detail = await openServer(mounted, SERVER)
+    const scopeSwitch = (title: string): HTMLInputElement =>
+      mounted.host.querySelector<HTMLInputElement>(
+        'input[aria-label="' + text('server.workspacesTitle') + ': ' + title + '"]',
+      )!
+    buttonWith(detail, text('row.allOn')).click()
+    await flush()
+    // A newer per-row write on beta while the batch is in flight.
+    scopeSwitch('beta').click()
+    await flush()
+    failBatch({ ok: false, reason: 'conflict' })
+    await flush()
+    await flush()
+    expect(scopeSwitch('alpha').checked).toBe(false)
+    expect(scopeSwitch('beta').checked).toBe(false)
+    expect(scopeSwitch('gamma').checked).toBe(false)
+    expect(mounted.text()).toContain(text('error.conflict'))
+  })
 })
 
 describe('C4 completeness: one test per user-visible capability', () => {
@@ -385,8 +439,14 @@ describe('C4 completeness: one test per user-visible capability', () => {
     buttonWith(mounted.host, text('toast.undo')).click()
     await flush()
     expect(mounted.calls.writeArgs.slice(1)).toEqual([
-      { action: 'toggleWorkspaceServers', args: ['ws-1', ['alpha'], true] },
-      { action: 'toggleWorkspaceServers', args: ['ws-1', ['beta', 'gamma'], false] },
+      {
+        action: 'restoreScopeValues',
+        args: [[
+          { workspaceId: 'ws-1', serverName: 'alpha', enabled: true },
+          { workspaceId: 'ws-1', serverName: 'beta', enabled: false },
+          { workspaceId: 'ws-1', serverName: 'gamma', enabled: false },
+        ]],
+      },
     ])
   })
 

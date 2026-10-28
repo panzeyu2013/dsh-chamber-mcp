@@ -130,7 +130,7 @@ export function WorkspaceDetailView(props: WorkspaceDetailViewProps): ReactNode 
                 const disabled = isServerDisabled(doc, server.serverName)
                 const view = runtimeOf(runtime, server.serverName)
                 const serviceUnavailable = runtime.phase === 'unavailable' || runtime.phase === 'error'
-                const state = disabled ? 'disabled' : (view?.state ?? (serviceUnavailable ? 'unknown' : 'stopped'))
+                const state = disabled ? 'disabled' : (view?.state ?? 'unknown')
                 const label =
                   view === undefined && runtime.phase === 'loading'
                     ? t('state.loading')

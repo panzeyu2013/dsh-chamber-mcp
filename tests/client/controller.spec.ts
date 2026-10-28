@@ -993,6 +993,66 @@ describe('McpScopeController save pipeline (FE-4)', () => {
     }
   })
 
+
+  it('restoreScopeValues writes a mixed set in ONE revision-fenced mutation', async () => {
+    const { scope, controller, stop } = makePipeline(doc([stdioServer('a')], { ws1: { a: true } }))
+    try {
+      const before = scope.mutateCalls.length
+      const outcome = await controller.restoreScopeValues([
+        { workspaceId: 'ws1', serverName: 'a', enabled: true },
+        { workspaceId: 'ws2', serverName: 'a', enabled: false },
+        { workspaceId: 'ws3', serverName: 'a', enabled: true },
+      ])
+      expect(outcome).toEqual({ ok: true })
+      expect(scope.mutateCalls.length).toBe(before + 1)
+      expect(scope.mutateCalls.at(-1)!.ops).toEqual([
+        { op: 'set', path: ['overrides', 'ws3', 'a'], value: true },
+      ])
+      expect(scope.mirror.overrides).toEqual({ ws1: { a: true }, ws3: { a: true } })
+    } finally {
+      stop()
+    }
+  })
+
+  it('restoreScopeValues skips vanished servers and conflicts when nothing is restorable', async () => {
+    const { scope, controller, stop } = makePipeline(doc([stdioServer('a')]))
+    try {
+      const before = scope.mutateCalls.length
+      expect(
+        await controller.restoreScopeValues([{ workspaceId: 'ws1', serverName: 'gone', enabled: true }]),
+      ).toEqual({ ok: false, reason: 'conflict' })
+      expect(scope.mutateCalls.length).toBe(before)
+      expect(
+        await controller.restoreScopeValues([
+          { workspaceId: 'ws1', serverName: 'gone', enabled: true },
+          { workspaceId: 'ws1', serverName: 'a', enabled: true },
+        ]),
+      ).toEqual({ ok: true })
+      expect(scope.mirror.overrides).toEqual({ ws1: { a: true } })
+    } finally {
+      stop()
+    }
+  })
+
+
+  it('restoreScopeValues unsets the override row it restores to off', async () => {
+    const { scope, controller, stop } = makePipeline(doc([stdioServer('a')], { ws1: { a: true } }))
+    try {
+      const before = scope.mutateCalls.length
+      expect(
+        await controller.restoreScopeValues([{ workspaceId: 'ws1', serverName: 'a', enabled: false }]),
+      ).toEqual({ ok: true })
+      expect(scope.mutateCalls.length).toBe(before + 1)
+      expect(scope.mutateCalls.at(-1)!.ops).toEqual([
+        { op: 'unset', path: ['overrides', 'ws1', 'a'] },
+        { op: 'unset', path: ['overrides', 'ws1'] },
+      ])
+      expect(scope.mirror.overrides).toEqual({})
+    } finally {
+      stop()
+    }
+  })
+
   it('treats a dropped timeoutMs as a landed-write mismatch', () => {
     const withTimeout: ServerDef = { ...stdioServer('a'), timeoutMs: 120_000 }
     const without = stdioServer('a')

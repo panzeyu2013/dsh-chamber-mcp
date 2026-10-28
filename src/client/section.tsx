@@ -71,6 +71,7 @@ export interface McpScopeSectionProps {
   toggleWorkspace: McpScopeFace['toggleWorkspace']
   toggleWorkspaces: McpScopeFace['toggleWorkspaces']
   toggleWorkspaceServers: McpScopeFace['toggleWorkspaceServers']
+  restoreScopeValues: McpScopeFace['restoreScopeValues']
   setServerEnabled: McpScopeFace['setServerEnabled']
   unsetCredential: McpScopeFace['unsetCredential']
   /** Live runtime-status store (host routes over the Connection carrier). */
@@ -98,6 +99,14 @@ interface PendingEntry {
   token: number
   workspaceId?: string
   serverName?: string
+}
+
+/** One row of a bulk scope batch (the pre-batch value drives its Undo). */
+interface BulkTarget {
+  workspaceId: string
+  serverName: string
+  /** Pre-batch value of the row; Undo restores exactly this, never the inverse. */
+  value: boolean
 }
 
 interface ToastState {
@@ -148,6 +157,13 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
   const pendingScopeRef = useRef(pendingScope)
   pendingAllowRef.current = pendingAllow
   pendingScopeRef.current = pendingScope
+  // Undo/Retry closures live in a toast or a failure banner and outlive the
+  // render that created them; they must read the CURRENT workspace list, not
+  // the snapshot captured when the batch started.
+  const workspacesRef = useRef(workspaces)
+  const workspaceStatusRef = useRef(workspaceStatus)
+  workspacesRef.current = workspaces
+  workspaceStatusRef.current = workspaceStatus
 
   useEffect(() => {
     alive.current = true
@@ -462,6 +478,121 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
     reportFailure(outcome, () => void handleToggleScope(workspaceId, serverName, next, undoable, message))
   }
 
+  /**
+   * Show `target` on every row of one batch, run ONE revision-fenced write, and
+   * settle the optimistic entries by token. A failure drops only the entries
+   * this batch still owns — {@link dropScope} is token-filtered — and reports
+   * once, so a row the user has touched since keeps its newer value instead of
+   * being silently pinned to a write that never landed.
+   */
+  async function runScopeBulk(
+    targets: readonly BulkTarget[],
+    target: boolean,
+    message: string,
+    write: () => Promise<SaveOutcome>,
+    undoable: boolean,
+  ): Promise<void> {
+    if (!writable || targets.length === 0) return
+    const token = ++tokenRef.current
+    const keys = targets.map((entry) => scopeKey(entry.workspaceId, entry.serverName))
+    setPendingScope((prev) => {
+      const next = { ...prev }
+      for (const entry of targets) {
+        next[scopeKey(entry.workspaceId, entry.serverName)] = {
+          value: target,
+          settled: false,
+          token,
+          workspaceId: entry.workspaceId,
+          serverName: entry.serverName,
+        }
+      }
+      return next
+    })
+    setFailure(null)
+    let outcome: SaveOutcome
+    try {
+      outcome = await queue.run(write)
+    } catch {
+      outcome = { ok: false, reason: 'save-failed' }
+    }
+    if (!alive.current) return
+    if (outcome.ok) {
+      markScopeSettled(keys, token)
+      showToast(message, undoable ? () => void restoreBulk(targets) : undefined)
+      return
+    }
+    // Report only while this batch still owns a row. When every row has been
+    // superseded by a newer click, the failure is already moot, and the banner
+    // would carry a Retry that replays the STALE batch over the user's newer
+    // choices. The drop itself stays token-filtered either way.
+    const owned = keys.some((key) => pendingScopeRef.current[key]?.token === token)
+    dropScope(keys, token)
+    if (!owned) return
+    reportFailure(outcome, () => void runScopeBulk(targets, target, message, write, undoable))
+  }
+
+  /**
+   * Put every row of a completed batch back to its PRE-BATCH value, as ONE
+   * mutation. A batch over a mixed set cannot be replayed as two single-value
+   * writes without leaving a half-restored document if the second one fails.
+   */
+  async function restoreBulk(batch: readonly BulkTarget[]): Promise<void> {
+    // A workspace that vanished between the batch and its Undo must not get an
+    // override row written for it (that is the stale row the removal cascade
+    // works to avoid). The list is authoritative once it has settled.
+    const targets =
+      workspaceStatusRef.current === 'ready'
+        ? batch.filter((entry) =>
+            workspacesRef.current.some((workspace) => workspace.workspaceId === entry.workspaceId),
+          )
+        : batch
+    if (!writable) return
+    if (targets.length === 0) {
+      // Every row's workspace disappeared before the Undo landed: say so
+      // instead of swallowing the click.
+      showToast(t('toast.undoNothing'))
+      return
+    }
+    const token = ++tokenRef.current
+    const keys = targets.map((entry) => scopeKey(entry.workspaceId, entry.serverName))
+    setPendingScope((prev) => {
+      const next = { ...prev }
+      for (const entry of targets) {
+        next[scopeKey(entry.workspaceId, entry.serverName)] = {
+          value: entry.value,
+          settled: false,
+          token,
+          workspaceId: entry.workspaceId,
+          serverName: entry.serverName,
+        }
+      }
+      return next
+    })
+    setFailure(null)
+    let outcome: SaveOutcome
+    try {
+      outcome = await queue.run(() =>
+        props.restoreScopeValues(
+          targets.map((entry) => ({
+            workspaceId: entry.workspaceId,
+            serverName: entry.serverName,
+            enabled: entry.value,
+          })),
+        ),
+      )
+    } catch {
+      outcome = { ok: false, reason: 'save-failed' }
+    }
+    if (!alive.current) return
+    if (outcome.ok) {
+      markScopeSettled(keys, token)
+      showToast(t('toast.undone'))
+      return
+    }
+    dropScope(keys, token)
+    reportFailure(outcome, () => void restoreBulk(batch))
+  }
+
   async function handleServerBulk(
     serverName: string,
     enabled: boolean,
@@ -474,51 +605,18 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
             workspaces.some((workspace) => workspace.workspaceId === workspaceId),
           )
         : [...workspaceIdsToWrite]
-    if (!writable || targetIds.length === 0) return
-    // Undo restores the PRE-BATCH value of each row, not the inverse of the
-    // batch target: "all on" over a mixed set must put the originally-on rows
-    // back on and the originally-off rows back off.
-    const previous = targetIds.map((workspaceId) => ({
+    const targets = targetIds.map((workspaceId) => ({
       workspaceId,
+      serverName,
       value: scopeValue(workspaceId, serverName),
     }))
-    const token = ++tokenRef.current
-    const keys = targetIds.map((workspaceId) => scopeKey(workspaceId, serverName))
-    setPendingScope((prev) => {
-      const next = { ...prev }
-      for (const workspaceId of targetIds) {
-        next[scopeKey(workspaceId, serverName)] = {
-          value: enabled,
-          settled: false,
-          token,
-          workspaceId,
-          serverName,
-        }
-      }
-      return next
-    })
-    setFailure(null)
-    let outcome: SaveOutcome
-    try {
-      outcome = await queue.run(() => props.toggleWorkspaces(serverName, enabled, targetIds))
-    } catch {
-      outcome = { ok: false, reason: 'save-failed' }
-    }
-    if (!alive.current) return
-    if (outcome.ok) {
-      markScopeSettled(keys, token)
-      showToast(
-        t('toast.scopeBulk', { server: serverName, count: targetIds.length }),
-        undoable ? () => void restoreServerBulk(serverName, previous) : undefined,
-      )
-      return
-    }
-    if (keys.some((key) => {
-      const entry = pendingScopeRef.current[key]
-      return entry !== undefined && entry.token !== token
-    })) return
-    dropScope(keys, token)
-    reportFailure(outcome, () => void handleServerBulk(serverName, enabled, targetIds, undoable))
+    await runScopeBulk(
+      targets,
+      enabled,
+      t('toast.scopeBulk', { server: serverName, count: targets.length }),
+      () => props.toggleWorkspaces(serverName, enabled, targetIds),
+      undoable,
+    )
   }
 
   async function handleWorkspaceBulk(
@@ -530,141 +628,32 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
     const targetNames = serverNames.filter((serverName) =>
       doc.servers.some((server) => server.serverName === serverName),
     )
-    if (!writable || targetNames.length === 0) return
-    const previous = targetNames.map((serverName) => ({
+    const workspaceTitle =
+      workspaces.find((workspace) => workspace.workspaceId === workspaceId)?.title ?? workspaceId
+    const targets = targetNames.map((serverName) => ({
+      workspaceId,
       serverName,
       value: scopeValue(workspaceId, serverName),
     }))
-    const token = ++tokenRef.current
-    const keys = targetNames.map((serverName) => scopeKey(workspaceId, serverName))
-    setPendingScope((prev) => {
-      const next = { ...prev }
-      for (const serverName of targetNames) {
-        next[scopeKey(workspaceId, serverName)] = {
-          value: enabled,
-          settled: false,
-          token,
-          workspaceId,
-          serverName,
-        }
-      }
-      return next
-    })
-    setFailure(null)
-    let outcome: SaveOutcome
-    try {
-      outcome = await queue.run(() => props.toggleWorkspaceServers(workspaceId, targetNames, enabled))
-    } catch {
-      outcome = { ok: false, reason: 'save-failed' }
-    }
-    if (!alive.current) return
-    const workspaceTitle =
-      workspaces.find((workspace) => workspace.workspaceId === workspaceId)?.title ?? workspaceId
-    if (outcome.ok) {
-      markScopeSettled(keys, token)
-      showToast(
-        t('toast.workspaceBulk', { count: targetNames.length, workspace: workspaceTitle }),
-        undoable ? () => void restoreWorkspaceBulk(workspaceId, previous) : undefined,
-      )
-      return
-    }
-    if (keys.some((key) => {
-      const entry = pendingScopeRef.current[key]
-      return entry !== undefined && entry.token !== token
-    })) return
-    dropScope(keys, token)
-    reportFailure(outcome, () => void handleWorkspaceBulk(workspaceId, enabled, targetNames, undoable))
+    await runScopeBulk(
+      targets,
+      enabled,
+      t('toast.workspaceBulk', { count: targets.length, workspace: workspaceTitle }),
+      () => props.toggleWorkspaceServers(workspaceId, targetNames, enabled),
+      undoable,
+    )
   }
 
-
-  /** Restore a mixed server→workspaces batch to its exact pre-batch values. */
-  async function restoreServerBulk(
-    serverName: string,
-    previous: readonly { workspaceId: string; value: boolean }[],
-  ): Promise<void> {
-    if (!writable || previous.length === 0) return
-    const token = ++tokenRef.current
-    const keys = previous.map((entry) => scopeKey(entry.workspaceId, serverName))
-    setPendingScope((prev) => {
-      const next = { ...prev }
-      for (const entry of previous) {
-        next[scopeKey(entry.workspaceId, serverName)] = {
-          value: entry.value,
-          settled: false,
-          token,
-          workspaceId: entry.workspaceId,
-          serverName,
-        }
-      }
-      return next
-    })
-    setFailure(null)
-    let outcome: SaveOutcome
-    try {
-      outcome = await queue.run(async () => {
-        const onIds = previous.filter((entry) => entry.value).map((entry) => entry.workspaceId)
-        const offIds = previous.filter((entry) => !entry.value).map((entry) => entry.workspaceId)
-        let last: SaveOutcome = { ok: true }
-        if (onIds.length > 0) last = await props.toggleWorkspaces(serverName, true, onIds)
-        if (last.ok && offIds.length > 0) last = await props.toggleWorkspaces(serverName, false, offIds)
-        return last
-      })
-    } catch {
-      outcome = { ok: false, reason: 'save-failed' }
+  /** Label of the editor's back control: it names the surface it returns to. */
+  function editorBackLabel(returnTo: BaseView): string {
+    if (returnTo.kind === 'workspace') {
+      const title =
+        workspaces.find((workspace) => workspace.workspaceId === returnTo.id)?.title ?? returnTo.id
+      return t('editor.backTo', { target: title })
     }
-    if (!alive.current) return
-    if (outcome.ok) {
-      markScopeSettled(keys, token)
-      showToast(t('toast.undone'))
-      return
-    }
-    dropScope(keys, token)
-    reportFailure(outcome, () => void restoreServerBulk(serverName, previous))
-  }
-
-  /** Restore a mixed workspace→servers batch to its exact pre-batch values. */
-  async function restoreWorkspaceBulk(
-    workspaceId: string,
-    previous: readonly { serverName: string; value: boolean }[],
-  ): Promise<void> {
-    if (!writable || previous.length === 0) return
-    const token = ++tokenRef.current
-    const keys = previous.map((entry) => scopeKey(workspaceId, entry.serverName))
-    setPendingScope((prev) => {
-      const next = { ...prev }
-      for (const entry of previous) {
-        next[scopeKey(workspaceId, entry.serverName)] = {
-          value: entry.value,
-          settled: false,
-          token,
-          workspaceId,
-          serverName: entry.serverName,
-        }
-      }
-      return next
-    })
-    setFailure(null)
-    let outcome: SaveOutcome
-    try {
-      outcome = await queue.run(async () => {
-        const onNames = previous.filter((entry) => entry.value).map((entry) => entry.serverName)
-        const offNames = previous.filter((entry) => !entry.value).map((entry) => entry.serverName)
-        let last: SaveOutcome = { ok: true }
-        if (onNames.length > 0) last = await props.toggleWorkspaceServers(workspaceId, onNames, true)
-        if (last.ok && offNames.length > 0) last = await props.toggleWorkspaceServers(workspaceId, offNames, false)
-        return last
-      })
-    } catch {
-      outcome = { ok: false, reason: 'save-failed' }
-    }
-    if (!alive.current) return
-    if (outcome.ok) {
-      markScopeSettled(keys, token)
-      showToast(t('toast.undone'))
-      return
-    }
-    dropScope(keys, token)
-    reportFailure(outcome, () => void restoreWorkspaceBulk(workspaceId, previous))
+    if (returnTo.kind === 'server') return t('editor.backTo', { target: returnTo.name })
+    if (returnTo.kind === 'workspaces') return t('workspace.back')
+    return t('editor.back')
   }
 
   function baseViewOf(current: SectionView): BaseView {
@@ -718,12 +707,15 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
 
   function requestRemove(serverName: string): void {
     setFailure(null)
-    // Count the document's enable records directly: the workspace list may
-    // still be loading, and an override row is the source of truth for "how
-    // many workspaces enable this server".
-    const workspaceCount = Object.values(doc.overrides).filter((row) =>
-      Object.hasOwn(row, serverName),
-    ).length
+    // Prefer the LIVE workspace list, which is also what the list/detail scope
+    // summary counts: a stale override row for a deleted workspace would
+    // otherwise inflate the number this confirmation promises. The stored rows
+    // remain the fallback while the list is still loading or failed.
+    const workspaceCount =
+      workspaceStatus === 'ready'
+        ? workspaces.filter((workspace) => isEnabled(doc.overrides, workspace.workspaceId, serverName))
+            .length
+        : Object.values(doc.overrides).filter((row) => Object.hasOwn(row, serverName)).length
     const id = ++confirmSeq.current
     activeConfirmId.current = id
     setConfirmPending(false)
@@ -798,14 +790,12 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
     reportFailure(outcome, () => void performClear(ref, -1))
   }
 
-  if (snapshot.status === 'loading') {
-    return <p className={styles.empty}>{t('state.loading')}</p>
-  }
-  if (snapshot.status === 'unavailable') {
-    return <p className={styles.empty}>{t('state.unavailable')}</p>
-  }
-
   const activeTab = view.kind === 'workspaces' || view.kind === 'workspace' ? 'workspaces' : 'servers'
+  // Hooks may only run when the component renders: the status early returns
+  // below are reached on a normal mount and then replaced by the full surface
+  // (loading -> ready after the first document describe, or a dropped namespace
+  // -> unavailable). Keeping every hook above them is what makes the hook count
+  // stable across those transitions.
   const editorState = useMemo(() => {
     if (view.kind !== 'editor') return { initial: EMPTY_DRAFT, existingNames: [] as string[] }
     const server =
@@ -822,6 +812,13 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
   }, [doc, view])
   const editorInitial = editorState.initial
   const editorExistingNames = editorState.existingNames
+
+  if (snapshot.status === 'loading') {
+    return <p className={styles.empty}>{t('state.loading')}</p>
+  }
+  if (snapshot.status === 'unavailable') {
+    return <p className={styles.empty}>{t('state.unavailable')}</p>
+  }
 
   const failureNotice =
     failure !== null ? (
@@ -957,6 +954,7 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
           mode={view.mode}
           initial={editorInitial}
           originalName={view.mode === 'edit' ? view.name : undefined}
+          backLabel={editorBackLabel(view.returnTo)}
           existingNames={editorExistingNames}
           writable={writable}
           credentials={credentials}
@@ -1127,7 +1125,6 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
             setWorkspaceServerQuery('')
             go({ kind: 'workspace', id })
           }}
-          writable={writable}
         />
       )}
       {view.kind === 'workspace' && (() => {

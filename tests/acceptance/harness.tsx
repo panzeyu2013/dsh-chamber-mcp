@@ -39,7 +39,7 @@ export function makeT(dict: Dictionary, missing: string[] = []) {
   }
 }
 
-export const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 20))
+export const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 2))
 
 export const EMPTY_RUNTIME: RuntimeSnapshot = { phase: 'ready', servers: {} }
 
@@ -80,6 +80,7 @@ export interface RecordedWrite {
     | 'toggleWorkspace'
     | 'toggleWorkspaces'
     | 'toggleWorkspaceServers'
+    | 'restoreScopeValues'
     | 'setServerEnabled'
     | 'unsetCredential'
   args: readonly unknown[]
@@ -113,6 +114,9 @@ export interface Actions {
     serverNames: readonly string[],
     enabled: boolean,
   ) => Promise<{ ok: boolean }>
+  restoreScopeValues?: (
+    entries: readonly { workspaceId: string; serverName: string; enabled: boolean }[],
+  ) => Promise<{ ok: boolean }>
   setServerEnabled?: (serverName: string, enabled: boolean) => Promise<{ ok: boolean }>
   unsetCredential?: (ref: string) => Promise<{ ok: boolean }>
   connectServer?: (name: string) => Promise<unknown>
@@ -120,6 +124,8 @@ export interface Actions {
   testServer?: (name: string) => Promise<RuntimeTestResult>
   loadTools?: (name: string) => Promise<{ tools: RuntimeToolEntry[]; truncated: boolean; total: number }>
 }
+
+export type DocStatus = 'loading' | 'ready' | 'unavailable'
 
 export interface MountOptions {
   doc: McpScopeDoc
@@ -132,13 +138,17 @@ export interface MountOptions {
   /** Collected when a render asks for a key its dictionary does not carry. */
   missingKeys?: string[]
   actions?: Actions
+  /** Document status at mount (a live change goes through `setDocStatus`). */
+  docStatus?: DocStatus
 }
 
 export interface Harness {
   host: HTMLDivElement
-  live: { doc: McpScopeDoc; revision: number; runtime?: RuntimeSnapshot }
+  live: { doc: McpScopeDoc; revision: number; runtime?: RuntimeSnapshot; docStatus: DocStatus }
   calls: RecordedCalls
   missing: string[]
+  /** Flip the document status (a real store publishes loading -> ready). */
+  setDocStatus(status: DocStatus): void
   rerender(): void
   /** Commit a new document (the write succeeded) and re-render. */
   commitDoc(next: McpScopeDoc): void
@@ -171,6 +181,7 @@ export function mountSection(options: MountOptions): Harness {
     revision: options.revision ?? 3,
     runtime: options.runtime,
     wsItems: options.wsItems ?? [],
+    docStatus: options.docStatus ?? ('ready' as DocStatus),
   }
   const missing = options.missingKeys ?? []
   const dict = dictOf(options.locale)
@@ -244,6 +255,15 @@ export function mountSection(options: MountOptions): Harness {
       ? actions.toggleWorkspaceServers(workspaceId, serverNames, enabled)
       : { ok: true }
   }
+  const restoreScopeValues = async (
+    entries: readonly { workspaceId: string; serverName: string; enabled: boolean }[],
+  ): Promise<{ ok: boolean }> => {
+    calls.writes.push('restoreScopeValues')
+    calls.writeArgs.push({ action: 'restoreScopeValues', args: [entries.map((entry) => ({ ...entry }))] })
+    return actions.restoreScopeValues !== undefined
+      ? actions.restoreScopeValues(entries)
+      : { ok: true }
+  }
   const setServerEnabled = async (serverName: string, enabled: boolean): Promise<{ ok: boolean }> => {
     calls.writes.push('setServerEnabled')
     calls.writeArgs.push({ action: 'setServerEnabled', args: [serverName, enabled] })
@@ -277,7 +297,7 @@ export function mountSection(options: MountOptions): Harness {
 
   const docHook = ((selector: (snapshot: unknown) => unknown) =>
     selector({
-      status: 'ready',
+      status: live.docStatus,
       doc: live.doc,
       revision: live.revision,
       writable: options.writable ?? true,
@@ -300,6 +320,7 @@ export function mountSection(options: MountOptions): Harness {
     toggleWorkspace: toggleWorkspace as unknown as McpScopeSectionProps['toggleWorkspace'],
     toggleWorkspaces: toggleWorkspaces as unknown as McpScopeSectionProps['toggleWorkspaces'],
     toggleWorkspaceServers: toggleWorkspaceServers as unknown as McpScopeSectionProps['toggleWorkspaceServers'],
+    restoreScopeValues: restoreScopeValues as unknown as McpScopeSectionProps['restoreScopeValues'],
     setServerEnabled: setServerEnabled as unknown as McpScopeSectionProps['setServerEnabled'],
     unsetCredential: unsetCredential as unknown as McpScopeSectionProps['unsetCredential'],
     useRuntime: runtimeHook,
@@ -321,6 +342,10 @@ export function mountSection(options: MountOptions): Harness {
     live,
     calls,
     missing,
+    setDocStatus: (status: DocStatus) => {
+      live.docStatus = status
+      root.render(<McpScopeSection {...props} />)
+    },
     rerender: () => root.render(<McpScopeSection {...props} />),
     commitDoc: (next: McpScopeDoc) => {
       live.doc = next

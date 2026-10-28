@@ -42,8 +42,11 @@ export function statusKeyOf(state: RuntimePhase): SettingsKey {
       return 'status.stopped'
     case 'disabled':
       return 'status.disabled'
-    default:
-      return 'status.notStarted'
+    case 'unknown':
+      // The host reports 'unknown' for a server it has not reconciled yet
+      // ("enabled but never tracked"). Saying "not started" here would claim
+      // knowledge the plugin does not have.
+      return 'status.unknown'
   }
 }
 
@@ -112,15 +115,6 @@ export function orphanedRefsOf(doc: McpScopeDoc, serverName: string): string[] {
     for (const ref of credentialRefsOf(server)) others.add(ref)
   }
   return credentialRefsOf(target).filter((ref) => !others.has(ref))
-}
-
-/** How many workspaces explicitly enable one server (globally disabled still counts in the doc). */
-export function enabledWorkspaceIds(
-  doc: McpScopeDoc,
-  serverName: string,
-  workspaceIds: readonly string[],
-): string[] {
-  return workspaceIds.filter((workspaceId) => isEnabled(doc.overrides, workspaceId, serverName))
 }
 
 /** How many servers one workspace explicitly enables. */
