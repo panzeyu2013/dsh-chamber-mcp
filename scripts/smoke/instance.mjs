@@ -123,7 +123,7 @@ export class Instance {
     if (!semver.satisfies(anchorVersion, PEER_RANGE, { includePrerelease: true })) {
       throw new Error(
         `anchor CLI is dsh@${anchorVersion} (${ANCHOR_CLI}); dsh-chamber-mcp declares its @deepseek-ai/dsh-* peers as "${PEER_RANGE}" — ` +
-        'point DSH_ANCHOR_CLI at a CLI inside that range (see docs/status.md "How to re-verify")',
+        'point DSH_ANCHOR_CLI at a CLI inside that range (see docs/RELEASE.md §Pre-tag checklist)',
       )
     }
     const env = {

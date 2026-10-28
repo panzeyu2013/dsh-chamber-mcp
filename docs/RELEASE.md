@@ -60,6 +60,11 @@ npm ci --no-audit --no-fund && npm run check
 #     verify:package now rejects and npm ci would install unpinned.
 npm install --package-lock-only --no-audit --no-fund
 
+# 1b. per-generation type guard — the exact command CI's compat job runs.
+#     Auditing a line NEWER than the dev pin needs its framework pins (see
+#     §Auditing a new upstream line); the install stays exact.
+node scripts/verify-generation.mjs 0.1.7-rc.2
+
 # 2. release mechanics
 node scripts/release-notes.mjs "$(node -p "require('./package.json').version")"   # notes compose
 node scripts/verify-workflow-action-pins.mjs                                      # pins + release structure
@@ -113,27 +118,12 @@ git push origin v<version>  # triggers .github/workflows/release.yml
 
 ### Docs to update with the release
 
-Keep these three in step with the tag; each one states, or is composed from, the
-released version:
-
-| File | What must be true at the tagged commit |
-|---|---|
-| `CHANGELOG.md` | a dated `## [<version>] - YYYY-MM-DD` section (release notes are composed from it — the workflow fails without one) |
-| `README.md` | the *Install* release-status line names the version actually on the Releases page, and the install example resolves |
-| `docs/status.md` | the "Release state" block (working line, published release, verification state) |
-
-Re-run the pre-tag checklist after editing any of them.
-
-**Ordering note.** At the tagged commit the Releases page still serves the
-*previous* release (the tag push is what creates the new one), so the pre-tag
-wording is honest only until the workflow finishes. Two statements therefore
-flip in a **post-release edit** — do it right after the workflow reports success,
-then commit with `docs: release v<version> is out`:
-
-| File | Before the workflow finishes | After it succeeds |
-|---|---|---|
-| `README.md` | "the newest published release is `v<previous>`; the `<version>` line is prepared … but not tagged yet" | "the newest published release is **`v<version>`**" (drop the not-tagged sentence; the install example already uses `<version>` placeholders) |
-| `docs/status.md` | "`<version>` is prepared on `main` … but **not tagged**; do not describe it as released" | "**Published release: `v<version>`**" plus the tag/Release line and the verification state at that commit |
+`CHANGELOG.md` is the only version-bearing doc: the workflow composes the
+release notes from its dated `## [<version>] - YYYY-MM-DD` section and fails
+without one. `README.md` stays version-agnostic — the install example uses
+`<version>` placeholders and the badge reads the Releases page — so no doc
+statement has to flip once the tag lands, and there is no post-release edit.
+Re-run the pre-tag checklist after editing the changelog.
 
 The workflow then:
 
@@ -191,8 +181,8 @@ Compatibility notes for consumers:
   used. Note that the M1 driver installs through `dsh plugin add`, which
   delegates to pnpm inside the profile directory: on a checkout whose
   `package.json` declares `packageManager`, corepack's strict mode can refuse
-  the install: use the scratch `pnpm` shim documented in `docs/status.md`
-  §"How to re-verify" (or export `COREPACK_ENABLE_STRICT=0`). M0, the
+  the install: use a scratch `pnpm` shim (or export
+  `COREPACK_ENABLE_STRICT=0`). M0, the
   plugin-lifecycle driver, is unaffected either way.
 - **Do not reintroduce a STATIC import of `@deepseek-ai/dsh-mcp-client`.**
   Measured on 2026-09-16 on the 0.1.5 chamber anchor: a static
@@ -250,8 +240,8 @@ Compatibility notes for consumers:
       `1.0.7-alpha.1`, `@deepseek-ai/schemastery` to `~3.18.6-alpha.1`;
       without the schemastery move the install fails ERESOLVE (0.2.2 packages
       peer on `~3.18.6-alpha.1` and the root dependency wins). The measurement
-      and its clean-tree evidence live in `docs/status.md` §Verification state
-      (2026-10-28) — do not restate them here. To audit the line before moving
+      live in `CHANGELOG.md` and the GitHub Release notes — do not restate them
+      here. To audit the line before moving
       the pin, pass those three explicitly; the guard keeps the install EXACT,
       so the closure is complete and the framework types are exercised:
       `node scripts/verify-generation.mjs 0.2.2-alpha.2 --pin

@@ -5,8 +5,8 @@ verification target: the pinned `@deepseek-ai/*` devDependency generation (the
 compile-time API surface and the CI guard); the peer ranges declare the
 generations the plugin was verified against, and the live smoke installs and
 boots through the chamber's current anchor CLI, reading its `dsh` version at
-run time. Current release and verification state: `docs/status.md`; scope and
-cuts: `docs/acceptance.md`; release process: `docs/RELEASE.md`.
+run time. Current release state: the GitHub Releases page; scope, cuts and
+known limitations: `docs/acceptance.md`; release process: `docs/RELEASE.md`.
 
 ## 1. Deliverable (package layout)
 
@@ -31,7 +31,8 @@ Install (documented): `dsh plugin --profile web add <release-asset URL | local .
 (the bare npm name works only once npm publishing is re-enabled) → bundle appended
 to `dsh.profile.bundles`, row inserted by patch, restart instance. Chamber: zero
 code/seed involvement; the section is served through the ordinary `settings.section`
-slot (in-GUI click-through still unverified — see `docs/status.md`).
+slot (in-GUI click-through still unverified — see `docs/acceptance.md`
+§Known limitations).
 Uninstall: `dsh plugin --profile web remove dsh-chamber-mcp` + restart stops the
 servers and drops the section; leftovers (the `mcp-scope` row in the profile
 patch and orphaned credential refs) are removed by hand.

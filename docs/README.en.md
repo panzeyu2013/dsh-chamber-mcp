@@ -129,7 +129,6 @@ Removing the package stops the servers and drops the settings section; the data 
 | [`../README.md`](../README.md) | The Chinese README (primary) |
 | [`design.md`](design.md) | Architecture: host/browser halves, supervisor and injection model, settings document, upstream contracts and deliberate deviations, UI layout reference |
 | [`acceptance.md`](acceptance.md) | Requirement/cut matrix (R1–R4 / E1–E8 / C1–C6) |
-| [`status.md`](status.md) | Current release/verification state and known limitations |
 | [`RELEASE.md`](RELEASE.md) | Release & CI runbook |
 
 ## License

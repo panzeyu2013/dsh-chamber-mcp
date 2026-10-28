@@ -129,7 +129,6 @@ dsh plugin --profile web remove dsh-chamber-mcp   # 之后重启实例
 | [`docs/README.en.md`](docs/README.en.md) | 本 README 的英文版 |
 | [`docs/design.md`](docs/design.md) | 架构：宿主机/浏览器两半、监管器与注入模型、设置文档、上游契约与刻意偏离、UI 布局参考 |
 | [`docs/acceptance.md`](docs/acceptance.md) | 需求与裁剪矩阵（R1–R4 / E1–E8 / C1–C6） |
-| [`docs/status.md`](docs/status.md) | 当前发布与验证状态、已知限制 |
 | [`docs/RELEASE.md`](docs/RELEASE.md) | 发布与 CI 运行手册 |
 
 ## License

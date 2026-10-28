@@ -11,8 +11,8 @@ Releases are GitHub Releases carrying the packed tgz + `.sha256` (npm publishing
 temporarily disabled). **Tagging, pushing and publishing are maintainer
 actions**: never create a tag, push a ref, open or edit a GitHub Release, or run
 a publish, unless explicitly asked to in that turn. Preparing a release (docs,
-changelog, gate) is fine; shipping it is not. Current release and verification
-state: `docs/status.md`.
+changelog, gate) is fine; shipping it is not. Current release state: the GitHub
+Releases page; the verification runbook is `docs/RELEASE.md`.
 
 Upstream generation: the `@deepseek-ai/dsh-*` devDependencies pin **one resolved
 generation** — the compile-time API surface and the CI guard — and the peer
@@ -44,11 +44,10 @@ the supported generations). Migration recipe: `docs/RELEASE.md`.
   drivers against a chamber-anchored dsh instance; transcripts under
   `.smoke/`).
 - `docs/` — `design.md` (architecture, upstream contracts, deliberate
-  deviations, style seat and UI layout reference), `acceptance.md` (scope +
-  cuts), `status.md` (release/verification state), `RELEASE.md` (runbook),
-  `README.md` index, plus `mcp-desktop-layout.svg` (the layout wireframe
-  `design.md` links). Keep these to design, status, decisions and process —
-  no audit or review write-ups.
+  deviations, style seat and UI layout reference), `acceptance.md` (scope,
+  cuts, known limitations), `RELEASE.md` (runbook), `README.md` index, plus
+  `mcp-desktop-layout.svg` (the layout wireframe `design.md` links). Keep these
+  to design, decisions and process — no audit, review or status write-ups.
 
 ## Invariants (do not break)
 
