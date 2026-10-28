@@ -236,13 +236,20 @@ describe('mcp-scope stylesheet', () => {
     const accent = 'var(--dsw-alias-state-business-primary)'
     // selected + focused controls (the accent states)
     expect(bodyOf('.mcpScope_switchInput:checked + .mcpScope_switch')).toContain(`background: ${accent}`)
-    expect(bodyOf('.mcpScope_switchInput:focus-visible + .mcpScope_switch')).toContain(accent)
+    // The ring has to BE the outline value, not merely mention the token
+    // somewhere in the rule body.
+    expect(bodyOf('.mcpScope_switchInput:focus-visible + .mcpScope_switch'))
+      .toMatch(/outline\s*:[^;]*var\(--dsw-alias-state-business-primary\)/)
     // primary control fill
-    expect(bodyOf('.mcpScope_buttonPrimary')).toContain('var(--dsw-alias-button-info-fill)')
+    expect(bodyOf('.mcpScope_buttonPrimary'))
+      .toMatch(/background(?:-color)?\s*:\s*var\(--dsw-alias-button-info-fill\)/)
     expect(bodyOf('.mcpScope_buttonPrimary:hover:not(:disabled)')).toContain('var(--dsw-alias-button-info-hover)')
     // normal state (scope labels, notice strip, row surface) stays monochrome
     expect(bodyOf('.mcpScope_scopeName')).toContain('var(--dsw-alias-label-primary)')
     expect(bodyOf('.mcpScope_inlineNoticeInfo')).not.toContain(accent)
+    // The OFF track still declares a track colour of its own (a deleted
+    // background would read as monochrome while painting nothing).
+    expect(bodyOf('.mcpScope_switch')).toMatch(/background(?:-color)?\s*:\s*var\(\s*--[a-z0-9-]+\s*\)/)
     expect(bodyOf('.mcpScope_serverRow')).not.toContain('state-business-primary')
     expect(bodyOf('.mcpScope_serverRow')).not.toContain('button-info')
     // and no rule outside the interactive set paints it

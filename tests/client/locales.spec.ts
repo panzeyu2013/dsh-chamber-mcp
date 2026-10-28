@@ -49,11 +49,18 @@ describe('locales: en/zh parity', () => {
     // and the collapsed card simply renders no rows.
     expect(enDict['server.defaultOff']).toBeUndefined()
     expect(zhDict['server.defaultOff']).toBeUndefined()
+    // Not just that named key: no `server.*` string may spell the retired
+    // default-off sentence in either language (a re-worded one would slip by).
+    const serverKeys = keys.filter((key) => key.startsWith('server.'))
+    expect(serverKeys.filter((key) => /default/i.test(enDict[key] ?? '') && /off/i.test(enDict[key] ?? ''))).toEqual([])
+    expect(serverKeys.filter((key) => /默认/.test(zhDict[key] ?? '') && /关闭/.test(zhDict[key] ?? ''))).toEqual([])
     // The old default-ON sentence and its duplicate are gone from both halves.
     expect(enDict['server.defaultOn']).toBeUndefined()
     expect(zhDict['server.defaultOn']).toBeUndefined()
     expect(enDict['server.newWorkspaceDefault']).toBeUndefined()
     expect(zhDict['server.newWorkspaceDefault']).toBeUndefined()
+    // Nor may a dictionary-wide second default sentence reappear under a new key.
+    expect(keys.filter((key) => /new workspaces?/i.test(enDict[key] ?? '') && /default/i.test(enDict[key] ?? ''))).toEqual([])
   })
 
   it('carries the new list/detail/workspaces/editor copy in both locales', () => {

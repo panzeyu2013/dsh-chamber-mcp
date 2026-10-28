@@ -227,7 +227,7 @@ breaking a child's creation.
 | `src/routes.ts` | 0.0.3 runtime routes on the Connection carrier: `status` / `action` / `tools` (fixed host codes only; §(d)) |
 | `src/server-context.ts` | per-server publication of the `mcp:<serverName>` instructions section and the `mcpResources` provider (the official `registerServerContext` shape) |
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
-| `tests/support/{section-harness.tsx,section-kit.ts,section-fixtures.ts,server-fixture.ts,manager-fixture.ts,http-fixture.ts,wait.ts}` | shared section mount/fixtures, host server/manager harnesses, the shared wait helper, and the in-process real Streamable HTTP fixture |
+| `tests/support/{section-harness.tsx,section-kit.ts,section-fixtures.ts,server-fixture.ts,manager-fixture.ts,http-fixture.ts,wait.ts}` | shared section mount/fixtures, host server/manager harnesses, the `waitFor` polling helper, and the in-process real Streamable HTTP fixture |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture on the 2.0 server packages (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe; publishes instructions, oversized under `FIXTURE_HUGE_INSTRUCTIONS=1`; serves one resource and one URI TEMPLATE so the resource provider's list/templates/read paths are exercised end to end; `FIXTURE_NO_RESOURCES=1` declares no resources capability and registers none) |
 | `tests/tools.spec.ts`, `tests/host/*.spec.ts` | 18 host suites (server/manager groups split for file-level parallelism, incl. `http.spec.ts` and `manager-agents.spec.ts`) plus `tests/tools.spec.ts`, all green (16 client suites under `tests/client/`, 3 acceptance suites under `tests/acceptance/`, `tests/delegation.spec.ts`; repo total 573 tests / 39 files) |
 
@@ -325,7 +325,8 @@ ctx.tools.get('mcp__files__read_file', agentA) // visible; agentB/outsiders unde
 ctx.tools.get('mcp__files__read_file')         // ALWAYS undefined (global never touched)
 ```
 
-Supervisor integration (`tests/host/server.spec.ts`) spawns the in-repo
+Supervisor integration (`tests/host/server-*.spec.ts`, sharing
+`tests/support/server-fixture.ts`) spawns the in-repo
 fixture: `command: process.execPath`, `args: [tests/fixture/mcp-fixture-server.mjs]`
 via `createTransport(def, resolver, warn)`; assertions poll `handle.state`
 (syncId/generation/connected) with a 20–25 ms waitFor; reconnect delays are
@@ -544,9 +545,10 @@ flags and the full config is green at the time of writing.
   `revokeFirst=true`, so the model-visible tools disappear immediately.
 - **Test semantics.** Connected → read-only report of the live generation (no
   second process/connection); otherwise a throwaway `probeServer` connect+sync.
-- **Test additions.** `tests/host/server.spec.ts` (snapshot phases, tool
-  identity, probe) and `tests/host/routes.spec.ts` (envelope + status codes);
-  `tests/host/manager.spec.ts` grew the latch and runtime-control cases.
+- **Test additions.** `tests/host/server-runtime.spec.ts` (snapshot phases,
+  tool identity, probe) and `tests/host/routes.spec.ts` (envelope + status
+  codes); the latch and runtime-control cases live in
+  `tests/host/manager-events.spec.ts` / `tests/host/manager-runtime.spec.ts`.
 
 ### (e) Deployment base path (browser half)
 

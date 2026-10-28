@@ -52,6 +52,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The workspace name filter stays on screen while it narrows the list**, so a
   workspace disappearing under the five-workspace threshold cannot strand rows
   behind a filter nobody can clear.
+- **The vitest suite is split into per-area files and gated on coverage.** The
+  `server` (689 lines), `manager` (592) and `section-render` (1736) monoliths are
+  cut into focused suites, and the `copy` / `styles` acceptance files folded into
+  their owner suites: 39 files (18 host, 16 client, 3 acceptance) over shared
+  fixtures in `tests/support/`, run under a forks pool, so the heavy
+  server/manager groups really occupy separate workers. `npm run test:coverage`
+  (v8, statements 93 / branches 85 / functions 86 / lines 93) replaces bare
+  `npm test` in `npm run check` and CI, which also uploads
+  `coverage-summary.json`. No behaviour change.
 
 ### Fixed
 
@@ -90,6 +99,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test notes retire; Tools refetch on a new sync generation; workspace/server
   scope counts use the same stored-override definition; runtime polling backs
   off for `unavailable` too; unchanged polls do not re-render the section.
+- **A workspace literally named `__proto__` keeps its scope row.**
+  `removeServerOverrides` rebuilds through `Object.fromEntries`, so clearing one
+  server no longer turns that workspace row into the object's prototype (which
+  dropped it from the list and every empty-row prune).
 
 ## [0.2.3] - 2026-10-28
 

@@ -26,7 +26,9 @@ must be a CLI of a supported generation.
   and browser half (`src/client/`, including `tool-card/`: MCP tool identity,
   row, keyed `tool.call.toolview` registration). Shared pure model:
   `src/shared/model.ts` (edit only with its tests).
-- `tests/` — vitest, host + client (jsdom render flows).
+- `tests/` — vitest, host + client (jsdom render flows); shared harnesses and
+  fixtures live in `tests/support/`, the spawnable stdio server in
+  `tests/fixture/`.
 - `scripts/` — `build.mjs`; `verify-package.mjs` (pack, contents, consumer
   types, host entry, bundle purity, client artifact, determinism);
   `release-notes.mjs`; `verify-workflow-action-pins.mjs`; `smoke/` (live M0/M1
