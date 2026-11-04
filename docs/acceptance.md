@@ -86,14 +86,17 @@ requirement → how we prove it (smoke / unit / E2E) → evidence location.
 - `M1`'s live R3 capture (the model-facing `tools[]` array) needs an anchor that
   actually starts a turn: on the 0.1.5-rc.2 chamber anchor the 0.1.0/0.1.1 runs
   recorded **`R3-live-capture: PASS`**, while the headless 0.1.6-alpha.1,
-  0.1.7-rc.2, 0.2.0-rc.1 and 0.2.2-alpha.2 anchors (the last three re-run on
-  2026-10-28) record `not-captured` — those instances never start a turn, so the mock LLM
-  receives no chat request. The capture is transcript evidence
-  either way: the driver reports the verdict without failing on it.
+  0.1.7-rc.2, 0.2.0-rc.1, 0.2.1-rc.5 and 0.2.2-alpha.3 anchors record
+  `not-captured` — those instances never start a turn, so the mock LLM receives
+  no chat request. The 0.2.2-alpha.3 run (2026-11-04) recorded `not-captured`
+  exactly like the 0.2.1-rc.5 control run on the same machine, so the verdict is
+  a property of the headless anchor, not of the generation. The capture is
+  transcript evidence either way: the driver reports the verdict without failing
+  on it.
 - **The 0.1.5/0.1.6 generation is unsupported as of 0.2.0.** The plugin's
   verbatim port of the official tool adapter (and its parity suite) was removed
   with that generation, and so was `npm run verify:low-generation`; the peer
-  ranges are 0.1.7 and 0.2.0.
+  range is now 0.2.0/0.2.1 plus 0.2.2 (0.1.7 was dropped with the 0.2.2 move).
 - **`npm run test:smoke` packs `lib/`, not `src/`.** Run `npm run build` (or
   the full `npm run check`) first, or the smoke silently exercises the PREVIOUS
   build — a stale `lib/tools.js` once kept the static adapter import and

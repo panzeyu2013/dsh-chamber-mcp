@@ -61,9 +61,12 @@ npm ci --no-audit --no-fund && npm run check
 npm install --package-lock-only --no-audit --no-fund
 
 # 1b. per-generation type guard — the exact command CI's compat job runs.
-#     Auditing a line NEWER than the dev pin needs its framework pins (see
-#     §Auditing a new upstream line); the install stays exact.
-node scripts/verify-generation.mjs 0.1.7-rc.2
+#     Any line OTHER than the dev pin needs its framework pins (see §Auditing a
+#     new upstream line); the install stays exact.
+node scripts/verify-generation.mjs 0.2.0-rc.1 \
+  --pin @deepseek-ai/cordis@4.0.4 --pin @deepseek-ai/cordis-plugin-loader@1.0.5 --pin @deepseek-ai/schemastery@~3.18.4
+node scripts/verify-generation.mjs 0.2.1-rc.5 \
+  --pin @deepseek-ai/cordis@4.0.5 --pin @deepseek-ai/cordis-plugin-loader@1.0.6 --pin @deepseek-ai/schemastery@~3.18.5
 
 # 2. release mechanics
 node scripts/release-notes.mjs "$(node -p "require('./package.json').version")"   # notes compose
@@ -73,9 +76,9 @@ node scripts/verify-workflow-action-pins.mjs                                    
 #    peers ARE the support window, so a declared line without a run is an
 #    unverified claim. The driver itself gates on the declared peer range and
 #    names it when an anchor is outside it.
-export DSH_ANCHOR_CLI=<scratch>/dsh@0.1.7-rc.2/node_modules/@deepseek-ai/dsh/lib/bin.js
-npm run test:smoke
 export DSH_ANCHOR_CLI=<scratch>/dsh@0.2.0-rc.1/node_modules/@deepseek-ai/dsh/lib/bin.js
+npm run test:smoke
+export DSH_ANCHOR_CLI=<scratch>/dsh@0.2.2-alpha.3/node_modules/@deepseek-ai/dsh/lib/bin.js
 npm run test:smoke
 
 # 4. what the remote actually has (never quote a released version from memory)
@@ -154,36 +157,46 @@ Compatibility notes for consumers:
 - Peers (`@deepseek-ai/dsh-*`, cordis) are resolved from the dsh install's
   fallback farm; only `@modelcontextprotocol/client`, `@deepseek-ai/schemastery`
   and `zod` are real dependencies installed by pnpm.
-- Support window: **`^0.1.7-rc.2 || ^0.2.0-rc.1`** — the 0.1.7 and the
-  0.2.0 generation, each verified live. The pinned devDependency set and the
-  CI guard are `0.2.0-rc.1` with cordis 4.0.4 (schemastery `^3.18.4` is a
-  runtime dependency, not a dev one; `semver` is the smoke driver's gate).
-  Both lines own the Config/volatile settings model (forms derived from each
-  Loader entry's own `Config`, persisted by `dsh-config-editor` into the
-  profile patch) and the official `createMcpToolDefinition` adapter, whose
-  projection hook is `projectContent` (0.1.6's `finalizeContent` was
-  renamed for the pre-policy slot). The 0.1.5/0.1.6 generation — the shared
-  settings namespace (`installSection`/`settingsScope`) and the plugin's
-  own text projection — is no longer supported. A dsh upgrade that changes
-  the typed surface triggers a compat release; CI typecheck against the
-  installed dsh set is the guard. Note that the installed set is ONE
-  generation: widening a peer range is what declares the other line, and
-  every declared line needs its own live smoke run.
+- Support window: **`^0.2.0-rc.1 || ^0.2.1-rc.1 || ^0.2.2-alpha.3`** — the 0.2.0/0.2.1 and
+  0.2.2 lines, each verified live. (The 0.1.7 line was dropped with the 0.2.2
+  move; the runtime preflight now refuses it, so a 0.1.7 install must upgrade
+  dsh first.) The pinned devDependency
+  set and the CI guard are `0.2.2-alpha.3` with cordis 4.0.6-alpha.2,
+  `cordis-plugin-loader` 1.0.7-alpha.2 and schemastery
+  `^3.18.4 || ~3.18.6-alpha.2` (a runtime dependency, not a dev one; `semver`
+  is the smoke driver's gate). Both lines own the Config/volatile settings
+  model (forms derived from each Loader entry's own `Config`, persisted by
+  `dsh-config-editor` into the profile patch) and the official
+  `createMcpToolDefinition` adapter, whose projection hook is `projectContent`
+  (0.1.6's `finalizeContent` was renamed for the pre-policy slot). The
+  0.1.5/0.1.6 generation — the shared settings namespace
+  (`installSection`/`settingsScope`) and the plugin's own text projection — is
+  no longer supported. A dsh upgrade that changes the typed surface triggers a
+  compat release; CI typecheck against the installed dsh set is the guard. Note
+  that the installed set is ONE generation: widening a peer range is what
+  declares the other lines, and every declared line needs its own live smoke
+  run.
 - **What the generation publishes.** Prompt instructions are attached to a
   literal `mcp:<server>` system-prompt section, and `ctx.mcpResources` is
   provided so the official resource tools can reach this plugin's servers.
 - **The live smoke runs against an anchor in the support window — one run
-  per supported generation.** Point `DSH_ANCHOR_CLI` at a 0.1.7- or
-  0.2.0-generation CLI (for a local run, `npm install
-  @deepseek-ai/dsh@0.1.7-rc.2` and `npm install @deepseek-ai/dsh@0.2.0-rc.1`
+  per supported generation.** Point `DSH_ANCHOR_CLI` at a 0.2.0/0.2.1- or
+  0.2.2-generation CLI (for a local run, `npm install
+  @deepseek-ai/dsh@0.2.1-rc.5` and `npm install @deepseek-ai/dsh@0.2.2-alpha.3`
   in separate scratch directories and point at their
-  `@deepseek-ai/dsh/lib/bin.js`); each transcript records the version it
-  used. Note that the M1 driver installs through `dsh plugin add`, which
-  delegates to pnpm inside the profile directory: on a checkout whose
-  `package.json` declares `packageManager`, corepack's strict mode can refuse
-  the install: use a scratch `pnpm` shim (or export
-  `COREPACK_ENABLE_STRICT=0`). M0, the
-  plugin-lifecycle driver, is unaffected either way.
+  `@deepseek-ai/dsh/lib/bin.js`; `0.2.0-rc.1` is the older compat line and has
+  its own compile gate, so it needs a run only when it is the line you ship
+  against); each transcript records
+  the version it used. Note that the M1 driver installs through
+  `dsh plugin add`, which delegates to pnpm inside the profile directory: on a
+  checkout whose `package.json` declares `packageManager`, corepack's strict
+  mode can refuse the install: use a scratch `pnpm` shim (or export
+  `COREPACK_ENABLE_STRICT=0`). pnpm also reads its USER config through
+  `XDG_CONFIG_HOME`, and a user `rc` that pins `store-dir` at a read-only path
+  (a sandboxed runner, for example) makes every install die with
+  `[ERR_SQLITE_ERROR] unable to open database file` while the driver only
+  reports `pnpm add … failed`; clear `XDG_CONFIG_HOME` and `XDG_DATA_HOME` for
+  the run. M0, the plugin-lifecycle driver, is unaffected either way.
 - **Do not reintroduce a STATIC import of `@deepseek-ai/dsh-mcp-client`.**
   Measured on 2026-09-16 on the 0.1.5 chamber anchor: a static
   `import { createMcpToolDefinition } from '@deepseek-ai/dsh-mcp-client'`
@@ -235,27 +248,34 @@ Compatibility notes for consumers:
      range alone. Widen or bump the peers as part of the new-line audit, and
      run the smoke on the new anchor as the proof.
    6. **Pinning the 0.2.2 line needs three framework pins, not a source
-      change.** The 26 `@deepseek-ai/dsh-*` deps move to `0.2.2-alpha.2` and
-      `@deepseek-ai/cordis` to `4.0.6-alpha.1`, `cordis-plugin-loader` to
-      `1.0.7-alpha.1`, `@deepseek-ai/schemastery` to `~3.18.6-alpha.1`;
-      without the schemastery move the install fails ERESOLVE (0.2.2 packages
-      peer on `~3.18.6-alpha.1` and the root dependency wins). The measurement
-      live in `CHANGELOG.md` and the GitHub Release notes — do not restate them
-      here. To audit the line before moving
-      the pin, pass those three explicitly; the guard keeps the install EXACT,
-      so the closure is complete and the framework types are exercised:
-      `node scripts/verify-generation.mjs 0.2.2-alpha.2 --pin
-      @deepseek-ai/cordis@4.0.6-alpha.1 --pin
-      @deepseek-ai/cordis-plugin-loader@1.0.7-alpha.1 --pin
-      @deepseek-ai/schemastery@~3.18.6-alpha.1`. CI passes no pins, so a future
-      pin that reopens a peer conflict still fails there loudly. The live smoke
-      against a `0.2.2-alpha.2` anchor is green; the dev tree deliberately
-      stays on `0.2.0-rc.1` until that line reaches rc. When it does move, put
-      the previous pin into the `compat` matrix (`.github/workflows/ci.yml`) so
-      both declared lines keep a compile gate, and add a `~4.0.6-alpha.1` branch
-      to the `@deepseek-ai/cordis` peer range: `^4.0.4` does not match a
-      prerelease in plain semver even though the runtime gate is
-      prerelease-inclusive.
+      change.** The 26 `@deepseek-ai/dsh-*` deps move to `0.2.2-alpha.3`,
+      `@deepseek-ai/cordis` to `4.0.6-alpha.2`, `cordis-plugin-loader` to
+      `1.0.7-alpha.2`, and `@deepseek-ai/schemastery` to
+      `^3.18.4 || ~3.18.6-alpha.2`; without the schemastery widen the dev
+      install fails ERESOLVE (`dsh-settings` peers on `~3.18.6-alpha.2` while
+      the root dependency resolves 3.18.5). The union keeps the old line installable from the
+      same range: npm on a 0.2.1 host still resolves 3.18.5. The measurement
+      lives in `CHANGELOG.md` and the GitHub Release notes — do not restate it
+      here. To audit a line before declaring it, pass its three pins explicitly;
+      the guard keeps the install EXACT, so the closure is complete and the
+      framework types are exercised:
+      `node scripts/verify-generation.mjs 0.2.2-alpha.3 --pin
+      @deepseek-ai/cordis@4.0.6-alpha.2 --pin
+      @deepseek-ai/cordis-plugin-loader@1.0.7-alpha.2 --pin
+      @deepseek-ai/schemastery@~3.18.6-alpha.2`. The dev tree moved to this
+      generation on 2026-11-04, so the direction is now the normal one: the
+      `compat` matrix carries the older declared lines (0.2.0-rc.1 and
+      0.2.1-rc.5) with their own framework pins (`@deepseek-ai/cordis@4.0.4`
+      / `4.0.5`, `cordis-plugin-loader@1.0.5` / `1.0.6`, `schemastery@~3.18.4`
+      / `~3.18.5`), and the
+      `@deepseek-ai/cordis` peer range gained
+      a `~4.0.6-alpha.2` branch: `^4.0.4` does not match a prerelease in plain
+      semver even though the runtime gate is prerelease-inclusive. The 0.1.7
+      line was dropped in the same change rather than carried as a third pin
+      set: it shares the Config/volatile model and the same adapter, so the
+      drop is a support-window decision — a rolling two-line window is what this
+      plugin has shipped since 0.2.0, and each declared line owes a compile gate
+      plus a live smoke run.
 
 ## Smoke — what the self-hosted job runs
 

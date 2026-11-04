@@ -4,7 +4,9 @@
 // line besides the pinned dev tree, so "the peers say we support it" is backed
 // by an actual compile on each PR instead of a release-time smoke alone.
 //
-//   node scripts/verify-generation.mjs 0.1.7-rc.2
+//   node scripts/verify-generation.mjs 0.2.0-rc.1 \
+//     --pin @deepseek-ai/cordis@4.0.4 --pin @deepseek-ai/cordis-plugin-loader@1.0.5 \
+//     --pin @deepseek-ai/schemastery@~3.18.4
 //
 // The scratch tree is <ROOT>/.scratch/verify-generation/<generation>/: a copy of
 // src, tests and the two typecheck tsconfigs plus a package.json derived from
@@ -12,18 +14,25 @@
 // tsc runs with --noEmit against src (tsconfig.json) and tests
 // (tsconfig.tests.json); the run costs one npm install plus two tsc passes.
 //
-// A generation newer than the dev pin may peer on newer framework packages than
-// this tree pins (0.2.2 does), so the exact install fails ERESOLVE. Audit such
-// a line BEFORE moving the pin by passing those packages explicitly:
+// A generation OTHER than the dev pin peers on different framework packages, so
+// the exact install fails ERESOLVE. Pass those packages explicitly — an older
+// line (the compat matrix) or a newer one (auditing a line ahead of a move):
 //
-//   node scripts/verify-generation.mjs 0.2.2-alpha.2 \
-//     --pin @deepseek-ai/cordis@4.0.6-alpha.1 \
-//     --pin @deepseek-ai/cordis-plugin-loader@1.0.7-alpha.1 \
-//     --pin @deepseek-ai/schemastery@~3.18.6-alpha.1
+//   node scripts/verify-generation.mjs 0.2.1-rc.5 \
+//     --pin @deepseek-ai/cordis@4.0.5 \
+//     --pin @deepseek-ai/cordis-plugin-loader@1.0.6 \
+//     --pin @deepseek-ai/schemastery@~3.18.5
+//
+//   node scripts/verify-generation.mjs 0.2.0-rc.1 \
+//     --pin @deepseek-ai/cordis@4.0.4 \
+//     --pin @deepseek-ai/cordis-plugin-loader@1.0.5 \
+//     --pin @deepseek-ai/schemastery@~3.18.4
 //
 // The install stays EXACT (no --legacy-peer-deps): the closure is complete, so
-// the framework types are exercised too. CI passes no pins and remains strict —
-// a future pin that reopens a peer conflict still fails there loudly.
+// the framework types are exercised too. The pins may only name packages other
+// than the generation's own @deepseek-ai/dsh-* set — that set is what is under
+// test. CI passes the pins its compat matrix declares, so a generation that
+// stops resolving still fails there loudly.
 import { execFileSync, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -48,7 +57,7 @@ function parsePins(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] !== '--pin') fail(`unknown argument "${argv[index]}" (expected --pin <name>@<range>)`)
     const spec = argv[index + 1]
-    if (spec === undefined) fail('--pin needs a value, e.g. --pin @deepseek-ai/cordis@4.0.6-alpha.1')
+    if (spec === undefined) fail('--pin needs a value, e.g. --pin @deepseek-ai/cordis@4.0.6-alpha.2')
     const at = spec.lastIndexOf('@')
     if (at <= 0) fail(`--pin "${spec}" must be <name>@<range>`)
     const name = spec.slice(0, at)
@@ -192,11 +201,11 @@ try {
   const output = `${error?.stdout ?? ''}${error?.stderr ?? ''}`
   if (output.trim() !== '') process.stderr.write(output.endsWith('\n') ? output : `${output}\n`)
   if (/ERESOLVE|Could not resolve dependency/.test(output)) {
-    fail('peer conflict: this generation peers on packages newer than this tree pins. '
+    fail('peer conflict: this generation peers on framework packages other than this tree\'s. '
       + 'Pass them explicitly with --pin <name>@<range>; the ranges npm just named are in the '
-      + 'output above. For 0.2.2 that is cordis 4.0.6-alpha.1, cordis-plugin-loader '
-      + '1.0.7-alpha.1 and schemastery ~3.18.6-alpha.1 (docs/RELEASE.md §Auditing a new '
-      + 'upstream line (6)).')
+      + 'output above. The per-generation pins this repository uses live in '
+      + '.github/workflows/ci.yml (compat matrix) and docs/RELEASE.md §Auditing a new '
+      + 'upstream line (6).')
   }
   fail('npm install failed for a reason other than peer resolution — see the output above')
 }

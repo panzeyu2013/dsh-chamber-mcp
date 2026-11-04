@@ -17,7 +17,7 @@
  *
  * The end-to-end write path (form edit → profile patch → in-place volatile
  * commit → `loader/volatile-update` → reconcile) is upstream's machinery and
- * is verified live against a real 0.1.7 anchor by the M0 smoke
+ * is verified live against a real 0.2.x anchor by the M0 smoke
  * (scripts/smoke/m0.mjs); the entry-side event wiring is pinned in
  * tests/host/index.spec.ts.
  */

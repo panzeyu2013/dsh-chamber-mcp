@@ -96,11 +96,11 @@ dsh plugin --profile web add file:./.smoke/dsh-chamber-mcp-<version>.tgz
 
 | | 版本 |
 | --- | --- |
-| 编译期锚点 / CI 守卫 | dsh **0.2.0-rc.1** |
-| 实机验证 | dsh **0.2.0-rc.1** 与 **0.1.7-rc.2** |
-| peer 范围 | `^0.1.7-rc.2 \|\| ^0.2.0-rc.1` |
+| 编译期锚点 / CI 守卫 | dsh **0.2.2-alpha.3**（cordis 4.0.6-alpha.2、loader 1.0.7-alpha.2、schemastery 3.18.6-alpha.2） |
+| 实机验证 | dsh **0.2.2-alpha.3**、**0.2.1-rc.2** 与 **0.2.0-rc.1** |
+| peer 范围 | `^0.2.0-rc.1 \|\| ^0.2.1-rc.1 \|\| ^0.2.2-alpha.3` |
 
-0.2.0 线仍是 RC 期间同时保留 0.1.7 线；两条线都提供本插件依赖的 Config/volatile 设置模型与官方 `createMcpToolDefinition` 适配器。
+0.2.2 线仍是 RC/alpha 期间同时保留 0.2.0/0.2.1 线；0.1.7 线已移出 peer 范围——这是支持窗口决策而非 API 差异：0.1.7 自 0.1.7 起就拥有同一套 Config/volatile 设置模型与 `createMcpToolDefinition` 适配器，而每多声明一条线就要多一份编译门与一次实机 smoke。两条受支持线都提供本插件依赖的设置模型与适配器。0.2.2 把工具调度拆给 executor provider，但本插件使用的注册契约——`agent.ctx.tools.register(definition, options?)` 的单参调用——不变。
 
 ## 排障
 

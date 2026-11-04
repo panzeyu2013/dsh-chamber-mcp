@@ -10,7 +10,7 @@
  * thing ever sent in `tools/call`; public names are never parsed back.
  *
  * The definition BUILD is the OFFICIAL `createMcpToolDefinition` from
- * `@deepseek-ai/dsh-mcp-client` — the supported generations (dsh 0.1.7 / 0.2.0).
+ * `@deepseek-ai/dsh-mcp-client` — the supported generations (dsh 0.2.0/0.2.1 and 0.2.2).
  * It owns canonical result validation, `taskRequired` refusal, `isError` →
  * throw and DURABLE IMAGE ADMISSION: an image block becomes an attachment when
  * the composition provides an attachment store and the current model route
@@ -153,7 +153,7 @@ export function definitionBuilder(): Promise<DefinitionBuilder> {
     .then((namespace) => {
       const adapter = (namespace as { createMcpToolDefinition?: unknown }).createMcpToolDefinition
       if (typeof adapter !== 'function') {
-        throw new Error('@deepseek-ai/dsh-mcp-client does not export createMcpToolDefinition (dsh 0.1.7 or newer is required)')
+        throw new Error('@deepseek-ai/dsh-mcp-client does not export createMcpToolDefinition (dsh 0.2.0 or newer is required)')
       }
       const create = adapter as (ctx: Context, options: McpToolDefinitionOptions) => ToolDefinition
       return (input: DefinitionBuildInput): ToolDefinition => create(input.ctx, {

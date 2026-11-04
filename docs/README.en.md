@@ -96,11 +96,11 @@ The configuration *is* the plugin's own Loader-entry Config — one row in the p
 
 | | Version |
 | --- | --- |
-| Compile-time anchor / CI guard | dsh **0.2.0-rc.1** |
-| Live-verified | dsh **0.2.0-rc.1** and **0.1.7-rc.2** |
-| Peer range | `^0.1.7-rc.2 \|\| ^0.2.0-rc.1` |
+| Compile-time anchor / CI guard | dsh **0.2.2-alpha.3** (cordis 4.0.6-alpha.2, loader 1.0.7-alpha.2, schemastery 3.18.6-alpha.2) |
+| Live-verified | dsh **0.2.2-alpha.3**, **0.2.1-rc.2** and **0.2.0-rc.1** |
+| Peer range | `^0.2.0-rc.1 \|\| ^0.2.1-rc.1 \|\| ^0.2.2-alpha.3` |
 
-The 0.1.7 line stays supported while the 0.2.0 line is still a release candidate; both own the Config/volatile settings model and the official `createMcpToolDefinition` adapter this plugin consumes.
+The 0.2.0/0.2.1 line stays supported while the 0.2.2 line is still a release candidate; both own the Config/volatile settings model and the official `createMcpToolDefinition` adapter this plugin consumes. The 0.1.7 line has left the peer range — a support-window decision, not an API one: 0.1.7 has owned the same settings model and adapter since 0.1.7, and every declared line owes a compile gate and a live smoke run. The 0.2.2 line splits tool dispatch into executor providers, but the registration contract this plugin uses — `agent.ctx.tools.register(definition, options?)`, called with one argument — is unchanged.
 
 ## Troubleshooting
 

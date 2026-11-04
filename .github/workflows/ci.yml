@@ -42,7 +42,7 @@ jobs:
 
       - name: Install dependencies
         # No --legacy-peer-deps: every @deepseek-ai devDep is pinned to the
-        # SAME resolved generation (0.2.0-rc.1), so
+        # SAME resolved generation (0.2.2-alpha.3), so
         # the peer graph is internally consistent and npm resolves it unaided.
         # Mixing a generation's umbrella with another generation's internals
         # (the old cross-line matrix) is what used to force the relaxed
@@ -85,17 +85,29 @@ jobs:
         if: always()
 
   # The generations the peers declare besides the dev tree's own. The dev tree
-  # (0.2.0-rc.1) is covered by `check`; this job compiles the same src + tests
+  # (0.2.2-alpha.3) is covered by `check`; this job compiles the same src + tests
   # against each other declared line, so a peer claim is never wider than an
   # actual compile on that generation. Add the next line here on a generation
   # move, in lockstep with the package.json peer range.
+  #
+  # Each entry carries ITS framework versions: the dev tree pins the 0.2.2
+  # framework (cordis 4.0.6-alpha.2, loader 1.0.7-alpha.2, schemastery
+  # 3.18.6-alpha.2). cordis and schemastery are ERESOLVE-required — their peers
+  # are not optional, so a pinless run fails at `npm install`; the loader pin is
+  # generation fidelity (that edge IS optional, so a stale one installs but
+  # typechecks against another generation's loader). The pins are exact
+  # framework versions, never a repin of the generation under test.
   compat:
-    name: compat typecheck (@deepseek-ai/dsh-* 0.1.7-rc.2)
+    name: compat typecheck (@deepseek-ai/dsh-* ${{ matrix.generation }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        generation: ['0.1.7-rc.2']
+        include:
+          - generation: '0.2.0-rc.1'
+            pins: '--pin @deepseek-ai/cordis@4.0.4 --pin @deepseek-ai/cordis-plugin-loader@1.0.5 --pin @deepseek-ai/schemastery@~3.18.4'
+          - generation: '0.2.1-rc.5'
+            pins: '--pin @deepseek-ai/cordis@4.0.5 --pin @deepseek-ai/cordis-plugin-loader@1.0.6 --pin @deepseek-ai/schemastery@~3.18.5'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -106,7 +118,7 @@ jobs:
           cache: npm
 
       - name: Typecheck against ${{ matrix.generation }}
-        run: node scripts/verify-generation.mjs ${{ matrix.generation }}
+        run: node scripts/verify-generation.mjs ${{ matrix.generation }} ${{ matrix.pins }}
 
   # Optional live smoke against a real dsh instance (manual dispatch only).
   # Requires a SELF-HOSTED runner tagged `dsh-smoke` that has the

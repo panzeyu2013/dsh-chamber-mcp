@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > only and ignores this one — an entry left here ships in the tree but never
 > appears in the release notes.
 
+## [0.2.4] - 2026-11-04
+
 ### Added
 
 - **Settings IA: servers list → server detail → editor, plus a Workspaces view.**
@@ -38,6 +40,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The compile-time generation moves to dsh `0.2.2-alpha.3`.** The 26
+  `@deepseek-ai/dsh-*` devDependencies, `@deepseek-ai/cordis`
+  (4.0.6-alpha.2) and `@deepseek-ai/cordis-plugin-loader` (1.0.7-alpha.2) now
+  pin that generation, and `@deepseek-ai/schemastery` widens to
+  `^3.18.4 || ~3.18.6-alpha.2` — `dsh-settings` on that line peers on the
+  prerelease, which `^3.18.4` cannot reach (the dev install failed ERESOLVE
+  without it), and the other packages only depend on it,
+  while npm on a 0.2.1 host still resolves 3.18.5 from the same range. The peer
+  range becomes `^0.2.0-rc.1 || ^0.2.1-rc.1 || ^0.2.2-alpha.3` — **the 0.1.7 line is dropped**
+  in the same change: it shares the same Config/volatile model and adapter, but
+  a third declared line owes a third compile gate and a third live smoke run,
+  and the runtime preflight now refuses a 0.1.7 install — and the
+  `@deepseek-ai/cordis` peer gains `~4.0.6-alpha.2` (plain semver does not let
+  `^4.0.4` match a prerelease, even though the runtime gate is
+  prerelease-inclusive). CI's `compat` job now compiles the declared older
+  lines (`0.2.0-rc.1`, `0.2.1-rc.5`) with their own framework pins, because the
+  dev tree's framework no longer satisfies them. Measured before the move
+  (2026-11-04): rc.5 → 0.2.2-alpha.3 changed 266 of 306 shared packages, yet
+  `dsh-mcp-client` and `dsh-mcp-resources` ship byte-identical `lib/index.js`;
+  `ToolRuntime` became `ToolsService` with dispatch delegated to executor
+  providers while `register()` kept its disposer ownership and single-argument
+  call shape (0.2.2 adds an optional second argument); the
+  settings, slot, `dsh.client` and `loader/volatile-update` contracts this
+  plugin occupies are unchanged. `npm run check` is green on the new tree
+  (574 tests, packed artifact, determinism), the smoke booted on a 0.2.2-alpha.3
+  anchor and on the chamber's 0.2.1-rc.2 anchor, each listing the fixture's two
+  tools, and the 0.2.0 line still typechecks under its pins. No source change.
+  The lockfile was fully re-resolved, so two runtime dependencies moved inside
+  their existing ranges — `@modelcontextprotocol/client` 2.3.1 → 2.4.0
+  (`^2.2.0`) and `zod` 4.6.5 → 4.6.7 (`^4.4.3`) — and both smoke anchors
+  exercised that client against the fixture stdio server.
 - **The old card and staged-form components are gone** (`server-card.tsx`,
   `add-form.tsx`); the pure draft model moved to `draft.ts`, status/scope
   helpers to `view-model.ts`, and the views to `src/client/views/`.
