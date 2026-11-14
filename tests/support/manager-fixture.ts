@@ -56,7 +56,6 @@ export async function boot(
   const credentials = { resolve: (async () => undefined) as CredentialResolver }
   const agentsListCalls: number[] = []
   const disposeAgents = ctx.provide('agents', {
-    roots: () => [],
     list: () => {
       agentsListCalls.push(1)
       return []

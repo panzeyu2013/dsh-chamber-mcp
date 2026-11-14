@@ -57,7 +57,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 /**
- * rc.1 Remote wire facts. The installed dev tree does not ship the generated
+ * 0.2.2-line Remote wire facts (measured on the rc.1 anchor, re-verified against
+ * rc.3 by the live smoke and jsdom flows). The installed dev tree does not ship the generated
  * `dsh-api-gateway`/`dsh-api-settings-controller` type packages, so
  * `ctx.remote` collapses to `any` here; the shapes below come from the
  * anchor install's `dsh-api-settings-controller/lib/typert.remote-client.d.ts`
@@ -102,7 +103,7 @@ async function unwrap<T>(result: RemoteResultLike<T>): Promise<T> {
   throw error
 }
 
-/** Adapter from the rc.1 `remote.credentials` namespace to the gateway. */
+/** Adapter from the 0.2.2-generation `remote.credentials` namespace to the gateway. */
 function remoteCredentials(wire: McpRemoteWire): CredentialsGateway {
   return {
     async describe(refs) {

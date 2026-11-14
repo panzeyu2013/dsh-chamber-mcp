@@ -64,7 +64,7 @@ describe('acceptance correctness: host status route with the real manager', () =
     const ctx = new Context()
     const logger: ManagerLogger = { info: () => {}, warn: () => {}, error: () => {} }
     const credentials = { resolve: (async () => undefined) as CredentialResolver }
-    ctx.provide('agents', { roots: () => [], get: () => undefined })
+    ctx.provide('agents', { list: () => [], get: () => undefined })
     ctx.provide('workspaceRegistry', { list: () => [] })
     let manager: ManagerHandle | undefined
     const managerHost = function managerHost(c: Context) {

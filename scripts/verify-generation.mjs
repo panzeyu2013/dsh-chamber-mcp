@@ -57,7 +57,7 @@ function parsePins(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] !== '--pin') fail(`unknown argument "${argv[index]}" (expected --pin <name>@<range>)`)
     const spec = argv[index + 1]
-    if (spec === undefined) fail('--pin needs a value, e.g. --pin @deepseek-ai/cordis@4.0.6-alpha.2')
+    if (spec === undefined) fail('--pin needs a value, e.g. --pin @deepseek-ai/cordis@4.1.0')
     const at = spec.lastIndexOf('@')
     if (at <= 0) fail(`--pin "${spec}" must be <name>@<range>`)
     const name = spec.slice(0, at)

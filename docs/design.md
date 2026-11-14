@@ -127,8 +127,9 @@ survive on untouched nodes.
     revoke stale defs, register current defs for enabled servers only.
   - `agent/disposed` → entry dropped (ctx-scoped effects die with the agent ctx).
   - Bookkeeping map keyed by Agent; all listeners/disposers effect-wrapped (HMR-safe).
-  - Boot scan adopts `agents.list()` when the generation exposes it (every live agent —
-    a running child during an HMR reload included), falling back to `agents.roots()`.
+  - Boot scan adopts `agents.list()` (every live agent — a running child during
+    an HMR reload included; `list()` is the only registry projection the
+    supported generations expose since 0.2.2-rc.3 removed `roots()`).
 
 **Delegation policy (0.1.1).** Two upstream facts decide this shape, both re-read from
 the installed harness: (1) a delegation child is composed by `dsh-subagent`
@@ -229,9 +230,9 @@ breaking a child's creation.
 | `src/index.ts` | plugin entry (value exports exactly `name`/`inject`/`Config`/`apply`, plus type-only re-exports of the public model surface) |
 | `tests/support/{section-harness.tsx,section-kit.ts,section-fixtures.ts,server-fixture.ts,manager-fixture.ts,http-fixture.ts,wait.ts}` | shared section mount/fixtures, host server/manager harnesses, the `waitFor` polling helper, and the in-process real Streamable HTTP fixture |
 | `tests/fixture/mcp-fixture-server.mjs` | spawnable real MCP stdio fixture on the 2.0 server packages (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe; publishes instructions, oversized under `FIXTURE_HUGE_INSTRUCTIONS=1`; serves one resource and one URI TEMPLATE so the resource provider's list/templates/read paths are exercised end to end; `FIXTURE_NO_RESOURCES=1` declares no resources capability and registers none) |
-| `tests/tools.spec.ts`, `tests/host/*.spec.ts` | 18 host suites (server/manager groups split for file-level parallelism, incl. `http.spec.ts` and `manager-agents.spec.ts`) plus `tests/tools.spec.ts`, all green (16 client suites under `tests/client/`, 3 acceptance suites under `tests/acceptance/`, `tests/delegation.spec.ts`; repo total 574 tests / 39 files) |
+| `tests/tools.spec.ts`, `tests/host/*.spec.ts` | 18 host suites (server/manager groups split for file-level parallelism, incl. `http.spec.ts` and `manager-agents.spec.ts`) plus `tests/tools.spec.ts`, all green (16 client suites under `tests/client/`, 3 acceptance suites under `tests/acceptance/`, `tests/delegation.spec.ts`; repo total 575 tests / 39 files) |
 
-Run: `npm run typecheck` (both tsconfigs) and `npm run test:coverage` — both fully green (574 tests / 39 files; statements 94.24%, branches ~87.3%). The branch ratio drifts by a few hundredths of a point between runs (the v8 provider counts async paths as they are exercised: 3124/3579, 3125/3580, 3129/3584 on the same tree), so the thresholds — not the second decimal — are the contract.
+Run: `npm run typecheck` (both tsconfigs) and `npm run test:coverage` — both fully green (575 tests / 39 files; statements 94.24%, branches ~87.3%). The branch ratio drifts by a few hundredths of a point between runs (the v8 provider counts async paths as they are exercised), so the thresholds — not the second decimal — are the contract.
 
 ### (a) API signatures and runtime assumptions
 
@@ -262,7 +263,7 @@ Run: `npm run typecheck` (both tsconfigs) and `npm run test:coverage` — both f
    `static inject = ['systemPrompt']` and its constructor calls
    `ctx.systemPrompt.tools(...)` unconditionally — the real
    `@deepseek-ai/dsh-system-prompt` must be mounted first (added as a
-   devDependency, pinned to the `0.2.2-alpha.3` generation at HEAD; official
+   devDependency, pinned to the `0.2.2-rc.3` generation at HEAD; official
    recipe `ctx.plugin(SystemPrompt)` then `ctx.plugin(ToolRuntime)`).
    `ctx.tools` only exists after that.
 3. **`SettingsForms` replaced the namespace seam (0.1.7).** There is no
@@ -282,15 +283,17 @@ Run: `npm run typecheck` (both tsconfigs) and `npm run test:coverage` — both f
    agent scope ctx). `get(name, scopeKey?)` takes the scope key object
    (identity-compared) — the live Agent is its own key; omitted = global view.
 5. **Dev-tree consistency**: every `@deepseek-ai/*` devDependency is pinned to
-   the one resolved generation (`0.2.2-alpha.3` on this line, with cordis
-   4.0.6-alpha.2, `@deepseek-ai/cordis-plugin-loader` 1.0.7-alpha.2 for the
+   the one resolved generation (`0.2.2-rc.3` on this line, with cordis
+   4.1.0, `@deepseek-ai/cordis-plugin-loader` 1.1.0 for the
    `loader/volatile-update` Events merge, and schemastery
    `^3.18.4 || ~3.18.6-alpha.2`), so a plain `npm install`/`npm ci` resolves
    the tree — no peer relaxation. The schemastery union is deliberate:
-   `@deepseek-ai/dsh-settings` on this line peers on `~3.18.6-alpha.2`
-   (unreachable from `^3.18.4`, which is why the dev install ERESOLVEd before
-   it) while the other packages only depend on it, so npm on a 0.2.1 host still
-   resolves 3.18.5 for the old line from the same range. The
+   `@deepseek-ai/dsh-settings@0.2.2-rc.3` peers on `~3.19.0` (which
+   `^3.18.4` reaches), while the alpha branch keeps the earlier alpha.3 pin
+   installable from the same range (`dsh-settings@0.2.2-alpha.3` peered on
+   `~3.18.6-alpha.2`, unreachable from `^3.18.4` — that is why the dev
+   install ERESOLVEd before the widen) and npm on a 0.2.1 host still resolves
+   3.18.5 for the old line from the same range. The
    `dsh-settings-file` devDependency is gone: 0.1.7 dropped that provider, and
    the settings live in the profile
    patch. Pinning the umbrella's own version instead of the generation its
@@ -324,7 +327,7 @@ await ctx.plugin(factoryPlugin)
 const scope = createScope(factoryCtx, agent as never)   // agent.ctx = scope.ctx
 // drive the applier inside a plugin fiber:
 await ctx.plugin(function install(c: Context) {
-  applier = createAgentApplier({ ctx: c, logger: c.logger, agents: {roots, get},
+  applier = createAgentApplier({ ctx: c, logger: c.logger, agents: {list, get},
     workspaceRegistry: { list }, overrides: () => overrides })
 })
 // publish agents like the real registry:
@@ -416,7 +419,9 @@ flags and the full config is green at the time of writing.
    fiber and die with it — verified by disposing the scope ctx in tests);
    disposers are only invoked while the agent is still live in the registry
    (`agents.get(id) === agent`).
-9. **Two supported host generations: dsh 0.2.0/0.2.1 and 0.2.2.** The client
+9. **Three declared peer lines: dsh 0.2.0, 0.2.1 and 0.2.2** (0.2.0/0.2.1
+   share the older architecture; each line owes a compile gate and a live smoke
+   run). The client
    layer is v2 (`@modelcontextprotocol/client@^2.2.0` is this plugin's OWN
    dependency, not a host surface), the definition build always goes through the
    official `createMcpToolDefinition` (canonical validation, durable image
@@ -447,7 +452,41 @@ flags and the full config is green at the time of writing.
    interchangeable at install time: the runtime's profile preflight evaluates
    the peer range against its own version and refuses an out-of-range bundle
    (`installation rejected … incompatible …`), so each declared line needs its
-   own live smoke run. The local text projection and the runtime builder
+   own live smoke run. The dev pin moved again on 2026-11-14, from
+   0.2.2-alpha.3 to 0.2.2-rc.3 (cordis 4.1.0, loader 1.1.0, schemastery
+   3.19.0): the rc.3 generation removed
+   `AgentRegistry.roots()`/`isOwnedBy()` from `@deepseek-ai/dsh-agent`, so the
+   manager's production adapter now reads `list()` — present in every declared
+   generation — and the applier's registry projection requires it. The optional
+   legacy `roots()` fallback and its synthetic test were removed: no declared
+   generation ever exposed a `roots()`-without-`list()` registry. Everything
+   else this plugin consumes held:
+   `createMcpToolDefinition`/`McpToolDefinitionOptions` are unchanged and the
+   `mcpResources` provider SHAPE is unchanged, but rc.3 marks the three shared
+   resource tools concurrency-safe, so a provider may receive overlapping
+   calls — this plugin's provider resolves the live generation per call and
+   holds no shared state (a concurrent read/list test pins that); `dsh-tools`'
+   new `ToolContextUnavailableError` and `ToolGuardDenial` (plus
+   `PostToolDecision` carrying `info`) are additive; `ToolDefinition`,
+   `ToolExecution`, `ToolRegistrationOptions` and `register()` — including the
+   pre-existing per-step `when` — are unchanged;
+   cordis 4.1.0 / loader 1.1.0 / schemastery 3.19.0 differ from the alpha.3 pins
+   only in their package manifests; the four client slot keys this plugin
+   occupies (`settings.section`, `tool.call.toolview`,
+   `conversation.chat.node`, `connection/reset`) are unchanged (rc.3 adds new
+   keys and a `hoc` SlotKind additively). The peer range needed no widening: a
+   `0.2.2-*` comparator already admits every prerelease of that version tuple.
+   rc.2 also added an official `@deepseek-ai/dsh-mcp-manager` (mounted by
+   `dsh-web-app`) that manages a GLOBAL fleet with runtime status/restart/probe
+   and plugin registration; it maps no Workspace, so this plugin remains the
+   per-workspace layer and the two coexist — a server registered in both planes
+   is two independent registrations (the official one in the root layer, this
+   plugin's in the live agent's scope, which shadows it name-for-name for that
+   agent). Live smoke on one final-tree anchor per declared line
+   (`0.2.0-rc.1`, `0.2.1-rc.5`, `0.2.2-rc.3`; one identical packed tarball)
+   plus the chamber's `0.2.2-rc.1` baseline passes M0 on every anchor; the M1
+   model-facing capture stays `not-captured` headlessly, as on every 0.2.x
+   anchor. The local text projection and the runtime builder
    selection were removed with the old generation; `docs/RELEASE.md`
    §Auditing a new upstream line is the recipe for adding the next one. Two
    host facts are load-bearing:
@@ -525,7 +564,7 @@ flags and the full config is green at the time of writing.
 - `dsh-atomic-write`/`dsh-home-paths`/`dsh-system-prompt` were added to
   devDependencies under the old cross-line matrix, which is what once required
   `--legacy-peer-deps`; the tree now pins the whole `@deepseek-ai/*` set to
-  `0.2.2-alpha.3` and the flag is gone. `dsh-settings-file` was dropped with the
+  `0.2.2-rc.3` and the flag is gone. `dsh-settings-file` was dropped with the
   0.1.7 move.
 - `tests/fixture/mcp-fixture-server.mjs` child processes rely on repo
   `node_modules` resolution (spawned with `process.execPath` from the repo
@@ -662,17 +701,21 @@ neither told the user, in the conversation, which MCP servers and tools the
 session had been given. This notice closes that gap as a UI hint — derived, never
 written — through the platform's own seams rather than a new channel:
 
-- **Why nothing is written**: a private session event is required-on-read. The
-  persisted envelope's `ignorable?: true` marker is the only admission a reader
-  honors for a type it does not know, and the append surface this plugin is
-  built against cannot set it (`Session.append` composes `type`/`seq`/`time`/
-  `data` plus surface metadata only; upstream's `appendPluginRecord` writer
-  arrives with the 0.2.1 line, above our dev pin, and is never called here). `validateStoredEvents` refuses the WHOLE log when any stored
-  event type is outside the build-generated `KNOWN_SESSION_EVENT_TYPES` set
-  unless that envelope says `ignorable: true` — and out-of-repo plugin types are
-  outside that set by construction. A host-appended `mcp-scope/injected` event
-  therefore made the session unreadable to every reader, the writing harness
-  included. Upstream rationale:
+- **Why nothing is written**: a private REQUIRED session event would be
+  required-on-read. The persisted envelope's `ignorable?: true` marker is the
+  only admission a reader honors for a type it does not know; an event appended
+  WITHOUT that marker makes `validateStoredEvents` refuse the WHOLE log,
+  including for the harness that wrote it (out-of-repo plugin types are outside
+  the build-generated `KNOWN_SESSION_EVENT_TYPES` set by construction), which is
+  why the earlier `mcp-scope/injected` revision made the session unreadable to
+  every reader. Upstream DOES expose a writer — `appendPluginRecord` (present
+  on 0.2.1-rc.5 and the whole 0.2.2 line, absent from 0.2.0-rc.1) — but this
+  notice deliberately does not persist: it is a derived hint that needs no log
+  entry, plugin records are best-effort across format migrations (the owner
+  validates restored data, and a V3→V4 migration can re-home an unknown V3
+  event into the `plugin:` namespace), and a write path would owe a
+  per-generation feature-detect across the declared support window. Upstream
+  rationale:
   `.agents/notes/implemented/architecture/2026-08-30-retain-ignorable-external-session-events.md`.
 - **Source**: the two model-facing shapes ONE request can carry MCP tools in,
   both read from the harness's own events — the union is the registered set,

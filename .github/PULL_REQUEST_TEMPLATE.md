@@ -13,7 +13,7 @@ correctness from static checks alone:
 
 ```sh
 npm run typecheck
-npm test
+npm run test:coverage
 npm run build
 npm run verify:package
 node scripts/verify-workflow-action-pins.mjs   # when workflows change

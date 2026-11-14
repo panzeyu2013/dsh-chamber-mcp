@@ -13,15 +13,13 @@
 
 ## 为什么需要它
 
-dsh 自带的 `@deepseek-ai/dsh-mcp-client` 负责把 MCP **桥**进模型，但不负责"管"：
+dsh 自带的 `@deepseek-ai/dsh-mcp-client` 负责把 MCP **桥**进模型。0.2.2-rc.2 起，Web 组合（`dsh-web-app`）还自带官方的 `@deepseek-ai/dsh-mcp-manager`——但它管的是**宿主全局平面**：
 
-- 一台服务器 = 补丁配置里的一行，增删改都要手编 `cordis.patch.yml`；
-- 密钥以字面量（或 `!!js process.env.X`）写在同一个文件里；
-- 工具注册在"组合它的那个上下文"里——宿主行落在 **全局层**，于是**每个**会话都背着全部 MCP 工具：既烧上下文，也可能误调。
+- 官方 manager 的服务器对整个 Host 生效，一台启用后**每个**会话都背着它的全部 MCP 工具：既烧上下文，也可能误调；
+- 官方 manager 覆盖 settings 增删改、`${credential:…}` 模板、状态/重启/探测，但**没有"工作区"这个维度**；
+- `dsh-workspace` 只做项目分组、不注册任何工具——**上游仍然没有把"工作区"映射到"一组工具"的机制**。
 
-上游也没有可复用的替代面：*设置 → 插件 → 插件配置*只为"Config 暴露了可编辑字段"的 entry 渲染表单（官方 MCP 客户端一个字段都没有），插件列表只读，`dsh-workspace` 只做项目分组、不注册任何工具——**没有现成机制把"工作区"映射到"一组工具"**。
-
-本插件补的正是这两块：**管理面**（设置界面）和**作用域**（按工作区注入的能力门）。
+本插件补的正是这个缺口：在官方桥接契约之上加一层**按工作区注入的能力门**，并把**管理面**（自己的设置分区：服务器列表 / 服务器详情 / 工作区视图）做在同一条插件里。同一个 Host 上两层可以并存：全局平面归官方 manager，工作区粒度归本插件；同一 `serverName` 不要同时配在两层（见 `docs/acceptance.md` 已知限制）。
 
 ## 核心优点
 
@@ -96,11 +94,11 @@ dsh plugin --profile web add file:./.smoke/dsh-chamber-mcp-<version>.tgz
 
 | | 版本 |
 | --- | --- |
-| 编译期锚点 / CI 守卫 | dsh **0.2.2-alpha.3**（cordis 4.0.6-alpha.2、loader 1.0.7-alpha.2、schemastery 3.18.6-alpha.2） |
-| 实机验证 | dsh **0.2.2-alpha.3**、**0.2.1-rc.2** 与 **0.2.0-rc.1** |
+| 编译期锚点 / CI 守卫 | dsh **0.2.2-rc.3**（cordis 4.1.0、loader 1.1.0、schemastery 3.19.0） |
+| 实机验证 | dsh **0.2.2-rc.3**、**0.2.2-rc.1**、**0.2.1-rc.5** 与 **0.2.0-rc.1**（最终树，每声明线一个锚点） |
 | peer 范围 | `^0.2.0-rc.1 \|\| ^0.2.1-rc.1 \|\| ^0.2.2-alpha.3` |
 
-0.2.2 线仍是 RC/alpha 期间同时保留 0.2.0/0.2.1 线；0.1.7 线已移出 peer 范围——这是支持窗口决策而非 API 差异：0.1.7 自 0.1.7 起就拥有同一套 Config/volatile 设置模型与 `createMcpToolDefinition` 适配器，而每多声明一条线就要多一份编译门与一次实机 smoke。两条受支持线都提供本插件依赖的设置模型与适配器。0.2.2 把工具调度拆给 executor provider，但本插件使用的注册契约——`agent.ctx.tools.register(definition, options?)` 的单参调用——不变。
+0.2.2 线仍是 RC/alpha 期间同时保留 0.2.0/0.2.1 线；0.1.7 线已移出 peer 范围——这是支持窗口决策而非 API 差异：0.1.7 自 0.1.7 起就拥有同一套 Config/volatile 设置模型与 `createMcpToolDefinition` 适配器，而每多声明一条线就要多一份编译门与一次实机 smoke。受支持的 0.2.x 线都提供本插件依赖的设置模型与适配器。0.2.2 把工具调度拆给 executor provider，但本插件使用的注册契约——`agent.ctx.tools.register(definition, options?)` 的单参调用——不变。编译锚点于 2026-11-14 移到 `0.2.2-rc.3`：rc.3 从 `dsh-agent` 移除了 `AgentRegistry.roots()`，管理器改用每条受支持线都提供的 `list()`；peer 范围不变，因为 `^0.2.2-alpha.3` 早已覆盖 0.2.2 的 rc 预发布；实机 smoke 在最终树上每条声明线各跑一个锚点（0.2.0-rc.1 / 0.2.1-rc.5 / 0.2.2-rc.3，同一打包 sha1），并加跑 chamber 的 `0.2.2-rc.1` 基线，全部通过 M0。
 
 ## 排障
 

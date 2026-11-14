@@ -39,7 +39,7 @@ import {
 import { credentialRefsOf, isServerDisabled, type McpScopeDoc, type ServerDef } from './shared/model.js'
 // Side-effect type imports: ctx.tools / ctx.agents / ctx.settings / ctx.credentials merge.
 import type {} from '@deepseek-ai/dsh-tools'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-credentials'
 
 /** Durable storage-domain identity of the workspace registry (dsh-workspace). */
@@ -254,13 +254,14 @@ export function createManager(options: ManagerOptions): ManagerHandle {
     ctx,
     logger,
     agents: {
-      roots: () => [...ctx.agents.roots()],
       // Every live agent: the boot scan must cover one that predates this
       // applier (a plugin reload while a delegation child runs) — a child is
-      // owned by its initiator, so `roots()` alone never reports it and no
-      // further `agent/created` arrives for it. A generation without `list()`
-      // keeps the documented roots-only fallback.
-      list: () => [...((ctx.agents as { list?: () => Agent[] }).list?.() ?? ctx.agents.roots())],
+      // owned by its initiator, so a top-level-only projection never reports
+      // it and no further `agent/created` arrives for it. dsh 0.2.2-rc.3
+      // REMOVED `AgentRegistry.roots()`; every generation this plugin
+      // declares (0.2.0/0.2.1/0.2.2) exposes `list()`, so the live adapter
+      // reads the one registry API the whole support window shares.
+      list: () => [...ctx.agents.list()],
       get: (id: string) => ctx.agents.get(id as SessionId),
     },
     workspaceRegistry: {
@@ -400,8 +401,9 @@ export function createManager(options: ManagerOptions): ManagerHandle {
   }
 
   // Workspace registry changes (create/delete/rename/session membership):
-  // rc.1 exposes no workspace-domain events of its own, but every durable
-  // workspace write emits `domain/changed` for domain "workspace" /
+  // no generation in the declared window exposes workspace create/delete
+  // events of its own (rc.3 adds only archive/unarchive session events), but
+  // every durable workspace write emits `domain/changed` for domain "workspace" /
   // table "workspaces". Re-judge live agent membership on any such write so
   // a deleted workspace revokes its sessions' tools promptly instead of
   // waiting for the next settings/server event (the applier refresh is

@@ -72,6 +72,31 @@ describe('runtime snapshot + probe (M3)', () => {
       .rejects.toThrow(/server is disconnected/)
   })
 
+  it('serves concurrent resource requests independently (rc.3 marks the shared tools concurrency-safe)', async () => {
+    // dsh-mcp-resources 0.2.2-rc.3 declares all three shared resource tools
+    // `isConcurrencySafe` (alpha.3 declared none), so one provider can receive
+    // overlapping calls. The provider must settle each call on its own: both
+    // reads carry their own result while a list runs alongside them.
+    const { handle } = await boot()
+    handles.push(handle)
+    const [readme, greeting, listed] = await Promise.all([
+      handle.context.resources.request(
+        { method: 'resources/read', uri: 'file:///fixture-readme.txt' },
+        execContext(),
+      ) as Promise<{ contents?: { text?: string }[] }>,
+      handle.context.resources.request(
+        { method: 'resources/read', uri: 'fixture:///greeting/ada' },
+        execContext(),
+      ) as Promise<{ contents?: { text?: string }[] }>,
+      handle.context.resources.request({ method: 'resources/list' }, execContext()) as Promise<{
+        resources?: { uri?: string }[]
+      }>,
+    ])
+    expect(readme.contents?.[0]?.text).toBe('fixture resource body')
+    expect(greeting.contents?.[0]?.text).toBe('fixture greeting for ada')
+    expect(listed.resources?.some((resource) => resource.uri === 'file:///fixture-readme.txt')).toBe(true)
+  })
+
   it('answers both resource list methods with an empty page when the server declares no resources capability', async () => {
     // Official gate (0.2.1-rc.4+): an UNDECLARED resources capability is an
     // empty page answered WITHOUT asking the client. The SDK client would answer

@@ -78,13 +78,13 @@ export interface ApplierLogger {
 /** The registry of live agents our scan + liveness checks use. */
 export interface AgentRegistryLike {
   /**
-   * Every live agent, when the generation exposes it (`ctx.agents.list()`).
-   * Adopting from this list at boot is what covers an agent that predates this
-   * plugin instance — a live delegation child during an HMR reload included;
-   * the `roots()` fallback sees top-level agents only.
+   * Every live agent — the registry projection EVERY supported generation
+   * exposes (`ctx.agents.list()`, the only list API left after dsh
+   * 0.2.2-rc.3 removed `roots()`). Adopting from this list at boot is what
+   * covers an agent that predates this plugin instance, a live delegation child
+   * during an HMR reload included; a top-level-only projection would miss it.
    */
-  list?(): Agent[]
-  roots(): Agent[]
+  list(): Agent[]
   get(id: string): Agent | undefined
 }
 
@@ -473,7 +473,7 @@ const fmtError = (error: unknown): string =>
   }
 
   // Effect-scoped subscriptions; teardown runs on HMR/unload. Also adopt
-  // agents that predate this plugin (roots scan happens after listeners are
+  // agents that predate this plugin (the boot scan happens after listeners are
   // armed so a racing create cannot be double-adopted).
   /**
    * Contain one adoption: a synchronous listener failure VETOES the emitting
@@ -502,11 +502,11 @@ const fmtError = (error: unknown): string =>
       // ctx's lifecycle — drop bookkeeping only, never call disposers.
       entries.delete(agent)
     })
-    // Every live agent when the registry exposes it (a reload must not drop a
-    // delegation child that is already running), roots only otherwise. A registry
-    // that throws must not take the pre-existing agent scan down with it.
+    // Every live agent (a reload must not drop a delegation child that is
+    // already running). A registry that throws must not take the pre-existing
+    // agent scan down with it.
     try {
-      for (const agent of agents.list?.() ?? agents.roots()) adoptContained(agent)
+      for (const agent of agents.list()) adoptContained(agent)
     } catch (error) {
       logger.error(`${label}: agent scan failed — pre-existing agents stay unregistered: ${fmtError(error)}`)
     }

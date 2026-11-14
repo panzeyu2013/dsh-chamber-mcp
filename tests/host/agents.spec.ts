@@ -187,11 +187,10 @@ class Harness {
   }
 
   /** The registry projection the applier consumes, with production semantics. */
-  registry(): { roots(): Agent[]; list(): Agent[]; get(id: string): Agent | undefined } {
+  registry(): { list(): Agent[]; get(id: string): Agent | undefined } {
     return {
-      // Production: roots() reports top-level agents only (a child is owned by
-      // its initiator), list() reports every live agent.
-      roots: () => [...this.live.values()].filter((agent) => agent.session.header.origin !== 'subagent'),
+      // list() reports every live agent, delegation children included — the
+      // only projection the supported generations expose since 0.2.2-rc.3.
       list: () => [...this.live.values()],
       get: (id: string) => this.live.get(id),
     }
@@ -431,19 +430,19 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
     }
   })
 
-  it('adopts pre-existing root agents at startup (roots scan)', async () => {
+  it('adopts pre-existing agents from the list() registry (0.2.2-rc.3 shape)', async () => {
     const h = await mount()
     try {
       const wsA = await h.addWorkspace('a')
       const agentA = h.spawnAgent('agent-a', wsA.path)
       h.overrides = { [wsA.id]: { files: true } }
       h.createAgent(agentA)
-      // A second applier instance simulates a plugin (re)load AFTER the
-      // agent was already published.
+      // dsh 0.2.2-rc.3 removed AgentRegistry.roots(): the registry exposes
+      // list()+get() only, and the production manager adapter reads list().
       const second = createAgentApplier({
         ctx: h.hostCtx,
         logger: h.hostCtx.logger,
-        agents: { roots: () => [...h.live.values()], get: (id: string) => h.live.get(id) },
+        agents: { list: () => [...h.live.values()], get: (id: string) => h.live.get(id) },
         workspaceRegistry: { list: () => [...h.workspaces] },
         overrides: () => h.overrides,
       })
@@ -707,7 +706,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
 
       // Boot path: a fresh applier (plugin reload) adopts every live agent the
       // registry reports — a running child during an HMR reload included, which
-      // the roots() projection alone would miss.
+      // a top-level-only projection would miss.
       const bootLines: LoggedLine[] = []
       const second = createAgentApplier({
         ctx: h.hostCtx,

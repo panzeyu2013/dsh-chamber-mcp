@@ -14,7 +14,7 @@ self-hosted live-smoke lane is reachable.
 
 1. `npm ci`
 2. `npm run typecheck` — src + tests, two tsconfigs
-3. `npm test` — vitest suite (unit + integration; hermetic, no network)
+3. `npm run test:coverage` — vitest suite (unit + integration; hermetic, no network) under the coverage gate
 4. `npm run build` — host ESM + client bundle + d.ts
 5. `npm run verify:package` — packs the artifact and asserts:
    - tarball asserts the required entries (`lib/index.js`, `lib/client.js`,
@@ -53,40 +53,91 @@ grep -n "^## \[$(node -p "require('./package.json').version")\] - " CHANGELOG.md
 # 1. full gate (same chain as CI; installs are frozen npm ci, never bare install)
 npm ci --no-audit --no-fund && npm run check
 
-# 1a. after any dependency-surface change, refresh the lock IN PLACE. Never
-#     delete it and regenerate beside node_modules: the hidden lock
-#     (node_modules/.package-lock.json) becomes the virtual-tree base and npm
-#     copies its missing resolved/integrity into the tracked lock, which
-#     verify:package now rejects and npm ci would install unpinned.
+# 1a. lockfile policy. An ORDINARY dependency-surface change refreshes IN
+#     PLACE. Never delete the lock and regenerate it beside node_modules: the
+#     hidden lock (node_modules/.package-lock.json) becomes the virtual-tree
+#     base and npm copies its missing resolved/integrity into the tracked
+#     lock, which verify:package rejects and npm ci would install unpinned.
 npm install --package-lock-only --no-audit --no-fund
+#
+#     A GENERATION MOVE (devDeps re-pinned across a dsh line, e.g. the
+#     0.2.2-alpha.3 -> 0.2.2-rc.3 move) cannot use that path: the old lock's
+#     packages peer on the previous framework pins, so the in-place refresh
+#     exits ERESOLVE. Resolve in a CLEAN tree instead — no node_modules — and
+#     pass the canonical registry explicitly (a user npm mirror in ~/.npmrc
+#     would otherwise bake mirror URLs into the tracked lock; verify:package
+#     only checks that resolved/integrity are PRESENT):
+#       mkdir -p .scratch/lock && cp package.json .scratch/lock/
+#       cd .scratch/lock
+#       npm install --registry=https://registry.npmjs.org --no-audit --no-fund
+#       cp package-lock.json ../../package-lock.json
+#       cd ../..
+#     Then prove it: npm ci (installs exactly the lock, rewrites nothing),
+#     npm run check, and npm run verify:package. Never reach for
+#     --force / --legacy-peer-deps.
 
-# 1b. per-generation type guard — the exact command CI's compat job runs.
-#     Any line OTHER than the dev pin needs its framework pins (see §Auditing a
-#     new upstream line); the install stays exact.
+# 1b. per-generation type guard — the exact commands CI's compat matrix runs.
+#     Every generation besides the dev pin needs its framework pins (see
+#     §Auditing a new upstream line); the install stays exact.
 node scripts/verify-generation.mjs 0.2.0-rc.1 \
   --pin @deepseek-ai/cordis@4.0.4 --pin @deepseek-ai/cordis-plugin-loader@1.0.5 --pin @deepseek-ai/schemastery@~3.18.4
 node scripts/verify-generation.mjs 0.2.1-rc.5 \
   --pin @deepseek-ai/cordis@4.0.5 --pin @deepseek-ai/cordis-plugin-loader@1.0.6 --pin @deepseek-ai/schemastery@~3.18.5
+node scripts/verify-generation.mjs 0.2.2-alpha.3 \
+  --pin @deepseek-ai/cordis@4.0.6-alpha.2 --pin @deepseek-ai/cordis-plugin-loader@1.0.7-alpha.2 --pin @deepseek-ai/schemastery@~3.18.6-alpha.2
 
 # 2. release mechanics
 node scripts/release-notes.mjs "$(node -p "require('./package.json').version")"   # notes compose
 node scripts/verify-workflow-action-pins.mjs                                      # pins + release structure
 
-# 3. live smoke on the smoke machine — ONE RUN PER DECLARED GENERATION. The
-#    peers ARE the support window, so a declared line without a run is an
-#    unverified claim. The driver itself gates on the declared peer range and
-#    names it when an anchor is outside it.
+# 3. live smoke on the smoke machine — ONE RUN PER DECLARED LINE (0.2.0,
+#    0.2.1, 0.2.2). The peers ARE the support window, so a declared line
+#    without a run is an unverified claim. The driver itself gates on the
+#    declared peer range and names it when an anchor is outside it; the
+#    chamber anchor (currently 0.2.2-rc.1) is an extra same-line baseline,
+#    never a substitute for a line.
 export DSH_ANCHOR_CLI=<scratch>/dsh@0.2.0-rc.1/node_modules/@deepseek-ai/dsh/lib/bin.js
 npm run test:smoke
-export DSH_ANCHOR_CLI=<scratch>/dsh@0.2.2-alpha.3/node_modules/@deepseek-ai/dsh/lib/bin.js
+export DSH_ANCHOR_CLI=<scratch>/dsh@0.2.1-rc.5/node_modules/@deepseek-ai/dsh/lib/bin.js
 npm run test:smoke
+export DSH_ANCHOR_CLI=<scratch>/dsh@0.2.2-rc.3/node_modules/@deepseek-ai/dsh/lib/bin.js
+npm run test:smoke
+
+# 3b. commit, push main, and wait for the CI run on main to finish GREEN.
+#     The Release workflow runs `npm run check` only; the compat matrix
+#     (ci.yml) runs in CI, and the tag-triggered CI runs in PARALLEL with
+#     the Release, so a compat failure could not stop publication afterwards.
+git add -A && git commit -m "release: v<version>"
+git push origin main
+gh run list --workflow ci.yml --branch main --limit 1
+gh run watch <ci-run-id> --exit-status
+
+# 3c. validate the Release workflow itself with ONE dry run on main (chamber
+#     rule: workflow/script/action-pin changes need a dry run before the
+#     formal tag). dry_run skips release mutation; require success and record
+#     the run id under .scratch/.
+gh workflow run release.yml --ref main -f version=<version> -f dry_run=true
+gh run list --workflow release.yml --limit 1
+gh run watch <dry-run-id> --exit-status
 
 # 4. what the remote actually has (never quote a released version from memory)
 git ls-remote --tags origin
 ```
 
-Only then commit, tag `v<version>` and push — the tag is what makes the release
-real. A tag must never point at a commit whose gate was not run.
+Only then create the ANNOTATED tag on the gate-tested main commit and push it
+— the tag is what makes the release real, and a tag must never point at a
+commit whose gate was not run. Every release tag since `v0.1.1` is an
+annotated object:
+
+```sh
+git tag -a v<version> -m "dsh-chamber-mcp v<version>"
+git push origin v<version>   # triggers .github/workflows/release.yml
+```
+
+If the tag-triggered run fails, fix forward with `gh run rerun <id>` (or
+delete and re-push the tag). Do NOT retry through a non-dry
+`workflow_dispatch`: that path is not a release path (the release step carries
+no `tag_name`).
 
 ## Releasing a tgz GitHub Release (tag-driven)
 
@@ -112,10 +163,14 @@ composes its body from the dated section (see `CHANGELOG.md`):
 # 2. bump package.json#version to the same <version>
 # 3. update the version-bearing prose (see "Docs to update with the release")
 # 4. run the Pre-tag checklist above in full
-# 5. commit + tag + push
+# 5. commit, push main, wait for CI green, validate the Release workflow with
+#    one dry run, then tag + push (the checklist's steps 3b/3c)
 git add -A && git commit -m "release: v<version>"
-git tag v<version>
 git push origin main
+# wait for the CI run on main to finish green, then:
+gh workflow run release.yml --ref main -f version=<version> -f dry_run=true
+# wait for that dry-run run to finish green, then:
+git tag -a v<version> -m "dsh-chamber-mcp v<version>"
 git push origin v<version>  # triggers .github/workflows/release.yml
 ```
 
@@ -147,7 +202,15 @@ The workflow then:
 Publication is serialized (`concurrency.group: release-publish`) and also
 runs from `workflow_dispatch` with a **dry_run** mode: any change to
 workflows/scripts/action pins must be validated by one dry run before the
-formal tag (chamber rule).
+formal tag (chamber rule). The dry run exists in addition to the main-push CI
+run, not instead of it: CI exercises the compat matrix, the Release run does
+not.
+
+Local pre-tag tarballs are evidence, not a byte-identity claim: `npm pack`
+copies working-tree file modes (a 0600 working-tree file yields a different
+tarball than CI's 0644 checkout), so never quote a local pack digest in
+release notes. The Release's `.sha256` sidecar is the authoritative digest
+for the published bytes; verify the downloaded asset against it.
 
 Compatibility notes for consumers:
 
@@ -160,11 +223,14 @@ Compatibility notes for consumers:
 - Support window: **`^0.2.0-rc.1 || ^0.2.1-rc.1 || ^0.2.2-alpha.3`** — the 0.2.0/0.2.1 and
   0.2.2 lines, each verified live. (The 0.1.7 line was dropped with the 0.2.2
   move; the runtime preflight now refuses it, so a 0.1.7 install must upgrade
-  dsh first.) The pinned devDependency
-  set and the CI guard are `0.2.2-alpha.3` with cordis 4.0.6-alpha.2,
-  `cordis-plugin-loader` 1.0.7-alpha.2 and schemastery
+  dsh first.) The pinned devDependency set and the CI guard are now the
+  `0.2.2-rc.3` generation with cordis 4.1.0,
+  `cordis-plugin-loader` 1.1.0 and schemastery
   `^3.18.4 || ~3.18.6-alpha.2` (a runtime dependency, not a dev one; `semver`
-  is the smoke driver's gate). Both lines own the Config/volatile settings
+  is the smoke driver's gate). The union did not change when the generation
+  moved: `dsh-settings@0.2.2-rc.3` peers on `~3.19.0`, which `^3.18.4`
+  already reaches, while the alpha branch keeps an alpha.3 host installable
+  from the same range. Both lines own the Config/volatile settings
   model (forms derived from each Loader entry's own `Config`, persisted by
   `dsh-config-editor` into the profile patch) and the official
   `createMcpToolDefinition` adapter, whose projection hook is `projectContent`
@@ -172,22 +238,31 @@ Compatibility notes for consumers:
   0.1.5/0.1.6 generation — the shared settings namespace
   (`installSection`/`settingsScope`) and the plugin's own text projection — is
   no longer supported. A dsh upgrade that changes the typed surface triggers a
-  compat release; CI typecheck against the installed dsh set is the guard. Note
-  that the installed set is ONE generation: widening a peer range is what
-  declares the other lines, and every declared line needs its own live smoke
-  run.
+  compat release; CI typecheck against the installed dsh set is the guard, and
+  it covers BOTH ends of the window: `check` compiles the dev pin (`0.2.2-rc.3`)
+  while the `compat` matrix compiles `0.2.0-rc.1`, `0.2.1-rc.5` and the peer
+  range's literal floor `0.2.2-alpha.3`, so a peer claim is never wider than an
+  actual compile on that generation. Note that the installed set is ONE
+  generation: widening a peer range is what declares the other lines, and every
+  declared line needs its own live smoke run. The peer range itself did NOT
+  change for rc.3: a `0.2.2-*` comparator already admits every prerelease of
+  that version tuple (the runtime gate is prerelease-inclusive), so rc.1–rc.3
+  were installable before the dev pin moved — the move is what makes CI
+  typecheck and the smoke exercise them. rc.3 did remove
+  `AgentRegistry.roots()`; the manager adapter now reads `list()`, which every
+  declared generation exposes (see §Auditing a new upstream line, trap 6).
 - **What the generation publishes.** Prompt instructions are attached to a
   literal `mcp:<server>` system-prompt section, and `ctx.mcpResources` is
   provided so the official resource tools can reach this plugin's servers.
 - **The live smoke runs against an anchor in the support window — one run
-  per supported generation.** Point `DSH_ANCHOR_CLI` at a 0.2.0/0.2.1- or
-  0.2.2-generation CLI (for a local run, `npm install
-  @deepseek-ai/dsh@0.2.1-rc.5` and `npm install @deepseek-ai/dsh@0.2.2-alpha.3`
-  in separate scratch directories and point at their
-  `@deepseek-ai/dsh/lib/bin.js`; `0.2.0-rc.1` is the older compat line and has
-  its own compile gate, so it needs a run only when it is the line you ship
-  against); each transcript records
-  the version it used. Note that the M1 driver installs through
+  per declared line (0.2.0, 0.2.1, 0.2.2).** Point `DSH_ANCHOR_CLI` at a CLI
+  of each line (for a local run, `npm install @deepseek-ai/dsh@0.2.0-rc.1`,
+  `npm install @deepseek-ai/dsh@0.2.1-rc.5` and
+  `npm install @deepseek-ai/dsh@0.2.2-rc.3` in separate scratch directories and
+  point at their `@deepseek-ai/dsh/lib/bin.js`; the chamber anchor — currently
+  `0.2.2-rc.1` — is an extra same-line baseline, never a substitute for a
+  line); each transcript records the version it used. Note that the M1 driver
+  installs through
   `dsh plugin add`, which delegates to pnpm inside the profile directory: on a
   checkout whose `package.json` declares `packageManager`, corepack's strict
   mode can refuse the install: use a scratch `pnpm` shim (or export
@@ -213,7 +288,7 @@ Compatibility notes for consumers:
   `dsh-v<new>` in the harness checkout), bump the devDependency pins, typecheck
   + test against the new set, then boot the real new CLI per §Smoke — capturing
   the per-workspace tool list AND the browser half's registration trace — and
-  only then widen the peer range. Four traps this pass found:
+  only then widen the peer range. Traps these line audits found:
   1. **Pin the RESOLVED generation, not the umbrella's own version.** A
      `dsh@X` install resolves its internal caret ranges past `X` (0.1.5-rc.1 →
      0.1.5-rc.2 for 230 of 231 packages), and upstream's own rc.1 peers pull
@@ -247,31 +322,39 @@ Compatibility notes for consumers:
      against the 0.2.0 dependency set — the refusal came from the declared
      range alone. Widen or bump the peers as part of the new-line audit, and
      run the smoke on the new anchor as the proof.
-   6. **Pinning the 0.2.2 line needs three framework pins, not a source
-      change.** The 26 `@deepseek-ai/dsh-*` deps move to `0.2.2-alpha.3`,
-      `@deepseek-ai/cordis` to `4.0.6-alpha.2`, `cordis-plugin-loader` to
-      `1.0.7-alpha.2`, and `@deepseek-ai/schemastery` to
-      `^3.18.4 || ~3.18.6-alpha.2`; without the schemastery widen the dev
-      install fails ERESOLVE (`dsh-settings` peers on `~3.18.6-alpha.2` while
-      the root dependency resolves 3.18.5). The union keeps the old line installable from the
-      same range: npm on a 0.2.1 host still resolves 3.18.5. The measurement
-      lives in `CHANGELOG.md` and the GitHub Release notes — do not restate it
-      here. To audit a line before declaring it, pass its three pins explicitly;
-      the guard keeps the install EXACT, so the closure is complete and the
-      framework types are exercised:
-      `node scripts/verify-generation.mjs 0.2.2-alpha.3 --pin
-      @deepseek-ai/cordis@4.0.6-alpha.2 --pin
-      @deepseek-ai/cordis-plugin-loader@1.0.7-alpha.2 --pin
-      @deepseek-ai/schemastery@~3.18.6-alpha.2`. The dev tree moved to this
-      generation on 2026-11-04, so the direction is now the normal one: the
+   6. **Pinning the 0.2.2 line needs three framework pins and, since rc.3,
+      one source adaptation.** The 26 `@deepseek-ai/dsh-*` deps move to
+      `0.2.2-rc.3`, `@deepseek-ai/cordis` to `4.1.0`,
+      `cordis-plugin-loader` to `1.1.0`, and `@deepseek-ai/schemastery` keeps
+      the `^3.18.4 || ~3.18.6-alpha.2` union (rc.3 peers on `~3.19.0`, which
+      `^3.18.4` already reaches; the alpha branch keeps an alpha.3 host
+      installable from the same range; the widen itself dates from the
+      alpha.3 move, when `dsh-settings` peered on the prerelease and the dev
+      install failed ERESOLVE without it). To audit a line before declaring
+      it, pass its three framework pins explicitly; the guard keeps the
+      install EXACT, so the closure is complete and the framework types are
+      exercised:
+      `node scripts/verify-generation.mjs 0.2.2-rc.3 --pin
+      @deepseek-ai/cordis@4.1.0 --pin
+      @deepseek-ai/cordis-plugin-loader@1.1.0 --pin
+      @deepseek-ai/schemastery@~3.19.0`. rc.3 REMOVED
+      `AgentRegistry.roots()` (and `isOwnedBy`) from `@deepseek-ai/dsh-agent`,
+      so the manager's production adapter now reads `list()` — the API every
+      declared generation exposes. The optional legacy `roots()` fallback and
+      its synthetic test were removed (no declared generation ever exposed a
+      roots-only registry). The dev
+      tree moved to this generation on 2026-11-14, so the direction is now the
+      normal one: the
       `compat` matrix carries the older declared lines (0.2.0-rc.1 and
-      0.2.1-rc.5) with their own framework pins (`@deepseek-ai/cordis@4.0.4`
-      / `4.0.5`, `cordis-plugin-loader@1.0.5` / `1.0.6`, `schemastery@~3.18.4`
-      / `~3.18.5`), and the
+      0.2.1-rc.5) plus the peer range's floor `0.2.2-alpha.3`, each with its
+      own framework pins (`@deepseek-ai/cordis@4.0.4` / `4.0.5` /
+      `4.0.6-alpha.2`, `cordis-plugin-loader@1.0.5` / `1.0.6` /
+      `1.0.7-alpha.2`, `schemastery@~3.18.4` / `~3.18.5` /
+      `~3.18.6-alpha.2`), and the
       `@deepseek-ai/cordis` peer range gained
       a `~4.0.6-alpha.2` branch: `^4.0.4` does not match a prerelease in plain
       semver even though the runtime gate is prerelease-inclusive. The 0.1.7
-      line was dropped in the same change rather than carried as a third pin
+      line was dropped with the alpha.3 move rather than carried as a third pin
       set: it shares the Config/volatile model and the same adapter, so the
       drop is a support-window decision — a rolling two-line window is what this
       plugin has shipped since 0.2.0, and each declared line owes a compile gate

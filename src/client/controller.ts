@@ -388,7 +388,7 @@ export interface SecretWrite {
 }
 
 /**
- * Structural fold of the rc.1 Typert Remote result union (business failures
+ * Structural fold of the 0.2.2-generation Typert Remote result union (business failures
  * ride the `{ok:false}` branch instead of throwing).
  */
 export type RemoteResultLike<T> =
@@ -414,7 +414,7 @@ export interface ConfigFormPort {
   mutate(ops: readonly SettingsPathOpView[], expectedRevision?: number): Promise<unknown>
 }
 
-/** Structural subset of the rc.1 `remote.credentials` namespace. */
+/** Structural subset of the 0.2.2-generation `remote.credentials` namespace. */
 export interface CredentialsGateway {
   describe(refs: readonly string[]): Promise<Readonly<Record<string, CredentialInfo>>>
   set(ref: string, value: string): Promise<void>

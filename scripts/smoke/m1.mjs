@@ -188,7 +188,7 @@ try {
   try {
     lines = readFileSync(REQ_LOG, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
   } catch {
-    say('note: mock received NO chat requests (known rc.1 headless limitation: cold sessions never start a turn without a UI surface claim)')
+    say('note: mock received NO chat requests (known headless limitation: cold sessions never start a turn without a UI surface claim)')
   }
   say(`mock received ${lines.length} chat requests`)
   lines.forEach((l, i) => say(`request#${i}: tools=[${(l.tools ?? []).join(', ')}] count=${l.toolCount} model=${l.model}`))

@@ -56,12 +56,17 @@ must be a CLI of a supported generation.
   unresolvable name renders the shipped generic row, and nothing here may throw
   into a session or settings publish path.
 - No custom session events. The host half never appends a private event type:
-  only the envelope's `ignorable?: true` marker admits an unknown type, this
-  plugin ships no writer for it (the pinned generation exposes none), and
-  `validateStoredEvents` then refuses the WHOLE log — including for the harness
-  that wrote it. The registered-tools notice is derived client-side from the
-  harness's own events (`src/client/injection.ts`); anything needing session
-  visibility rides known event types read back in the browser half.
+  only the envelope's `ignorable?: true` marker admits an unknown type, and a
+  private REQUIRED event makes `validateStoredEvents` refuse the WHOLE log —
+  including for the harness that wrote it. Upstream does expose a writer
+  (`appendPluginRecord`: present on 0.2.1-rc.5 and the 0.2.2 line, absent from
+  0.2.0-rc.1), but this plugin deliberately keeps the notice derived rather
+  than persisted: it needs no log entry, plugin records are best-effort across
+  format migrations (the owner validates restored data), and a write path
+  would owe a per-generation feature-detect across the support window. The
+  registered-tools notice is derived client-side from the harness's own events
+  (`src/client/injection.ts`); anything needing session visibility rides known
+  event types read back in the browser half.
 - Locale discipline: every user-visible string lives in `src/client/locales.ts`
   (en/zh parity is compile-enforced + tested).
 - Secrets never ride the settings document or any API response; credential
@@ -74,5 +79,5 @@ must be a CLI of a supported generation.
 
 `npm run check`, `node scripts/release-notes.mjs <version>`,
 `node scripts/verify-workflow-action-pins.mjs`, then the live smoke
-(`npm run test:smoke`) **once per declared generation**, with `DSH_ANCHOR_CLI`
+(`npm run test:smoke`) **once per declared support line**, with `DSH_ANCHOR_CLI`
 pointing at a CLI inside the declared peer range. Details: `docs/RELEASE.md`.

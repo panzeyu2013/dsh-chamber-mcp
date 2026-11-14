@@ -7,17 +7,19 @@
  * it is DERIVED, never written.
  *
  * An earlier revision had the host append a private `mcp-scope/injected` session
- * event. That is the one thing a third-party plugin must not do on this
- * generation: the persisted envelope's `ignorable?: true` marker is the only
- * way a reader may skip an event type it does not know, and the append surface
- * this plugin is built against cannot set it — `Session.append` composes
- * `type`/`seq`/`time`/`data` plus surface metadata and nothing else (upstream's
- * `appendPluginRecord` writer starts at the 0.2.1 line, above our dev pin). A private REQUIRED event
- * therefore makes the whole log unreadable: `validateStoredEvents` refuses any
- * log carrying a type outside the build-generated `KNOWN_SESSION_EVENT_TYPES`
- * set unless the stored envelope says `ignorable: true`, so even the harness
- * that wrote the event can no longer open that session. Out-of-repo plugin
- * types are outside that set by construction (see upstream
+ * event. That is the one thing a third-party plugin must not do: the persisted
+ * envelope's `ignorable?: true` marker is the only way a reader may skip an
+ * event type it does not know, and a private REQUIRED event therefore makes the
+ * whole log unreadable — `validateStoredEvents` refuses any log carrying a type
+ * outside the build-generated `KNOWN_SESSION_EVENT_TYPES` set unless the stored
+ * envelope says `ignorable: true`, so even the harness that wrote the event can
+ * no longer open that session (out-of-repo plugin types are outside that set by
+ * construction). Upstream DOES expose a writer — `appendPluginRecord` (present
+ * on 0.2.1-rc.5 and the 0.2.2 line, absent from 0.2.0-rc.1) — but this notice
+ * deliberately stays derived: it needs no log entry, plugin records are
+ * best-effort across format migrations (owners validate restored data), and a
+ * write path would owe a per-generation feature-detect across the support
+ * window (see upstream
  * `.agents/notes/implemented/architecture/2026-08-30-retain-ignorable-external-session-events.md`
  * and `SessionEvent.ignorable` in `@deepseek-ai/dsh-session/types`).
  *

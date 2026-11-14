@@ -86,17 +86,43 @@ requirement → how we prove it (smoke / unit / E2E) → evidence location.
 - `M1`'s live R3 capture (the model-facing `tools[]` array) needs an anchor that
   actually starts a turn: on the 0.1.5-rc.2 chamber anchor the 0.1.0/0.1.1 runs
   recorded **`R3-live-capture: PASS`**, while the headless 0.1.6-alpha.1,
-  0.1.7-rc.2, 0.2.0-rc.1, 0.2.1-rc.5 and 0.2.2-alpha.3 anchors record
-  `not-captured` — those instances never start a turn, so the mock LLM receives
-  no chat request. The 0.2.2-alpha.3 run (2026-11-04) recorded `not-captured`
-  exactly like the 0.2.1-rc.5 control run on the same machine, so the verdict is
-  a property of the headless anchor, not of the generation. The capture is
-  transcript evidence either way: the driver reports the verdict without failing
-  on it.
+  0.1.7-rc.2, 0.2.0-rc.1, 0.2.1-rc.5, 0.2.2-alpha.3, 0.2.2-rc.1 and
+  0.2.2-rc.3 anchors record `not-captured` — those instances never start a
+  turn, so the mock LLM receives no chat request. The 2026-11-14 final-tree
+  runs on one anchor per declared line (`0.2.0-rc.1`, `0.2.1-rc.5`,
+  `0.2.2-rc.3`) and the `0.2.2-rc.1` baseline all recorded `not-captured`
+  exactly like the earlier runs on the same machine, so the verdict is a
+  property of the headless anchor, not of the generation. The positive live
+  evidence on every anchor is M0's synced tool list (the
+  `/api/mcp-scope.tools` route listing both fixture tools before and after a
+  restart). The capture is transcript evidence either way: the driver reports
+  the verdict without failing on it.
 - **The 0.1.5/0.1.6 generation is unsupported as of 0.2.0.** The plugin's
   verbatim port of the official tool adapter (and its parity suite) was removed
   with that generation, and so was `npm run verify:low-generation`; the peer
   range is now 0.2.0/0.2.1 plus 0.2.2 (0.1.7 was dropped with the 0.2.2 move).
+  The compile-time pin is `0.2.2-rc.3` since 2026-11-14; rc.3 removed
+  `AgentRegistry.roots()`, which the manager adapter no longer calls (it reads
+  `list()`, present in every declared generation), and the applier's registry
+  projection requires `list()` (the optional legacy fallback and its synthetic
+  test were removed — no declared generation ever exposed a roots-only
+  registry).
+- **The official global-plane MCP manager is a different plane.** dsh
+  0.2.2-rc.2+ mounts `@deepseek-ai/dsh-mcp-manager` through `dsh-web-app`'s
+  `mcp-manager` row (the Web profile; upstream documents the same row for
+  Desktop): it manages one Host-wide fleet (Settings, `${credential:…}`
+  templates, status/restart/probe) and registers each enabled server's tools in
+  the global layer. This plugin still owns the per-workspace gate, and the two
+  coexist, but configuring the SAME `serverName` in both planes is not
+  coordinated — the agent-scoped registration shadows the global copy
+  **name-for-name** for agents that enable it, while every other session still
+  sees the global one, and the duplicated name means two independent server
+  processes/connections (a side-effectful server would run twice). The
+  plugin's keyed tool-card row keys on the exact wire name, so it also renders
+  those official-manager calls. Keep a given server name in one plane. The M0
+  smoke on 0.2.2-rc.3 boots with the official manager mounted (its
+  `mcp-manager` settings namespace is visible) and the plugin's own
+  namespace/row stays healthy.
 - **`npm run test:smoke` packs `lib/`, not `src/`.** Run `npm run build` (or
   the full `npm run check`) first, or the smoke silently exercises the PREVIOUS
   build — a stale `lib/tools.js` once kept the static adapter import and

@@ -13,15 +13,13 @@ A standalone third-party [dsh](https://github.com/deepseek-ai/deepseek-harness) 
 
 ## Why it exists
 
-dsh ships `@deepseek-ai/dsh-mcp-client`, which **bridges** MCP into the model but does not *manage* it:
+dsh ships `@deepseek-ai/dsh-mcp-client`, which **bridges** MCP into the model. Since 0.2.2-rc.2 the Web profile (`dsh-web-app`) also ships the official `@deepseek-ai/dsh-mcp-manager` — but it manages the **host-global plane**:
 
-- one server = one line in the patch config; adding, editing or removing one means hand-editing `cordis.patch.yml`;
-- secrets are written as literals (or `!!js process.env.X`) in that same file;
-- tools register in whatever context composes the row — host-level rows land in the **global layer**, so **every** session carries every MCP tool: context cost plus misfire risk.
+- an official-manager server applies to the whole Host: once enabled, **every** session carries all of its MCP tools — context cost plus misfire risk;
+- the official manager covers Settings edits, `${credential:…}` templates and status/restart/probe, but it has **no "workspace" dimension**;
+- `dsh-workspace` is a project-grouping registry that registers no tools — **nothing upstream maps a workspace to a set of tools**.
 
-Upstream has no management surface to reuse either: *Settings → Plugins → Plugin configuration* renders a form only for an entry whose Config exposes editable fields (the official MCP client exposes none), the plugin list is read-only, and `dsh-workspace` is a project-grouping registry that registers no tools — **nothing upstream maps a workspace to a set of tools**.
-
-This plugin supplies exactly those two missing pieces: the **management surface** (Settings UI) and the **scope** (a per-workspace injection gate).
+This plugin supplies that missing piece: a **per-workspace injection gate** on top of the official bridge contract, plus its own **management surface** (server list / server detail / workspaces view in Settings). Both planes can coexist on one Host — global scope to the official manager, workspace granularity to this plugin; don't configure the same `serverName` in both (see the known limitations in `docs/acceptance.md`).
 
 ## Core advantages
 
@@ -96,11 +94,11 @@ The configuration *is* the plugin's own Loader-entry Config — one row in the p
 
 | | Version |
 | --- | --- |
-| Compile-time anchor / CI guard | dsh **0.2.2-alpha.3** (cordis 4.0.6-alpha.2, loader 1.0.7-alpha.2, schemastery 3.18.6-alpha.2) |
-| Live-verified | dsh **0.2.2-alpha.3**, **0.2.1-rc.2** and **0.2.0-rc.1** |
+| Compile-time anchor / CI guard | dsh **0.2.2-rc.3** (cordis 4.1.0, loader 1.1.0, schemastery 3.19.0) |
+| Live-verified | dsh **0.2.2-rc.3**, **0.2.2-rc.1**, **0.2.1-rc.5** and **0.2.0-rc.1** (final tree, one anchor per declared line) |
 | Peer range | `^0.2.0-rc.1 \|\| ^0.2.1-rc.1 \|\| ^0.2.2-alpha.3` |
 
-The 0.2.0/0.2.1 line stays supported while the 0.2.2 line is still a release candidate; both own the Config/volatile settings model and the official `createMcpToolDefinition` adapter this plugin consumes. The 0.1.7 line has left the peer range — a support-window decision, not an API one: 0.1.7 has owned the same settings model and adapter since 0.1.7, and every declared line owes a compile gate and a live smoke run. The 0.2.2 line splits tool dispatch into executor providers, but the registration contract this plugin uses — `agent.ctx.tools.register(definition, options?)`, called with one argument — is unchanged.
+The 0.2.0/0.2.1 line stays supported while the 0.2.2 line is still a release candidate; both own the Config/volatile settings model and the official `createMcpToolDefinition` adapter this plugin consumes. The 0.1.7 line has left the peer range — a support-window decision, not an API one: 0.1.7 has owned the same settings model and adapter since 0.1.7, and every declared line owes a compile gate and a live smoke run. The 0.2.2 line splits tool dispatch into executor providers, but the registration contract this plugin uses — `agent.ctx.tools.register(definition, options?)`, called with one argument — is unchanged. The compile anchor moved to `0.2.2-rc.3` on 2026-11-14: rc.3 removed `AgentRegistry.roots()` from `dsh-agent`, so the manager now reads `list()`, which every supported line exposes; the peer range is unchanged because `^0.2.2-alpha.3` already admits the 0.2.2 release candidates; the final-tree live smoke runs one anchor per declared line (0.2.0-rc.1 / 0.2.1-rc.5 / 0.2.2-rc.3, one identical packed tarball) plus the chamber's `0.2.2-rc.1` baseline, and all pass M0.
 
 ## Troubleshooting
 

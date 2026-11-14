@@ -140,7 +140,7 @@ describe('streamable HTTP transport over a real MCP server', () => {
     const { createManager } = await import('../../src/manager.ts')
     const run = async (url: string, token: string): Promise<unknown> => {
       const ctx = new Context()
-      ctx.provide('agents', { roots: () => [], list: () => [], get: () => undefined } as never)
+      ctx.provide('agents', { list: () => [], get: () => undefined } as never)
       ctx.provide('workspaceRegistry', { list: () => [] } as never)
       let manager: ReturnType<typeof createManager> | undefined
       const host = function managerHost(c: Context) {

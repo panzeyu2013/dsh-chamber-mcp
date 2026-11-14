@@ -42,7 +42,7 @@ jobs:
 
       - name: Install dependencies
         # No --legacy-peer-deps: every @deepseek-ai devDep is pinned to the
-        # SAME resolved generation (0.2.2-alpha.3), so
+        # SAME resolved generation (0.2.2-rc.3), so
         # the peer graph is internally consistent and npm resolves it unaided.
         # Mixing a generation's umbrella with another generation's internals
         # (the old cross-line matrix) is what used to force the relaxed
@@ -85,14 +85,15 @@ jobs:
         if: always()
 
   # The generations the peers declare besides the dev tree's own. The dev tree
-  # (0.2.2-alpha.3) is covered by `check`; this job compiles the same src + tests
-  # against each other declared line, so a peer claim is never wider than an
-  # actual compile on that generation. Add the next line here on a generation
-  # move, in lockstep with the package.json peer range.
+  # (0.2.2-rc.3) is covered by `check`; this job compiles the same src + tests
+  # against each other declared line AND the peer range's literal floor
+  # (0.2.2-alpha.3), so a peer claim is never wider than an actual compile on
+  # that generation. Add the next line here on a generation move, in lockstep
+  # with the package.json peer range.
   #
   # Each entry carries ITS framework versions: the dev tree pins the 0.2.2
-  # framework (cordis 4.0.6-alpha.2, loader 1.0.7-alpha.2, schemastery
-  # 3.18.6-alpha.2). cordis and schemastery are ERESOLVE-required — their peers
+  # framework (cordis 4.1.0, loader 1.1.0, schemastery 3.19.0). cordis and
+  # schemastery are ERESOLVE-required — their peers
   # are not optional, so a pinless run fails at `npm install`; the loader pin is
   # generation fidelity (that edge IS optional, so a stale one installs but
   # typechecks against another generation's loader). The pins are exact
@@ -108,6 +109,11 @@ jobs:
             pins: '--pin @deepseek-ai/cordis@4.0.4 --pin @deepseek-ai/cordis-plugin-loader@1.0.5 --pin @deepseek-ai/schemastery@~3.18.4'
           - generation: '0.2.1-rc.5'
             pins: '--pin @deepseek-ai/cordis@4.0.5 --pin @deepseek-ai/cordis-plugin-loader@1.0.6 --pin @deepseek-ai/schemastery@~3.18.5'
+          # The literal floor of the unchanged 0.2.2 peer comparator: the dev
+          # tree moved past it, so without this row the peer claim's bottom
+          # would be unguarded.
+          - generation: '0.2.2-alpha.3'
+            pins: '--pin @deepseek-ai/cordis@4.0.6-alpha.2 --pin @deepseek-ai/cordis-plugin-loader@1.0.7-alpha.2 --pin @deepseek-ai/schemastery@~3.18.6-alpha.2'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -143,14 +149,15 @@ jobs:
       - name: Build & pack
         run: npm run build && mkdir -p .smoke && npm run pack:tgz
 
-      # One run per declared generation (AGENTS.md "What must pass before
-      # tagging"). DSH_SMOKE_ANCHORS is an optional comma-separated list of
-      # anchor CLI paths set as a repository variable; unset reproduces the
-      # historical single run against the driver's own default anchor (the
-      # chamber gateway's). The driver refuses an anchor outside the declared
-      # peer range, so every entry must be a supported-generation CLI; each run
-      # gets its own ports so sequential runs cannot collide.
-      - name: Run M0/M1 live smoke (one run per declared generation)
+      # One run per declared line (AGENTS.md "Before tagging"): the 0.2.0/0.2.1
+      # family and the 0.2.2 line; the driver's default chamber anchor is an
+      # extra same-line baseline, never a substitute for a line. DSH_SMOKE_ANCHORS
+      # is an optional comma-separated list of anchor CLI paths set as a
+      # repository variable; unset reproduces the historical single run against
+      # the driver's own default anchor. The driver refuses an anchor outside
+      # the declared peer range, so every entry must be a supported-generation
+      # CLI; each run gets its own ports so sequential runs cannot collide.
+      - name: Run M0/M1 live smoke (one run per declared line)
         env:
           DSH_SMOKE_ANCHORS: ${{ vars.DSH_SMOKE_ANCHORS }}
         run: |

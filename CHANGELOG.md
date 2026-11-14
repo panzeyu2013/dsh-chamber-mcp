@@ -13,6 +13,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > only and ignores this one — an entry left here ships in the tree but never
 > appears in the release notes.
 
+## [0.2.5] - 2026-11-14
+
+A maintenance/build-compatibility release: the compile-time dsh generation
+moves to `0.2.2-rc.3`; the declared peer range, runtime dependencies and
+plugin behaviour are unchanged, so it is a drop-in upgrade with no action
+required.
+
+### Changed
+
+- **The compile-time generation moves to dsh `0.2.2-rc.3`.** The 26
+  `@deepseek-ai/dsh-*` devDependencies move from `0.2.2-alpha.3` to
+  `0.2.2-rc.3`, with `@deepseek-ai/cordis` 4.1.0 and
+  `@deepseek-ai/cordis-plugin-loader` 1.1.0; schemastery keeps the
+  `^3.18.4 || ~3.18.6-alpha.2` union (the rc.3 line peers on `~3.19.0`, which
+  `^3.18.4` reaches, while the alpha branch keeps an alpha.3 host installable
+  from the same range — simplify it only if alpha.3 ever leaves the peer
+  range). The peer range is UNCHANGED: `^0.2.2-alpha.3` already admits every
+  0.2.2 prerelease (the runtime preflight is prerelease-inclusive), so
+  rc.1–rc.3 install from the same declared window. CI's compat matrix gains
+  the peer range's literal floor `0.2.2-alpha.3` (cordis 4.0.6-alpha.2,
+  loader 1.0.7-alpha.2, schemastery ~3.18.6-alpha.2) so "a peer claim is never
+  wider than an actual compile" also holds at the bottom of the window. The
+  lockfile was fully re-resolved against `registry.npmjs.org` — an in-place
+  refresh cannot work across a generation move, because the old lock's alpha.3
+  peers conflict with the new framework pins: the 46 existing
+  `@deepseek-ai/dsh-*` entries move to rc.3 and `@deepseek-ai/dsh-error` is
+  added (47 total), the framework packages move to 4.1.0 / 1.1.0 / 3.19.0 with their
+  cordis-family siblings, the nested `zod` copies move 4.4.3 → 4.6.6
+  (top-level stays 4.6.7), and the non-generation dev transitives move within
+  their ranges — mostly patch-level, but `rollup` (and its platform packages)
+  4.67.4 → 4.68.3, `ws` 8.22.1 → 8.23.0 and `ansi-regex` 6.5.0 → 6.6.0 are
+  minor bumps, and the optional `@napi-rs/lzma-linux-x64-gnu` drops out with
+  rollup 4.68.3. Every `resolved` URL in the tracked lock is
+  `registry.npmjs.org` and every non-root entry carries `integrity`; `npm ci`
+  on a clean copy passes and does not rewrite the lock.
+- **`AgentRegistry.roots()` is gone; the manager adapter reads `list()`.**
+  `@deepseek-ai/dsh-agent` 0.2.2-rc.3 removed `roots()` (and `isOwnedBy()`)
+  from both types and runtime — no declared generation ever exposed a
+  `roots()`-without-`list()` registry — so `src/manager.ts` now wires
+  `list: () => [...ctx.agents.list()]`, `src/agents.ts` requires `list()` on
+  its registry projection, the optional legacy `roots()` fallback and its
+  synthetic test are gone (a list-only boot-scan test remains), and the dead
+  `Agent` type import/`roots` fixtures were removed. This is a compile-surface
+  adaptation, not a runtime fix: the previous build already worked on rc.3
+  because `list()` exists and the fallback was unreachable, but the compile
+  gate failed with exactly two `TS2339`s on `src/manager.ts`. Verified:
+  `npm run check` green on the rc.3 tree (575 tests, coverage thresholds met,
+  packed artifact + determinism), `verify-generation` PASS on rc.3, rc.1,
+  alpha.3, 0.2.1-rc.5 and 0.2.0-rc.1, and live smoke M0 PASS on one
+  final-tree anchor per declared line — `0.2.0-rc.1`, `0.2.1-rc.5` and
+  `0.2.2-rc.3` (one identical pre-tag packed tarball; the release's
+  `.sha256` sidecar is the authoritative published digest), plus the
+  chamber's `0.2.2-rc.1` baseline (M1's model-facing capture stays
+  `not-captured` headlessly, as on every 0.2.x anchor).
+- **Consumed-contract notes for the rc.3 line.** `createMcpToolDefinition` /
+  `McpToolDefinitionOptions` and the `mcpResources` provider shape are stable;
+  rc.3 DOES mark the three shared resource tools (`list_mcp_resources`,
+  `list_mcp_resource_templates`, `read_mcp_resource`) concurrency-safe, so one
+  provider may receive overlapping requests — this plugin's provider resolves
+  the live generation per call and holds no shared state, now covered by a
+  concurrent read/list test. `dsh-tools`' new `ToolContextUnavailableError` /
+  `ToolGuardDenial` additions are additive while `ToolDefinition` /
+  `register()` (including the pre-existing per-step `when`) are unchanged;
+  cordis/loader/schemastery differ only in their manifests; the four client
+  slot keys this plugin occupies are unchanged (rc.3 adds new keys and a
+  `hoc` SlotKind additively). `docs/design.md` §5(a) item 9 carries the
+  detailed audit.
+- **Upstream's new global-plane MCP manager is documented as a separate
+  plane.** dsh 0.2.2-rc.2 added `@deepseek-ai/dsh-mcp-manager` (mounted
+  through `dsh-web-app`'s `mcp-manager` row; settings-driven fleet,
+  `${credential:…}` templates, status/restart/probe, plugin registration) —
+  it manages the whole Host and maps no workspace, so this plugin remains the
+  per-workspace layer. The READMEs and `docs/acceptance.md` now say so and flag
+  that the same `serverName` must not be configured in both planes: the
+  agent-scoped registration shadows the global copy **name-for-name** for
+  enabled agents, while other sessions still see the global one, and the
+  duplicated name means two independent server processes/connections (a
+  side-effectful server would run twice). The plugin's keyed tool-card row
+  keys on the exact wire name, so it also renders those official-manager
+  calls. The M0 smoke on rc.3 boots with the official manager mounted and the
+  plugin's own namespace/row healthy.
+- **Release runbook and docs refreshed.** `docs/RELEASE.md` now separates the
+  ordinary in-place lock refresh from the clean-room generation-move
+  procedure (no `node_modules`, explicit `--registry=https://registry.npmjs.org`
+  so the tracked lock keeps canonical URLs), runs the live smoke on one anchor
+  per declared line, and records the alpha.3 compat row; the READMEs'
+  compatibility table names the final-tree smoke anchors.
+
 ## [0.2.4] - 2026-11-04
 
 ### Added

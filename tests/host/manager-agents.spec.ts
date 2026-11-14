@@ -63,7 +63,8 @@ describe('manager -> applier -> ToolRuntime (real services)', () => {
     ;(agent as unknown as { ctx: Context }).ctx = scope.ctx
 
     ctx.provide('agents', {
-      roots: () => [agent],
+      // 0.2.2-rc.3 removed AgentRegistry.roots(): the registry this fake
+      // models is list()+get() only, which is what production now reads.
       list: () => [agent],
       get: (id: string) => (id === agent.id ? agent : undefined),
     } as never)

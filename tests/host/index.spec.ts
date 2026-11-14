@@ -67,7 +67,7 @@ function build(options: BuildOptions = {}): Built {
   ctx.provide('credentials', { resolve: async () => undefined } as never)
   ctx.provide('tools', {} as never)
   ctx.provide('workspaceRegistry', { list: () => [] } as never)
-  ctx.provide('agents', { roots: () => [], get: () => undefined } as never)
+  ctx.provide('agents', { list: () => [], get: () => undefined } as never)
   if (options.connection !== false) {
     ctx.provide('connection', {
       fetch: {

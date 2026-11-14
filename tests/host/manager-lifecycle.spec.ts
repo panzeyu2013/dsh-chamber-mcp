@@ -10,8 +10,8 @@ describe('bridge manager lifecycle', () => {
   it('starts, restarts on field change, restarts on credential update, stops on removal', async () => {
     const { ctx, manager, lines, agentsListCalls, setDoc, dispose } = await boot()
     // The applier's boot scan must reach the registry through the production
-    // adapter: a roots-only adapter would silently drop a running delegation
-    // child on a plugin reload.
+    // adapter: a top-level-only projection would silently drop a running
+    // delegation child on a plugin reload.
     expect(agentsListCalls.length).toBeGreaterThan(0)
     try {
       // 1. Add a server: reconcile starts the supervisor and its sync commits.
