@@ -33,7 +33,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release — MUST equal package.json version (X.Y.Z)'
+        description: 'Version to release — MUST equal package.json version (X.Y.Z or X.Y.Z-prerelease)'
         required: true
         type: string
       dry_run:
@@ -71,7 +71,7 @@ jobs:
 
       - name: Install dependencies
         # No --legacy-peer-deps: every @deepseek-ai devDep is pinned to the
-        # SAME resolved generation (0.2.2-rc.3), so
+        # SAME resolved generation (0.2.3-alpha.2), so
         # npm resolves the peer graph unaided — the release gate must resolve
         # exactly like the CI gate in ci.yml (see its comment for the rationale).
         run: npm ci --no-audit --no-fund
@@ -137,10 +137,14 @@ jobs:
       # ------------------------------------------------------------------
 
       - name: Create GitHub Release with tgz asset
-        if: ${{ !inputs.dry_run }}
+        # Creation is tag-push-only: a manual dispatch from a branch would
+        # otherwise let the action default tag_name to the branch name.
+        if: ${{ !inputs.dry_run && github.event_name == 'push' }}
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
+          tag_name: ${{ github.ref_name }}
           name: dsh-chamber-mcp v${{ env.PKG_VERSION }}
+          prerelease: ${{ contains(env.PKG_VERSION, '-') }}
           body_path: .smoke/release-notes.md
           files: |
             .smoke/verify/dist/*.tgz

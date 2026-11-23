@@ -3,38 +3,33 @@
 // 2.0 server package (@modelcontextprotocol/server + /stdio), the same
 // generation the host half's client speaks.
 //
-// Tools:
+// Tools (the mount gate pins the eager generation at 8):
 //   add          returns a+b as text
 //   greet        returns a greeting
 //   fail         returns isError: true
 //   image        returns text + an image block (durable-image projection)
-//   crash        replies then exits the process (crash-recovery test)
+//   crash        replies, then exits the process (transport-close handling)
 //   admin.reset  dotted name (normalization test)
 //   dyn_add      registers a NEW tool at runtime → tools/list_changed fires
-//                (re-sync test); the child exits after replying when the
-//                dynamically registered tool is named "boom"
+//                (the mount gate's real catalogue swap); the child exits after
+//                replying when the dynamically registered tool is "boom"
 //   env_probe    echoes PROBE_TOKEN from the child env
+//
+// The instructions text, the one resource and the URI TEMPLATE are pinned by
+// the mount/seam tests and stay stable.
 
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server'
 import { serveStdio } from '@modelcontextprotocol/server/stdio'
 import { z } from 'zod'
 
-// Published through initialize; FIXTURE_HUGE_INSTRUCTIONS makes it exceed the
-// host's MAX_INSTRUCTION_BYTES bound (the oversized-block test).
-const INSTRUCTIONS = process.env.FIXTURE_HUGE_INSTRUCTIONS === '1'
-  ? 'x'.repeat(33_000)
-  : 'Fixture guidance for MCP tools: call add before greet.'
-
-// FIXTURE_NO_RESOURCES makes the fixture DECLARE no resources capability and
-// register no resource/template at all: the host's capability gate then has to
-// answer both list methods with an empty page instead of reaching the wire.
-const RESOURCES = process.env.FIXTURE_NO_RESOURCES !== '1'
+// Published through initialize (the mount gate asserts this text).
+const INSTRUCTIONS = 'Fixture guidance for MCP tools: call add before greet.'
 
 function createFixtureServer() {
   const server = new McpServer(
     { name: 'fixture-server', version: '1.0.0' },
     {
-      capabilities: { tools: { listChanged: true }, ...(RESOURCES ? { resources: {} } : {}) },
+      capabilities: { tools: { listChanged: true }, resources: {} },
       instructions: INSTRUCTIONS,
     },
   )
@@ -78,7 +73,7 @@ function createFixtureServer() {
 
   server.registerTool('crash', {
     title: 'Crash Tool',
-    description: 'Replies, then exits the server process (crash-recovery test).',
+    description: 'Replies, then exits the server process.',
     inputSchema: z.object({}),
   }, async () => {
     // Exit AFTER the response flushes so the caller observes a clean result
@@ -97,7 +92,8 @@ function createFixtureServer() {
   }))
 
   // Registers a brand-new tool at runtime → the server sends
-  // notifications/tools/list_changed → the supervisor re-syncs.
+  // notifications/tools/list_changed → the mounted instance re-syncs the
+  // catalogue generation (the mount gate drives this).
   server.registerTool('dyn_add', {
     title: 'Dynamic Add Tool',
     description: 'Registers a new dynamic tool named by the caller.',
@@ -129,25 +125,23 @@ function createFixtureServer() {
   // A resource TEMPLATE (URI template): the host-half provider's template list
   // path has to surface it, and reading an EXPANDED uri has to reach the server
   // — which is the entire point of a template.
-  if (RESOURCES) {
-    server.registerResource(
-      'greeting',
-      new ResourceTemplate('fixture:///greeting/{who}', { list: undefined }),
-      { title: 'Fixture greeting', mimeType: 'text/plain' },
-      async (uri, variables) => ({
-        contents: [{ uri: uri.href, mimeType: 'text/plain', text: `fixture greeting for ${String(variables.who)}` }],
-      }),
-    )
+  server.registerResource(
+    'greeting',
+    new ResourceTemplate('fixture:///greeting/{who}', { list: undefined }),
+    { title: 'Fixture greeting', mimeType: 'text/plain' },
+    async (uri, variables) => ({
+      contents: [{ uri: uri.href, mimeType: 'text/plain', text: `fixture greeting for ${String(variables.who)}` }],
+    }),
+  )
 
-    // A real resource so the host-half resource provider has something to route
-    // to; the provider test asserts the BODY, not merely "no error".
-    server.registerResource('readme', 'file:///fixture-readme.txt', {
-      title: 'Fixture resource',
-      mimeType: 'text/plain',
-    }, async (uri) => ({
-      contents: [{ uri: uri.href, mimeType: 'text/plain', text: 'fixture resource body' }],
-    }))
-  }
+  // A real resource so the host-half resource provider has something to route
+  // to; the provider test asserts the BODY, not merely "no error".
+  server.registerResource('readme', 'file:///fixture-readme.txt', {
+    title: 'Fixture resource',
+    mimeType: 'text/plain',
+  }, async (uri) => ({
+    contents: [{ uri: uri.href, mimeType: 'text/plain', text: 'fixture resource body' }],
+  }))
 
   return server
 }

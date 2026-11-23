@@ -14,6 +14,7 @@ import type { ServerDef } from '../../src/shared/model.ts'
 import {
   argsRawOf,
   identifyMcpTool,
+  isLoaderTool,
   mcpToolNamesOf,
   resultTextOf,
   rowStateOf,
@@ -397,6 +398,58 @@ describe('MCP tool row rendering', () => {
     head.click()
     await flush()
     expect(mounted.host.textContent).toContain(en['tool.noOutput'])
+  })
+})
+
+
+describe('call state matrix (ABORTED divergence)', () => {
+  const settledBase: McpToolBlockLike = {
+    kind: 'tool-result',
+    callId: 'c1',
+    call: { argsRaw: '{}' },
+    content: [],
+    isError: false,
+  }
+
+  it('classifies interrupted, ABORTED and ABORTED_BEFORE_DISPATCH as stopped', () => {
+    // F12 upstream: the shipped row treats only 'interrupted' as stopped and
+    // paints durable aborts error-red. This row deliberately diverges: a
+    // user-cancelled MCP call is not a server failure. Pinned here, commented
+    // in rowStateOf and documented in docs/design.md.
+    for (const code of ['interrupted', 'ABORTED', 'ABORTED_BEFORE_DISPATCH']) {
+      expect(rowStateOf({ ...settledBase, error: { code, name: code } }), code).toBe('stopped')
+    }
+    // Every other failure keeps the shipped error classification.
+    expect(rowStateOf({ ...settledBase, isError: true })).toBe('error')
+    expect(rowStateOf({ ...settledBase, isError: true, error: { code: 'boom' } })).toBe('error')
+    expect(rowStateOf(settledBase)).toBe('ok')
+    expect(rowStateOf({ callId: 'c2', argsRaw: '{}' })).toBe('running')
+  })
+})
+
+describe('on-demand loader tool', () => {
+  const onDemand: ServerDef = { serverName: 'github', transport: 'stdio', command: 'run', toolLoading: 'on-demand' }
+
+  it('derives the loader identity only for a configured on-demand owner', () => {
+    const loader = identifyMcpTool('mcp__github__load_tools', [onDemand])
+    expect(loader).toMatchObject({ serverName: 'github', toolName: 'load_tools', loader: true })
+    expect(isLoaderTool(loader!)).toBe(true)
+    // An eager server may legally expose a tool with the same raw name.
+    const eager = identifyMcpTool('mcp__github__load_tools', [STDIO])
+    expect(eager?.loader).toBeUndefined()
+    expect(isLoaderTool(eager!)).toBe(false)
+  })
+
+  it('titles the loader row by tool.loaderName under its server', async () => {
+    const identity = identifyMcpTool('mcp__github__load_tools', [onDemand])
+    const mounted = mountRow(identity, { callId: 'c9', argsRaw: '{"name":"search"}' })
+    await flush()
+    expect(mounted.host.textContent).toContain('github · ' + en['tool.loaderName'])
+    expect(mounted.host.textContent).not.toContain('load_tools')
+    // The ordinary row keeps its raw tool name.
+    const ordinary = mountRow(identifyMcpTool('mcp__github__search', [onDemand]), { callId: 'c10', argsRaw: '{}' })
+    await flush()
+    expect(ordinary.host.textContent).toContain('github · search')
   })
 })
 

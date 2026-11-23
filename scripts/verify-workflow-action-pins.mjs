@@ -121,8 +121,18 @@ if (refuseStep === undefined) {
 const publishStep = stepBlock(releaseYaml, 'Create GitHub Release with tgz asset')
 if (publishStep === undefined) {
   fail('release.yml: missing the "Create GitHub Release with tgz asset" step')
-} else if (!/if:.*inputs\.dry_run/.test(publishStep)) {
-  fail('release.yml: the release mutation step must be skipped on a dry run (expected "if: !inputs.dry_run")')
+} else {
+  if (!/if:.*inputs\.dry_run/.test(publishStep)) {
+    fail('release.yml: the release mutation step must be skipped on a dry run (expected "if: !inputs.dry_run")')
+  }
+  // A manual dispatch from a branch must never create a branch-named release:
+  // creation is tag-push-only and names the tag explicitly.
+  if (!/github\.event_name == 'push'/.test(publishStep)) {
+    fail("release.yml: the release mutation step must be tag-push-only (expected github.event_name == 'push')")
+  }
+  if (!/tag_name:\s*\$\{\{\s*github\.ref_name\s*\}\}/.test(publishStep)) {
+    fail('release.yml: the release mutation step must set tag_name explicitly (expected tag_name: ${{ github.ref_name }})')
+  }
 }
 
 // ci.yml trigger parity

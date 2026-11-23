@@ -19,7 +19,15 @@ import {
   type ConfigFormPort,
   type SaveOutcome,
 } from '../../src/client/controller.js'
-import { isEnabled, removeServerOverrides, type McpScopeDoc, type ServerDef, type WorkspaceOverrides } from '../../src/shared/model.js'
+import {
+  RECONNECT_DEFAULTS,
+  SERVER_DEFAULTS,
+  isEnabled,
+  removeServerOverrides,
+  type McpScopeDoc,
+  type ServerDef,
+  type WorkspaceOverrides,
+} from '../../src/shared/model.js'
 
 const stdioServer = (serverName: string, envKeys: string[] = []): ServerDef => ({
   serverName,
@@ -253,6 +261,178 @@ describe('docsEqual (landed-write comparison)', () => {
     expect(docsEqual(doc([bare]), doc([{ ...bare, envKeys: [] }]))).toBe(true)
     expect(docsEqual(doc([bare]), doc([{ ...bare, cwd: '' }]))).toBe(true)
     expect(docsEqual(doc([bare]), doc([{ ...bare, args: ['extra'] }]))).toBe(false)
+  })
+})
+
+/** An in-memory http row (may carry the upstream header MAP the frozen row type does not declare). */
+const httpRow = (patch: Record<string, unknown> = {}): ServerDef =>
+  ({ serverName: 'h', transport: 'streamable-http', url: 'https://mcp.example.test/x', ...patch }) as unknown as ServerDef
+
+describe('serverDefEqual: landed-write field map', () => {
+  const bare: ServerDef = { serverName: 'a', transport: 'stdio', command: 'npx' }
+  /** The row the schema decode materializes from \`bare\` (defaults present). */
+  const hostDefaulted = (patch: Partial<ServerDef> = {}): ServerDef => ({
+    serverName: 'a',
+    transport: 'stdio',
+    command: 'npx',
+    args: [],
+    cwd: '',
+    envKeys: [],
+    toolCallTimeoutMs: SERVER_DEFAULTS.toolCallTimeoutMs,
+    startupTimeoutMs: SERVER_DEFAULTS.startupTimeoutMs,
+    closeTimeoutMs: SERVER_DEFAULTS.closeTimeoutMs,
+    reconnect: { ...RECONNECT_DEFAULTS },
+    toolLoading: SERVER_DEFAULTS.toolLoading,
+    ...patch,
+  } as ServerDef)
+
+  it('treats absent fields and the schema-materialized defaults as equal', () => {
+    expect(serverDefEqual(bare, hostDefaulted())).toBe(true)
+    expect(docsEqual(doc([bare]), doc([hostDefaulted()]))).toBe(true)
+    // Explicit default values are the same semantics as absence.
+    expect(serverDefEqual(bare, { ...bare, toolCallTimeoutMs: SERVER_DEFAULTS.toolCallTimeoutMs })).toBe(true)
+    expect(serverDefEqual(bare, { ...bare, toolLoading: 'eager' })).toBe(true)
+    expect(serverDefEqual(bare, { ...bare, reconnect: { ...RECONNECT_DEFAULTS } })).toBe(true)
+  })
+
+  it('compares legacy containers and upstream maps as one value space', () => {
+    const legacy: ServerDef = { serverName: 'a', transport: 'stdio', command: 'node', envKeys: ['TOKEN'] }
+    const mapped: ServerDef = { serverName: 'a', transport: 'stdio', command: 'node', env: { TOKEN: '\${credential:TOKEN}' } }
+    expect(serverDefEqual(legacy, mapped)).toBe(true)
+    const legacyHttp: ServerDef = {
+      serverName: 'h',
+      transport: 'streamable-http',
+      url: 'https://mcp.example.test/x',
+      headers: [{ name: 'Authorization', ref: 'AUTH' }],
+    }
+    const mappedHttp = httpRow({ headers: { Authorization: '\${credential:AUTH}' } })
+    expect(serverDefEqual(legacyHttp, mappedHttp)).toBe(true)
+    expect(serverDefEqual(legacyHttp, httpRow({ headers: { Authorization: '\${credential:OTHER}' } }))).toBe(false)
+  })
+
+  it('detects every dropped or mutated new field as a landed-write mismatch', () => {
+    const variants: [string, ServerDef][] = [
+      ['startupTimeoutMs', { ...bare, startupTimeoutMs: 45_000 }],
+      ['closeTimeoutMs', { ...bare, closeTimeoutMs: 7_000 }],
+      ['toolCallTimeoutMs', { ...bare, toolCallTimeoutMs: 120_000 }],
+      ['toolLoading', { ...bare, toolLoading: 'on-demand' }],
+      ['reconnect', { ...bare, reconnect: { enabled: false, maxAttempts: 3 } }],
+      ['oauth', httpRow({ oauth: { clientId: 'client-1' } })],
+      ['headers map', httpRow({ headers: { Authorization: '\${credential:AUTH}' } })],
+    ]
+    for (const [field, row] of variants) {
+      const base = row.transport === 'streamable-http' ? httpRow() : bare
+      // Intended row carries the field; the host's landed row does not: this is
+      // exactly the "write accepted, field dropped" failure the check must catch.
+      expect(serverDefEqual(base, row), field).toBe(false)
+      expect(serverDefEqual(row, base), field).toBe(false)
+    }
+  })
+
+  it('ignores the read-compat-only fields the editor strips (no false conflicts)', () => {
+    // Import strips these with a warning and the editor never writes them, so a
+    // hand-edited row carrying one must still compare equal after a normal save.
+    expect(serverDefEqual(bare, { ...bare, maxInstructionBytes: 1024 })).toBe(true)
+    expect(serverDefEqual(bare, { ...bare, catalogDescriptionMaxLength: 80 })).toBe(true)
+    expect(serverDefEqual(bare, { ...bare, failOnStartupError: true })).toBe(true)
+    expect(serverDefEqual(bare, { ...bare, expandTemplates: true } as ServerDef)).toBe(true)
+  })
+
+  it('reports a dropped toolLoading/oauth as a conflict through the real save pipeline', async () => {
+    const mapped = httpRow({ toolLoading: 'on-demand', oauth: { clientId: 'c' } })
+    const { scope, controller, stop } = makePipeline(doc([]))
+    try {
+      scope.refuseNext = true
+      const outcome = await controller.addServer({ server: mapped, secrets: [] })
+      expect(outcome).toEqual({ ok: false, reason: 'conflict' })
+    } finally {
+      stop()
+    }
+  })
+})
+
+describe('controller write plan: new fields and template refs', () => {
+  const mappedStdio = (serverName: string, patch: Record<string, unknown> = {}): ServerDef =>
+    ({
+      serverName,
+      transport: 'stdio',
+      command: 'npx',
+      env: { TOKEN: '\${credential:TOKEN}' },
+      ...patch,
+    }) as unknown as ServerDef
+
+  it('emits ONE servers op carrying every new field (fields ride the server row)', async () => {
+    const prev = doc([mappedStdio('a', { env: { OLD: '\${credential:OLD}' } })])
+    const next = doc([
+      mappedStdio('a', {
+        env: { TOKEN: '\${credential:TOKEN}', OLD: '\${credential:OLD}' },
+        startupTimeoutMs: 45_000,
+        closeTimeoutMs: 7_000,
+        toolCallTimeoutMs: 120_000,
+        toolLoading: 'on-demand',
+        reconnect: { enabled: false, initialDelayMs: 1000 },
+      }),
+    ])
+    const plan = buildSaveOps(prev, next)
+    expect(plan.ops).toEqual([{ op: 'set', path: ['servers'], value: normalizeDoc(next).servers }])
+    // OLD is still referenced by a template row: nothing is orphaned.
+    expect(plan.unsetRefs).toEqual([])
+    expect(credentialRefsOfDoc(next)).toEqual(['TOKEN', 'OLD'])
+  })
+
+  it('orphanedRefs unsets refs referenced only by template values', async () => {
+    const prev = doc([mappedStdio('a', { env: { TOKEN: '\${credential:ONLY_TEMPLATE}' } })])
+    const plan = buildSaveOps(prev, doc([]))
+    expect(plan.ops).toEqual([{ op: 'set', path: ['servers'], value: [] }])
+    expect(plan.unsetRefs).toEqual(['ONLY_TEMPLATE'])
+
+    const { scope, creds, controller, stop } = makePipeline(prev)
+    try {
+      creds.values.set('ONLY_TEMPLATE', 'v')
+      await flush()
+      expect(await controller.removeServer('a')).toEqual({ ok: true })
+      expect(creds.unsetCalls).toEqual(['ONLY_TEMPLATE'])
+      expect(scope.mirror.servers).toEqual([])
+    } finally {
+      stop()
+    }
+  })
+
+  it('refs named inside command/args/cwd/url templates are orphaned too', async () => {
+    const templated: ServerDef = {
+      serverName: 'a',
+      transport: 'stdio',
+      command: 'run \${credential:COMMAND_REF}',
+      args: ['--token', '\${credential:ARG_REF}'],
+      cwd: '\${credential:CWD_REF}',
+    }
+    const plan = buildSaveOps(doc([templated]), doc([]))
+    expect(plan.unsetRefs).toEqual(['COMMAND_REF', 'ARG_REF', 'CWD_REF'])
+  })
+
+  it('replaceServer round-trips oauth/toolLoading/reconnect through the landed check', async () => {
+    // OAuth and an Authorization header are refused together (validateDoc), so
+    // the credential row uses a different header name.
+    const original = httpRow({ headers: { 'X-Api-Key': '\${credential:AUTH}' } })
+    const { scope, controller, stop } = makePipeline(doc([original]))
+    try {
+      await flush()
+      const next = httpRow({
+        headers: { 'X-Api-Key': '\${credential:AUTH}' },
+        toolLoading: 'on-demand',
+        reconnect: { enabled: false, maxAttempts: 4 },
+        oauth: { clientId: 'client-1', scope: 'read' },
+      })
+      expect(await controller.replaceServer('h', { server: next, secrets: [] })).toEqual({ ok: true })
+      const landed = scope.mirror.servers[0] as unknown as Record<string, unknown>
+      expect(landed.toolLoading).toBe('on-demand')
+      expect(landed.oauth).toEqual({ clientId: 'client-1', scope: 'read' })
+      expect(landed.reconnect).toEqual({ enabled: false, maxAttempts: 4 })
+      // Credential refs still flow through the template map after the round trip.
+      expect(credentialRefsOfDoc(scope.mirror)).toEqual(['AUTH'])
+    } finally {
+      stop()
+    }
   })
 })
 
@@ -1063,12 +1243,18 @@ describe('McpScopeController save pipeline (FE-4)', () => {
     }
   })
 
-  it('treats a dropped timeoutMs as a landed-write mismatch', () => {
-    const withTimeout: ServerDef = { ...stdioServer('a'), timeoutMs: 120_000 }
+  it('treats a dropped timeout (legacy or new name) as a landed-write mismatch', () => {
+    const withNew: ServerDef = { ...stdioServer('a'), toolCallTimeoutMs: 120_000 }
+    const withLegacy: ServerDef = { ...stdioServer('a'), timeoutMs: 120_000 }
     const without = stdioServer('a')
-    expect(docsEqual(doc([withTimeout]), doc([without]))).toBe(false)
-    expect(serverDefEqual(withTimeout, without)).toBe(false)
-    expect(serverDefEqual(withTimeout, { ...without, timeoutMs: 120_000 })).toBe(true)
+    expect(docsEqual(doc([withNew]), doc([without]))).toBe(false)
+    expect(serverDefEqual(withNew, without)).toBe(false)
+    expect(serverDefEqual(withNew, { ...without, toolCallTimeoutMs: 120_000 })).toBe(true)
+    // Read-compat translation: legacy timeoutMs normalizes to the new name.
+    expect(docsEqual(doc([withLegacy]), doc([withNew]))).toBe(true)
+    expect(serverDefEqual(withLegacy, withNew)).toBe(true)
+    // The upstream default is semantics-preserving: absent == explicit default.
+    expect(serverDefEqual(without, { ...without, toolCallTimeoutMs: 60_000 })).toBe(true)
   })
 
   it('replaceServer refuses with conflict when the target no longer exists', async () => {

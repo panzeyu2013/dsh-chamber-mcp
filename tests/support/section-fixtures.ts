@@ -1,10 +1,10 @@
 /** Shared pure fixtures for the settings section suites. */
 import { en, type SettingsKey } from '../../src/client/locales.ts'
-import type { McpScopeDoc, ServerDef, WorkspaceOverrides } from '../../src/shared/model.ts'
-import type { RuntimeSnapshot, ServerRuntimeView } from '../../src/client/runtime.ts'
+import type { ServerDef, WorkspaceOverrides } from '../../src/shared/model.ts'
+import type { RuntimePhase, RuntimeSnapshot, ServerRuntimeView } from '../../src/client/runtime.ts'
 
 /** English dictionary reader with the section's {name} interpolation. */
-export function translate(dictionary: Record<string, string> = en) {
+function translate(dictionary: Record<string, string> = en) {
   return (key: SettingsKey, params?: Record<string, string | number>): string =>
     (dictionary[key] ?? key).replace(/\{(\w+)\}/g, (_, name: string) => String(params?.[name] ?? ''))
 }
@@ -48,10 +48,11 @@ export const overridesOf = (rows: Record<string, string[]>): WorkspaceOverrides 
     ]),
   )
 
-/** One runtime view with the fields the section renders. */
-export const viewOf = (name: string, state: ServerRuntimeView['state'] = 'connected'): ServerRuntimeView => ({
+/** One runtime view with the fields the section renders (wire v2). */
+export const viewOf = (name: string, phase: RuntimePhase = 'connected'): ServerRuntimeView => ({
   name,
-  state,
+  phase,
+  configured: true,
   attempts: 0,
   maxAttempts: 10,
   toolCount: 2,
@@ -59,9 +60,7 @@ export const viewOf = (name: string, state: ServerRuntimeView['state'] = 'connec
 })
 
 /** One ready snapshot with a single server view. */
-export const runtimeWith = (name: string, state: ServerRuntimeView['state'] = 'connected'): RuntimeSnapshot => ({
+export const runtimeWith = (name: string, phase: RuntimePhase = 'connected'): RuntimeSnapshot => ({
   phase: 'ready',
-  servers: { [name]: viewOf(name, state) },
+  servers: { [name]: viewOf(name, phase) },
 })
-
-export type SectionDoc = McpScopeDoc

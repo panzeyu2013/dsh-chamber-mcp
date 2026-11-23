@@ -13,7 +13,6 @@
  */
 import { afterEach, describe, expect, it } from 'vitest'
 import { t as text } from '../support/section-fixtures.ts'
-import { styles } from '../../src/client/styles.ts'
 import {
   buttonsOf,
   cleanupSections,
@@ -87,12 +86,6 @@ function setValue(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!
   setter.call(input, value)
   input.dispatchEvent(new Event('input', { bubbles: true }))
-}
-
-function dialog(): HTMLElement {
-  const element = document.querySelector<HTMLElement>('[role="dialog"]')
-  if (element === null) throw new Error('missing dialog')
-  return element
 }
 
 describe('acceptance correctness: off-by-default and optimistic writes', () => {

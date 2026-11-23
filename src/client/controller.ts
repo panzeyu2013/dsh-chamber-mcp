@@ -25,17 +25,22 @@ import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import {
   CREDENTIAL_REF_PATTERN,
   MCP_SCOPE_NAMESPACE,
+  RECONNECT_DEFAULTS,
+  SERVER_DEFAULTS,
   canonicalDoc,
   credentialRefsOf,
+  normalizeServerDef,
   pruneEmptyOverrideRows,
   removeServerDisabled,
   removeServerOverrides,
   renameDisabledKey,
   setDisabledKey,
   setServerDisabled,
+  templateFor,
   validateDoc,
   type McpScopeDoc,
   type ServerDef,
+  type ServerHeaderRow,
   type WorkspaceOverrides,
 } from '../shared/model.js'
 import type { SettingsKey } from './locales.js'
@@ -66,38 +71,87 @@ export function serversEqual(left: readonly ServerDef[], right: readonly ServerD
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
-function arrayEqual(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index])
+/** Plain-JSON deep equality (arrays by index, object key order ignored). */
+function jsonEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+    return left.every((value, index) => jsonEqual(value, right[index]))
+  }
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') return false
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord)
+  if (leftKeys.length !== Object.keys(rightRecord).length) return false
+  return leftKeys.every((key) => Object.hasOwn(rightRecord, key) && jsonEqual(leftRecord[key], rightRecord[key]))
 }
 
 /**
- * Field-wise structural equality of two server definitions, ignoring object
- * key order and treating absent arrays as empty (wire decoders may drop or
- * add empty containers without changing semantics). Used by the landed-write
- * comparison, which must never trip on representation noise.
+ * ONE comparable projection of a server row: canonical shape through the shared
+ * normalizer (legacy timeoutMs/envKeys/header rows translated) plus the shared
+ * defaults table applied to absent fields (schema decode materializes
+ * args/cwd/envKeys/headers, so the UI's intended row and the host's landed row
+ * differ in REPRESENTATION only). This is the single source the landed-write
+ * check compares, so a dropped field is a real difference.
+ */
+function comparableServerDef(def: ServerDef): Record<string, unknown> | undefined {
+  const row = normalizeServerDef(def)
+  if (row === undefined) return undefined
+  const common = {
+    serverName: row.serverName,
+    transport: row.transport,
+    // normalizeServerDef already translated the deprecated timeoutMs alias; the
+    // coalesce keeps hand-built in-memory rows comparable too.
+    toolCallTimeoutMs: row.toolCallTimeoutMs ?? (row as { timeoutMs?: number }).timeoutMs ?? SERVER_DEFAULTS.toolCallTimeoutMs,
+    startupTimeoutMs: row.startupTimeoutMs ?? SERVER_DEFAULTS.startupTimeoutMs,
+    closeTimeoutMs: row.closeTimeoutMs ?? SERVER_DEFAULTS.closeTimeoutMs,
+    reconnect: { ...RECONNECT_DEFAULTS, ...(row.reconnect ?? {}) },
+    toolLoading: row.toolLoading ?? SERVER_DEFAULTS.toolLoading,
+    // The read-compat-only fields (maxInstructionBytes / catalogDescriptionMaxLength
+    // / failOnStartupError / expandTemplates) are deliberately NOT compared: the
+    // editor never writes them (import strips them with a warning), so comparing
+    // them would report a false conflict whenever a hand-edited row carrying one
+    // is saved from the editor.
+  }
+  if (row.transport === 'stdio') {
+    const env: Record<string, string> = { ...(row.env ?? {}) }
+    // Legacy envKeys rows and an explicit env map name the same credentials: see
+    // them through ONE value space (the host adapter emits token(ref) for rows).
+    for (const ref of row.envKeys ?? []) {
+      if (!Object.hasOwn(env, ref)) env[ref] = templateFor(ref)
+    }
+    return { ...common, command: row.command, args: row.args ?? [], cwd: row.cwd ?? '', env }
+  }
+  const headers: Record<string, string> = {}
+  const rawHeaders: unknown = row.headers
+  if (Array.isArray(rawHeaders)) {
+    for (const header of rawHeaders as readonly ServerHeaderRow[]) headers[header.name] = templateFor(header.ref)
+  } else if (rawHeaders !== undefined) {
+    for (const [name, value] of Object.entries(rawHeaders as Record<string, string>)) headers[name] = value
+  }
+  const oauth = row.oauth
+  return {
+    ...common,
+    url: row.url,
+    headers,
+    oauth: oauth === undefined ? undefined : { ...oauth },
+  }
+}
+
+/**
+ * Field-wise structural equality of two server definitions, ignoring object key
+ * order and representation noise (absent arrays/cwd/env vs schema-materialized
+ * defaults, legacy containers vs upstream maps). Used by the landed-write
+ * comparison, which must never trip on representation noise — but every field
+ * the editor writes is compared, so a DROPPED field is a real difference.
  */
 export function serverDefEqual(left: ServerDef, right: ServerDef): boolean {
-  if (left.serverName !== right.serverName || left.transport !== right.transport) return false
-  if ((left.timeoutMs ?? 0) !== (right.timeoutMs ?? 0)) return false
-  if (left.transport === 'stdio' && right.transport === 'stdio') {
-    if (left.command !== right.command) return false
-    if ((left.cwd ?? '') !== (right.cwd ?? '')) return false
-    if (!arrayEqual(left.args ?? [], right.args ?? [])) return false
-    return arrayEqual(left.envKeys ?? [], right.envKeys ?? [])
-  }
-  if (left.transport === 'streamable-http' && right.transport === 'streamable-http') {
-    if (left.url !== right.url) return false
-    const leftHeaders = left.headers ?? []
-    const rightHeaders = right.headers ?? []
-    return (
-      leftHeaders.length === rightHeaders.length &&
-      leftHeaders.every((header, index) => {
-        const other = rightHeaders[index]
-        return other !== undefined && header.name === other.name && header.ref === other.ref
-      })
-    )
-  }
-  return false
+  const a = comparableServerDef(left)
+  const b = comparableServerDef(right)
+  // An unclassifiable row (typod transport) has no canonical shape; compare it
+  // verbatim. validateDoc refuses such rows before any save.
+  if (a === undefined || b === undefined) return JSON.stringify(left) === JSON.stringify(right)
+  return jsonEqual(a, b)
 }
 
 /**

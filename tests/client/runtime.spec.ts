@@ -40,9 +40,11 @@ afterEach(() => {
   delete (globalThis as Record<string, unknown>).document
 })
 
-const view = (name: string, state = 'connected') => ({
+/** One status-wire row (wire v2: phase + configured + toolCount). */
+const view = (name: string, phase = 'connected') => ({
   name,
-  state,
+  phase,
+  configured: true,
   attempts: 0,
   maxAttempts: 10,
   toolCount: 2,
@@ -64,8 +66,8 @@ describe('runtime store refresh', () => {
     const snapshot = store.getSnapshot()
     expect(snapshot.phase).toBe('ready')
     expect(snapshot.at).toBe(5)
-    expect(snapshot.servers.a?.state).toBe('connected')
-    expect(snapshot.servers.b?.state).toBe('failed')
+    expect(snapshot.servers.a?.phase).toBe('connected')
+    expect(snapshot.servers.b?.phase).toBe('failed')
     expect(seen.length).toBeGreaterThan(0)
   })
 
@@ -472,7 +474,7 @@ describe('runtime store refresh', () => {
     await store.refresh()
     expect(store.getSnapshot().phase).toBe('ready')
     expect(store.getSnapshot().at).toBe(9)
-    expect(store.getSnapshot().servers.a?.state).toBe('connected')
+    expect(store.getSnapshot().servers.a?.phase).toBe('connected')
     // Root first (nothing else was known), then the recovered prefix — and the
     // recovery was asked for exactly once.
     expect(calls[0]).toBe(RUNTIME_STATUS_PATH)
@@ -568,14 +570,14 @@ describe('runtime store refresh', () => {
     expect(store.getSnapshot().phase).toBe('error')
     expect(store.getSnapshot().error).toBe('nope')
     expect(store.getSnapshot().servers.a?.name).toBe('a')
-    expect(store.getSnapshot().servers.b?.state).toBe('failed')
+    expect(store.getSnapshot().servers.b?.phase).toBe('failed')
     expect(store.getSnapshot().at).toBe(9)
     // A transport failure degrades to unavailable, still on the stale views.
     mode = 'transport'
     await store.refresh()
     expect(store.getSnapshot().phase).toBe('unavailable')
     expect(store.getSnapshot().error).toContain('fetch failed')
-    expect(store.getSnapshot().servers.b?.state).toBe('failed')
+    expect(store.getSnapshot().servers.b?.phase).toBe('failed')
     expect(store.getSnapshot().at).toBe(9)
   })
 })
@@ -607,7 +609,7 @@ describe('runtime store per-server refresh', () => {
     const after = store.getSnapshot()
     expect(after.phase).toBe('ready')
     expect(after.at).toBe(11)
-    expect(after.servers.a?.state).toBe('connecting')
+    expect(after.servers.a?.phase).toBe('connecting')
     // The other server's entry survives, identity included.
     expect(after.servers.b).toBe(before.servers.b)
   })
@@ -707,7 +709,7 @@ describe('runtime store per-server refresh', () => {
     await one
     // The per-server pass published its own merged view, not the full result.
     expect(store.getSnapshot().at).toBe(2)
-    expect(store.getSnapshot().servers.a?.state).toBe('failed')
+    expect(store.getSnapshot().servers.a?.phase).toBe('failed')
     expect(store.getSnapshot().servers.b?.name).toBe('b')
   })
 })
@@ -725,10 +727,10 @@ describe('runtime store actions', () => {
         if (String(input) === RUNTIME_STATUS_PATH) {
           return json({ ok: true, value: { v: 1, at: 2, servers: [] } })
         }
-        return json({ ok: true, value: { name: 'x', state: 'connecting' } })
+        return json({ ok: true, value: { name: 'x', phase: 'connecting' } })
       },
     })
-    expect(await store.act('x', 'connect')).toEqual({ name: 'x', state: 'connecting' })
+    expect(await store.act('x', 'connect')).toEqual({ name: 'x', phase: 'connecting' })
     expect(requests[0]).toEqual({
       url: RUNTIME_ACTION_PATH,
       method: 'POST',
@@ -743,7 +745,7 @@ describe('runtime store actions', () => {
     const store = createRuntimeStore({
       fetchLike: async (input) => {
         if (String(input).startsWith(RUNTIME_TOOLS_PATH)) {
-          return json({ ok: true, value: { tools: [], truncated: false } })
+          return json({ ok: true, value: { mode: 'definitions', tools: [], truncated: false, total: 0 } })
         }
         if (String(input) === RUNTIME_ACTION_PATH) {
           return json({ ok: false, error: { code: 'disabled', message: 'server is disabled' } })
@@ -759,7 +761,7 @@ describe('runtime store actions', () => {
     }
     expect(thrown).toBeInstanceOf(RuntimeCallError)
     expect((thrown as RuntimeCallError).code).toBe('disabled')
-    expect(await store.tools('a/b')).toEqual({ tools: [], truncated: false })
+    expect(await store.tools('a/b')).toEqual({ mode: 'definitions', tools: [], truncated: false, total: 0 })
   })
 })
 
@@ -804,9 +806,9 @@ describe('runtime store: deployment base path', () => {
       fetchLike: async (input, init) => {
         calls.push(String(input))
         if (String(input).startsWith('/api/i/local' + RUNTIME_TOOLS_PATH)) {
-          return json({ ok: true, value: { tools: [], truncated: false } })
+          return json({ ok: true, value: { mode: 'definitions', tools: [], truncated: false, total: 0 } })
         }
-        if (init?.method === 'POST') return json({ ok: true, value: { name: 'x', state: 'connecting' } })
+        if (init?.method === 'POST') return json({ ok: true, value: { name: 'x', phase: 'connecting' } })
         return statusOk()
       },
     })
@@ -1031,7 +1033,7 @@ it('takes the prefix from the serving location when no global is published', asy
     // One server answering does not prove the rest are fresh: the banner must stay.
     expect(store.getSnapshot().phase).toBe('unavailable')
     expect(store.getSnapshot().error).toContain('fetch failed')
-    expect(store.getSnapshot().servers.a?.state).toBe('connected')
+    expect(store.getSnapshot().servers.a?.phase).toBe('connected')
   })
 
   it('prefers an explicit global and ignores a malformed one', () => {
@@ -1080,5 +1082,343 @@ it('takes the prefix from the serving location when no global is published', asy
     calls.length = 0
     await store.refresh({ server: 'a' })
     expect(calls).toEqual([RUNTIME_STATUS_PATH + '?server=a'])
+  })
+})
+
+describe('runtime store: alpha.2 status wire', () => {
+  it('publishes waiting-authorization with its reason and token-free attempt view', async () => {
+    const store = createRuntimeStore({
+      fetchLike: async () =>
+        json({
+          ok: true,
+          value: {
+            v: 1,
+            at: 11,
+            servers: [
+              {
+                name: 'oauth',
+                phase: 'waiting-authorization',
+                configured: true,
+                attempts: 0,
+                maxAttempts: 10,
+                toolCount: 0,
+                authReason: 'missing',
+                authorization: {
+                  id: 'attempt-1',
+                  phase: 'waiting-browser',
+                  authorizationUrl: 'https://as.example.test/authorize?state=x',
+                },
+              },
+            ],
+          },
+        }),
+    })
+    await store.refresh()
+    const entry = store.getSnapshot().servers.oauth
+    expect(entry?.phase).toBe('waiting-authorization')
+    expect(entry?.authReason).toBe('missing')
+    expect(entry?.authorization).toEqual({
+      id: 'attempt-1',
+      phase: 'waiting-browser',
+      authorizationUrl: 'https://as.example.test/authorize?state=x',
+    })
+    // The wire is token-free by construction: the attempt view never carries
+    // anything but id/phase/url (a token field would be a host bug, and the
+    // store must not invent one).
+    expect(Object.keys(entry?.authorization ?? {}).sort()).toEqual(['authorizationUrl', 'id', 'phase'])
+  })
+
+  it('publishes waiting-credentials and the fixed failed codes without upstream text', async () => {
+    const failed = (code: string) => ({ name: code, phase: 'failed', configured: true, attempts: 0, maxAttempts: 10, toolCount: 0, error: { code } })
+    const store = createRuntimeStore({
+      fetchLike: async () =>
+        json({
+          ok: true,
+          value: {
+            v: 1,
+            at: 1,
+            servers: [
+              { name: 'creds', phase: 'waiting-credentials', configured: true, attempts: 0, maxAttempts: 10, toolCount: 0 },
+              failed('load'),
+              failed('cleanup'),
+              failed('conflict'),
+              failed('config'),
+              failed('seam'),
+            ],
+          },
+        }),
+    })
+    await store.refresh()
+    const servers = store.getSnapshot().servers
+    expect(servers.creds?.phase).toBe('waiting-credentials')
+    for (const code of ['load', 'cleanup', 'conflict', 'config', 'seam']) {
+      expect(servers[code]?.error?.code, code).toBe(code)
+      // The wire error view is an identity only — no message field to localize.
+      expect(Object.keys(servers[code]?.error ?? {})).toEqual(['code'])
+    }
+  })
+
+  it('keeps a retained configured:false row and merges a per-server authorization update', async () => {
+    const retained = { name: 'gone', phase: 'failed', configured: false, attempts: 0, maxAttempts: 10, toolCount: 0, error: { code: 'cleanup' } }
+    const live = { name: 'oauth', phase: 'waiting-authorization', configured: true, attempts: 0, maxAttempts: 10, toolCount: 0, authReason: 'expired' }
+    const calls: string[] = []
+    const store = createRuntimeStore({
+      fetchLike: async (input) => {
+        const url = String(input)
+        calls.push(url)
+        if (url === RUNTIME_STATUS_PATH) {
+          return json({ ok: true, value: { v: 1, at: 1, servers: [live, retained] } })
+        }
+        return json({
+          ok: true,
+          value: {
+            v: 1,
+            at: 2,
+            servers: [
+              {
+                ...live,
+                authorization: { id: 'attempt-2', phase: 'waiting-browser', authorizationUrl: 'https://as.example.test/b' },
+              },
+            ],
+          },
+        })
+      },
+    })
+    await store.refresh()
+    expect(store.getSnapshot().servers.gone?.configured).toBe(false)
+    calls.length = 0
+    await store.refresh({ server: 'oauth' })
+    expect(calls).toEqual([RUNTIME_STATUS_PATH + '?server=oauth'])
+    expect(store.getSnapshot().servers.oauth?.authorization?.authorizationUrl).toBe('https://as.example.test/b')
+    // The retained row is never dropped by a per-server merge.
+    expect(store.getSnapshot().servers.gone?.configured).toBe(false)
+  })
+})
+
+describe('runtime store: alpha.2 actions', () => {
+  const requests: { url: string; method: string | undefined; body: unknown }[] = []
+  const actionStore = (actionValue: unknown, statusRefreshes: () => number) => {
+    requests.length = 0
+    return createRuntimeStore({
+      fetchLike: async (input, init) => {
+        requests.push({
+          url: String(input),
+          method: init?.method,
+          body: init?.body === undefined ? undefined : JSON.parse(String(init.body)),
+        })
+        if (String(input) === RUNTIME_STATUS_PATH) {
+          return json({ ok: true, value: { v: 1, at: statusRefreshes(), servers: [] } })
+        }
+        return json({ ok: true, value: actionValue })
+      },
+    })
+  }
+
+  it('posts connect and restart bodies and refreshes in finally', async () => {
+    let refreshes = 0
+    const store = actionStore({ name: 'x', phase: 'connecting' }, () => {
+      refreshes += 1
+      return refreshes
+    })
+    expect(await store.act('x', 'connect')).toEqual({ name: 'x', phase: 'connecting' })
+    expect(requests[0]).toEqual({
+      url: RUNTIME_ACTION_PATH,
+      method: 'POST',
+      body: { action: 'connect', server: 'x' },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(requests.some((request) => request.url === RUNTIME_STATUS_PATH)).toBe(true)
+    expect(await store.act('x', 'restart')).toEqual({ name: 'x', phase: 'connecting' })
+    expect(requests.at(-2)?.body).toEqual({ action: 'restart', server: 'x' })
+  })
+
+  it('refreshes even when the action refuses (a refusal can still move host state)', async () => {
+    const calls: string[] = []
+    const store = createRuntimeStore({
+      fetchLike: async (input) => {
+        calls.push(String(input))
+        if (String(input) === RUNTIME_STATUS_PATH) {
+          return json({ ok: true, value: { v: 1, at: 3, servers: [] } })
+        }
+        return json({ ok: false, error: { code: 'cleanup', message: 'cleanup unconfirmed' } }, 409)
+      },
+    })
+    let thrown: unknown
+    try {
+      await store.act('x', 'restart')
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(RuntimeCallError)
+    expect((thrown as RuntimeCallError).code).toBe('cleanup')
+    expect((thrown as RuntimeCallError).status).toBe(409)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(calls).toContain(RUNTIME_STATUS_PATH)
+  })
+
+  it('posts authorize and returns the attempt view (URL without polling)', async () => {
+    let refreshes = 0
+    const store = actionStore(
+      {
+        name: 'oauth',
+        phase: 'waiting-authorization',
+        authorization: { id: 'attempt-1', phase: 'waiting-browser', authorizationUrl: 'https://as.example.test/a' },
+      },
+      () => {
+        refreshes += 1
+        return refreshes
+      },
+    )
+    const result = await store.authorize('oauth')
+    expect(requests[0]).toEqual({
+      url: RUNTIME_ACTION_PATH,
+      method: 'POST',
+      body: { action: 'authorize', server: 'oauth' },
+    })
+    expect(result.authorization?.authorizationUrl).toBe('https://as.example.test/a')
+  })
+
+  it('maps the fixed oauth-unavailable refusal to a typed UI error', async () => {
+    const store = createRuntimeStore({
+      fetchLike: async (input) => {
+        if (String(input) === RUNTIME_STATUS_PATH) {
+          return json({ ok: true, value: { v: 1, at: 1, servers: [] } })
+        }
+        return json({ ok: false, error: { code: 'oauth-unavailable', message: 'OAuth authorization is not available in this build' } }, 409)
+      },
+    })
+    let thrown: unknown
+    try {
+      await store.authorize('oauth')
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(RuntimeCallError)
+    expect((thrown as RuntimeCallError).code).toBe('oauth-unavailable')
+  })
+
+  it('posts cancel-authorization with the attempt id and sign-out with the server', async () => {
+    let refreshes = 0
+    const store = actionStore({ name: 'oauth', phase: 'waiting-authorization' }, () => {
+      refreshes += 1
+      return refreshes
+    })
+    await store.cancelAuthorization('oauth', 'attempt-9')
+    await store.signOut('oauth')
+    expect(requests[0]?.body).toEqual({ action: 'cancel-authorization', server: 'oauth', attemptId: 'attempt-9' })
+    expect(requests.at(-2)?.body).toEqual({ action: 'sign-out', server: 'oauth' })
+  })
+
+  it('surfaces sign-out cleanup/conflict refusals as typed codes', async () => {
+    for (const code of ['oauth-cleanup', 'conflict']) {
+      const store = createRuntimeStore({
+        fetchLike: async (input) => {
+          if (String(input) === RUNTIME_STATUS_PATH) {
+            return json({ ok: true, value: { v: 1, at: 1, servers: [] } })
+          }
+          return json({ ok: false, error: { code, message: 'refused' } }, 409)
+        },
+      })
+      let thrown: unknown
+      try {
+        await store.signOut('oauth')
+      } catch (error) {
+        thrown = error
+      }
+      expect((thrown as RuntimeCallError).code, code).toBe(code)
+    }
+  })
+
+  it('refreshes after a probe refusal too and returns the fixed probe result', async () => {
+    let refreshes = 0
+    const store = createRuntimeStore({
+      fetchLike: async (input) => {
+        if (String(input) === RUNTIME_STATUS_PATH) {
+          refreshes += 1
+          return json({ ok: true, value: { v: 1, at: refreshes, servers: [] } })
+        }
+        return json({
+          ok: true,
+          value: { ok: false, stage: 'list', code: 'oauth-required', truncated: false },
+        })
+      },
+    })
+    expect(await store.test('oauth')).toEqual({ ok: false, stage: 'list', code: 'oauth-required', truncated: false })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(refreshes).toBeGreaterThan(0)
+  })
+})
+
+describe('runtime store: credential record updates', () => {
+  it('refreshes silently when an mcp-client/ record changes and ignores other keys', async () => {
+    const calls: string[] = []
+    const store = createRuntimeStore({
+      fetchLike: async (input) => {
+        calls.push(String(input))
+        return json({ ok: true, value: { v: 1, at: calls.length, servers: [] } })
+      },
+    })
+    store.onCredentialRecordUpdated('some-other/record')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(calls).toEqual([])
+    store.onCredentialRecordUpdated('mcp-client/mcp-scope-0123456789abcdef')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(calls).toEqual([RUNTIME_STATUS_PATH])
+  })
+
+  it('coalesces a record-update burst into the in-flight refresh dedupe', async () => {
+    let calls = 0
+    const store = createRuntimeStore({
+      fetchLike: () => {
+        calls += 1
+        return new Promise<Response>((resolve) => {
+          setTimeout(() => resolve(json({ ok: true, value: { v: 1, at: 1, servers: [] } })), 0)
+        })
+      },
+    })
+    store.onCredentialRecordUpdated('mcp-client/a')
+    store.onCredentialRecordUpdated('mcp-client/b')
+    store.onCredentialRecordUpdated('mcp-client/c')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    // One pass in flight + at most one trailing pass (never one per event).
+    expect(calls).toBeLessThanOrEqual(2)
+    expect(calls).toBeGreaterThanOrEqual(1)
+  })
+
+  it('never throws for a malformed or hostile key', async () => {
+    const store = createRuntimeStore({ fetchLike: async () => json({ ok: true, value: { v: 1, at: 1, servers: [] } }) })
+    expect(() => store.onCredentialRecordUpdated('')).not.toThrow()
+    expect(() => store.onCredentialRecordUpdated(undefined as unknown as string)).not.toThrow()
+    expect(() => store.onCredentialRecordUpdated('toString')).not.toThrow()
+  })
+})
+
+describe('runtime store: on-demand tool list', () => {
+  it('returns the catalog marker with no definitions', async () => {
+    const store = createRuntimeStore({
+      fetchLike: async () =>
+        json({ ok: true, value: { mode: 'catalog', tools: [], truncated: false, total: 42 } }),
+    })
+    expect(await store.tools('docs')).toEqual({ mode: 'catalog', tools: [], truncated: false, total: 42 })
+  })
+
+  it('returns the eager definitions capped by the wire entry cap', async () => {
+    const store = createRuntimeStore({
+      fetchLike: async () =>
+        json({
+          ok: true,
+          value: {
+            mode: 'definitions',
+            tools: [{ publicName: 'mcp__docs__read', description: 'Read' }],
+            truncated: true,
+            total: 100,
+          },
+        }),
+    })
+    const listed = await store.tools('docs')
+    expect(listed.mode).toBe('definitions')
+    expect(listed.tools[0]?.publicName).toBe('mcp__docs__read')
+    expect(listed.truncated).toBe(true)
+    expect(listed.total).toBe(100)
   })
 })

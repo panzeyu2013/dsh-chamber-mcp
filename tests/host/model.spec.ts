@@ -13,12 +13,16 @@ import {
   HASH_LENGTH,
   HASH_SUFFIX_PATTERN,
   MAX_PUBLIC_NAME_LENGTH,
+  MAX_TIMER_DELAY_MS,
   MCP_TOOL_PREFIX,
+  RECONNECT_DEFAULTS,
   RESERVED_OVERRIDE_KEYS,
-  TIMEOUT_MAX_MS,
-  TIMEOUT_MIN_MS,
+  SERVER_DEFAULTS,
+  TOOL_LOADING_MODES,
   canonicalDoc,
+  credentialRefsIn,
   credentialRefsOf,
+  hasCredentialTemplate,
   isEnabled,
   isServerDisabled,
   pruneDisabled,
@@ -28,10 +32,14 @@ import {
   renameDisabledKey,
   setDisabledKey,
   setServerDisabled,
+  templateFor,
+  templatedValuesOf,
   validateDoc,
   type McpScopeDoc,
+  type ServerDef,
   type WorkspaceOverrides,
 } from '../../src/shared/model.js'
+import { MAX_TIMER_DELAY_MS as UPSTREAM_MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { canonicalCwd, workspaceIdOf } from '../../src/workspace.js'
 
 describe('canonicalDoc', () => {
@@ -151,13 +159,76 @@ describe('validateDoc', () => {
     expect(errors.join('; ')).toMatch(/env key "1BAD"/)
   })
 
-  it('flags timeoutMs values outside the supported bounds', () => {
+  it('accepts the four exposed fields within the upstream bounds', () => {
     const base = { serverName: 'a', transport: 'stdio' as const, command: 'x' }
-    expect(validateDoc({ servers: [{ ...base, timeoutMs: TIMEOUT_MIN_MS }], overrides: {} })).toEqual([])
-    expect(validateDoc({ servers: [{ ...base, timeoutMs: TIMEOUT_MAX_MS }], overrides: {} })).toEqual([])
-    for (const bad of [TIMEOUT_MIN_MS - 1, TIMEOUT_MAX_MS + 1, 1500.5]) {
-      expect(validateDoc({ servers: [{ ...base, timeoutMs: bad }], overrides: {} }).join('; ')).toMatch(/timeoutMs/)
+    expect(validateDoc({ servers: [{ ...base, toolCallTimeoutMs: 1 }], overrides: {} })).toEqual([])
+    expect(validateDoc({ servers: [{ ...base, toolCallTimeoutMs: MAX_TIMER_DELAY_MS }], overrides: {} })).toEqual([])
+    expect(validateDoc({ servers: [{ ...base, startupTimeoutMs: 30_000, closeTimeoutMs: 5_000 }], overrides: {} })).toEqual([])
+    for (const toolLoading of TOOL_LOADING_MODES) {
+      expect(validateDoc({ servers: [{ ...base, toolLoading }], overrides: {} })).toEqual([])
     }
+    expect(validateDoc({ servers: [{ ...base, reconnect: { enabled: false, maxAttempts: 2 } }], overrides: {} })).toEqual([])
+    // The deprecated alias is still accepted (and translated on read).
+    expect(validateDoc({ servers: [{ ...base, timeoutMs: 60_000 }], overrides: {} })).toEqual([])
+  })
+
+  it('refuses per-field values the mounted config would refuse', () => {
+    const base = { serverName: 'a', transport: 'stdio' as const, command: 'x' }
+    const errorsOf = (extra: Record<string, unknown>): string =>
+      validateDoc({ servers: [{ ...base, ...extra } as never], overrides: {} }).join('; ')
+    for (const bad of [0, -1, 1.5, MAX_TIMER_DELAY_MS + 1]) {
+      expect(errorsOf({ toolCallTimeoutMs: bad })).toMatch(/toolCallTimeoutMs/)
+    }
+    expect(errorsOf({ startupTimeoutMs: 0 })).toMatch(/startupTimeoutMs/)
+    expect(errorsOf({ closeTimeoutMs: 1.5 })).toMatch(/closeTimeoutMs/)
+    expect(errorsOf({ timeoutMs: 0 })).toMatch(/timeoutMs/)
+    expect(errorsOf({ toolLoading: 'sometimes' })).toMatch(/toolLoading must be one of/)
+    expect(errorsOf({ reconnect: { notAnOption: true } })).toMatch(/not a reconnect option/)
+    expect(errorsOf({ reconnect: { initialDelayMs: 0 } })).toMatch(/initialDelayMs/)
+    expect(errorsOf({ reconnect: { initialDelayMs: 10_000, maxDelayMs: 500 } })).toMatch(/less than or equal/)
+    expect(errorsOf({ reconnect: { maxAttempts: 0 } })).toMatch(/positive integer/)
+    expect(errorsOf({ reconnect: 'nope' })).toMatch(/reconnect must be an object/)
+  })
+
+  it('refuses a malformed template in a ref-using server and allows literal braces without tokens', () => {
+    // No credential token at all: a literal shell expression stays legal (the
+    // documented deviation from the official manager's unconditional expansion).
+    expect(validateDoc({
+      servers: [{ serverName: 'a', transport: 'stdio', command: '/bin/mcp-\${HOME}' }],
+      overrides: {},
+    })).toEqual([])
+    // One token forces expansion, so every other occurrence must be a token too.
+    const trapped = validateDoc({
+      servers: [{ serverName: 'a', transport: 'stdio', command: '/bin/mcp-\${HOME}', envKeys: ['TOKEN'] }],
+      overrides: {},
+    })
+    expect(trapped.join('; ')).toMatch(/is not a template token/)
+    expect(trapped.join('; ')).toMatch(/envKeys|command/)
+    // A malformed occurrence in a server whose template mode is on is refused
+    // with its field name.
+    const badUrl = validateDoc({
+      servers: [{
+        serverName: 'b',
+        transport: 'streamable-http',
+        url: 'https://x/\${not-a-token}',
+        headers: [{ name: 'Authorization', ref: 'TOKEN' }],
+      }],
+      overrides: {},
+    })
+    expect(badUrl.join('; ')).toMatch(/url contains/)
+    // The trap walks the SAME value space the adapter emits, so an env/header
+    // MAP value is covered too (it used to be a validation gap: the mount would
+    // refuse it after save while validateDoc stayed silent).
+    const envTrap = validateDoc({
+      servers: [{
+        serverName: 'c',
+        transport: 'stdio',
+        command: 'node',
+        env: { LIT: '\${HOME}', TOKEN: '\${credential:TOKEN}' },
+      }],
+      overrides: {},
+    })
+    expect(envTrap.join('; ')).toMatch(/env\[LIT\] contains/)
   })
 
   it('flags duplicate header names and invalid header refs', () => {
@@ -223,7 +294,7 @@ describe('removeServerOverrides', () => {
 })
 
 describe('credentialRefsOf', () => {
-  it('collects envKeys for stdio and header refs for http', () => {
+  it('collects legacy envKeys/header-row refs when the map forms are absent', () => {
     expect(credentialRefsOf({ serverName: 'a', transport: 'stdio', command: 'x', envKeys: ['A', 'B'] }))
       .toEqual(['A', 'B'])
     expect(credentialRefsOf({
@@ -232,6 +303,130 @@ describe('credentialRefsOf', () => {
       url: 'https://x',
       headers: [{ name: 'X', ref: 'A' }, { name: 'Y', ref: 'B' }],
     })).toEqual(['A', 'B'])
+  })
+
+  it('reads the ONE adapter-emission value space in order', () => {
+    const stdio: ServerDef = {
+      serverName: 'a',
+      transport: 'stdio',
+      command: templateFor('CMD') + '/bin',
+      args: ['-t', templateFor('ARG')],
+      cwd: templateFor('CWD'),
+      env: { TOKEN: templateFor('ENVREF') },
+    }
+    expect(credentialRefsOf(stdio)).toEqual(['CMD', 'ARG', 'CWD', 'ENVREF'])
+    expect(templatedValuesOf(stdio).map((entry) => entry.field)).toEqual([
+      'command',
+      'args[0]',
+      'args[1]',
+      'cwd',
+      'env[TOKEN]',
+    ])
+    const http: ServerDef = {
+      serverName: 'b',
+      transport: 'streamable-http',
+      url: 'https://x/' + templateFor('URLREF'),
+      headers: { Authorization: templateFor('HDR') },
+    }
+    expect(credentialRefsOf(http)).toEqual(['URLREF', 'HDR'])
+    // Template parsing is the shared grammar, never a substring heuristic.
+    expect(credentialRefsIn(templateFor('X') + templateFor('Y'))).toEqual(['X', 'Y'])
+    expect(hasCredentialTemplate('\${HOME}')).toBe(false)
+    expect(hasCredentialTemplate(templateFor('X'))).toBe(true)
+  })
+
+  it('lets the env/headers map win over a legacy container (no ghost refs)', () => {
+    // Canonical documents never carry both (canonicalDoc drops the legacy
+    // container when the map exists), but hand-edited/import input can: the
+    // adapter IGNORES envKeys when env exists, so the ref/orphan walker must
+    // read that same value space instead of reporting an ignored ref as used.
+    const stdio: ServerDef = {
+      serverName: 'a',
+      transport: 'stdio',
+      command: 'node',
+      env: { TOKEN: templateFor('ENVREF') },
+      envKeys: ['LEGACY_GHOST'],
+    }
+    expect(credentialRefsOf(stdio)).toEqual(['ENVREF'])
+    // The EMITTED env token does enable expansion (so a literal command brace is
+    // the usual trap), but the ignored container adds nothing to that decision.
+    expect(validateDoc({
+      servers: [{ ...stdio, command: '/bin/mcp-\${HOME}' }],
+      overrides: {},
+    }).join('; ')).toMatch(/command contains/)
+    // With a token-free env map, the ignored envKeys list must not turn
+    // expansion on: the literal brace stays legal.
+    expect(validateDoc({
+      servers: [{
+        serverName: 'a',
+        transport: 'stdio',
+        command: '/bin/mcp-\${HOME}',
+        env: { TOKEN: 'plain-value' },
+        envKeys: ['LEGACY_GHOST'],
+      }],
+      overrides: {},
+    })).toEqual([])
+  })
+
+  it('does not treat a literal \${NAME} as a credential ref', () => {
+    expect(credentialRefsOf({ serverName: 'a', transport: 'stdio', command: '/bin/\${HOME}' })).toEqual([])
+  })
+})
+
+describe('model defaults parity with the installed alpha.2 packages', () => {
+  it('pins the single defaults table against the upstream constants', () => {
+    expect(RECONNECT_DEFAULTS).toEqual({ enabled: true, initialDelayMs: 500, maxDelayMs: 30_000, maxAttempts: 10 })
+    expect(MAX_TIMER_DELAY_MS).toBe(UPSTREAM_MAX_TIMER_DELAY_MS)
+    // The tool-call deadline has exactly ONE exported name (the defaults table);
+    // an extra TOOL_CALL_TIMEOUT_DEFAULT_MS duplicate used to shadow it.
+    expect(SERVER_DEFAULTS.toolCallTimeoutMs).toBe(60_000)
+    expect(SERVER_DEFAULTS.maxInstructionBytes).toBe(32_768)
+    expect(SERVER_DEFAULTS.toolLoading).toBe('eager')
+    expect(SERVER_DEFAULTS.catalogDescriptionMaxLength).toBe(160)
+    expect(Object.isFrozen(RECONNECT_DEFAULTS)).toBe(true)
+  })
+})
+
+describe('canonicalDoc read-compat rows', () => {
+  it('translates a legacy timeoutMs to toolCallTimeoutMs, dropping the alias', () => {
+    const doc = canonicalDoc({
+      servers: [{ serverName: 'a', transport: 'stdio', command: 'x', timeoutMs: 5_000 }],
+    })
+    const row = doc.servers[0] as ServerDef & { timeoutMs?: number }
+    expect(row.toolCallTimeoutMs).toBe(5_000)
+    expect(row.timeoutMs).toBeUndefined()
+  })
+
+  it('prefers toolCallTimeoutMs when both names are present', () => {
+    const doc = canonicalDoc({
+      servers: [{ serverName: 'a', transport: 'stdio', command: 'x', timeoutMs: 5_000, toolCallTimeoutMs: 9_000 }],
+    })
+    expect((doc.servers[0] as ServerDef).toolCallTimeoutMs).toBe(9_000)
+    expect((doc.servers[0] as unknown as { timeoutMs?: number }).timeoutMs).toBeUndefined()
+  })
+
+  it('is idempotent and keeps absent fields absent (no materialized defaults)', () => {
+    const first = canonicalDoc({
+      servers: [{ serverName: 'a', transport: 'stdio', command: 'x', envKeys: ['A'] }],
+      overrides: { ws: { a: true } },
+    })
+    const second = canonicalDoc(first)
+    expect(second).toEqual(first)
+    const row = first.servers[0] as ServerDef
+    expect(row.toolCallTimeoutMs).toBeUndefined()
+    expect(row.startupTimeoutMs).toBeUndefined()
+    expect(row.closeTimeoutMs).toBeUndefined()
+    expect(row.reconnect).toBeUndefined()
+    expect(row.toolLoading).toBeUndefined()
+    expect((row as Extract<ServerDef, { transport: 'stdio' }>).envKeys).toEqual(['A'])
+  })
+
+  it('keeps an unrecognized transport row for validateDoc to report', () => {
+    const doc = canonicalDoc({
+      servers: [{ serverName: 'typo', transport: 'stdioo', command: 'x' }],
+    })
+    expect(doc.servers).toHaveLength(1)
+    expect(validateDoc(doc).join('; ')).toMatch(/transport must be "stdio" or "streamable-http"/)
   })
 })
 
@@ -283,7 +478,7 @@ describe('global off-switches (disabled map)', () => {
 
 describe('shared naming constants (host + browser half)', () => {
   // These four values are the contract BOTH halves derive tool identity from:
-  // the host mints public names with them (src/tools.ts) and the browser half
+  // the mounted official instance mints public names with them and the browser half
   // parses them back (src/client/tool-card/names.ts). They live in the shared
   // pure model precisely so the browser half never imports host code.
   it('pins the official contract values', () => {
@@ -382,5 +577,48 @@ describe('workspace helpers', () => {
     const workspaces = [{ id: 'ws-a', path: '/canon/a' }]
     expect(workspaceIdOf('/alias/a', workspaces, () => '/canon/a')).toBe('ws-a')
     expect(workspaceIdOf('/alias/a', workspaces, () => { throw new Error('gone') })).toBeUndefined()
+  })
+})
+
+describe('validateDoc oauth/header/reconnect branches', () => {
+  it('validates the oauth block, the header map names and reconnect.enabled', () => {
+    const base = { serverName: 'g', transport: 'streamable-http' as const, url: 'https://x' }
+    expect(validateDoc({ servers: [{ ...base, oauth: { clientId: 'client', scope: 'read' } }], overrides: {} })).toEqual([])
+    const errorsOf = (row: Record<string, unknown>): string =>
+      validateDoc({ servers: [{ ...base, ...row } as never], overrides: {} }).join('; ')
+    expect(errorsOf({ oauth: 'nope' })).toMatch(/oauth must be an object/)
+    expect(errorsOf({ oauth: { clientId: '' } })).toMatch(/oauth.clientId must be a non-empty string/)
+    expect(errorsOf({ oauth: { scope: 7 } })).toMatch(/oauth.scope must be a string/)
+    expect(errorsOf({ oauth: { requestTimeoutMs: 0 } })).toMatch(/oauth.requestTimeoutMs/)
+    expect(errorsOf({ oauth: { authorizationTimeoutMs: -1 } })).toMatch(/oauth.authorizationTimeoutMs/)
+    // Header MAP form: keys must be legal HTTP field names (the transport refuses them).
+    expect(errorsOf({ headers: { Authorization: 'x' } })).toEqual('')
+    expect(errorsOf({ headers: { 'bad header': 'x' } })).toMatch(/not a valid HTTP field name/)
+    // reconnect.enabled must be a boolean when present.
+    expect(validateDoc({
+      servers: [{ serverName: 'a', transport: 'stdio', command: 'x', reconnect: { enabled: 'yes' } } as never],
+      overrides: {},
+    }).join('; ')).toMatch(/reconnect.enabled must be a boolean/)
+  })
+
+  it('keeps the OAuth credential-key grammar host-valid', () => {
+    expect(validateDoc({
+      servers: [{
+        serverName: 'g',
+        transport: 'streamable-http',
+        url: 'https://x',
+        oauth: { credentialKey: 'mcp-client/mcp-scope-abc123' },
+      }],
+      overrides: {},
+    })).toEqual([])
+    expect(validateDoc({
+      servers: [{
+        serverName: 'g',
+        transport: 'streamable-http',
+        url: 'https://x',
+        oauth: { credentialKey: 'Bad Key' },
+      }],
+      overrides: {},
+    }).join('; ')).toMatch(/oauth.credentialKey must match/)
   })
 })

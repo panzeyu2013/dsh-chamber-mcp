@@ -411,12 +411,27 @@ describe('mcp-scope stylesheet', () => {
 describe('components consume the style seat', () => {
   it('renders the server list, its status pills and scope summary from the class map', () => {
     const doc: McpScopeDoc = {
-      servers: [{ serverName: 'fixture', transport: 'stdio', command: 'node', args: ['a.js'], envKeys: ['TOK'] }],
+      servers: [
+        { serverName: 'fixture', transport: 'stdio', command: 'node', args: ['a.js'], envKeys: ['TOK'] },
+        { serverName: 'other', transport: 'stdio', command: 'node' },
+      ],
       overrides: { 'ws-1': { fixture: true } },
     }
     const runtime: RuntimeSnapshot = {
       phase: 'ready',
-      servers: { fixture: { name: 'fixture', state: 'connected', attempts: 0, maxAttempts: 10, toolCount: 3 } },
+      servers: {
+        fixture: { name: 'fixture', phase: 'connected', configured: true, attempts: 0, maxAttempts: 10, toolCount: 3 },
+        // A failed{conflict} row carries the conflict tag (ADR-1.6).
+        other: {
+          name: 'other',
+          phase: 'failed',
+          configured: true,
+          attempts: 0,
+          maxAttempts: 10,
+          toolCount: 0,
+          error: { code: 'conflict' },
+        },
+      },
     }
     const markup = renderToStaticMarkup(
       <ServerListView
@@ -455,10 +470,12 @@ describe('components consume the style seat', () => {
       styles.statusPillDot,
       styles.statusPillOk,
       styles.serverRowChevron,
+      styles.conflictTag,
     ]) {
       expect(classes.has(name), 'missing ' + name).toBe(true)
     }
     expect(markup).toContain(t('server.scopeCount', { enabled: 1, total: 1 }))
+    expect(markup).toContain(t('server.conflictTag'))
   })
 
   it('renders the editor, its grouped fields, choices and sticky footer from the class map', () => {

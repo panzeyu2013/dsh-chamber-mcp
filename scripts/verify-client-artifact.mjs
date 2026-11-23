@@ -17,7 +17,10 @@
  *  4. the transport tag and the `server · tool` title come from the discovered
  *     identity;
  *  5. a real click expands the row into the token-styled body with the raw
- *     arguments and the result text.
+ *     arguments and the result text;
+ *  6. the settings-navigation mark rides the official `settings.section.icon`
+ *     seat (id `mcp-scope`) and renders the shared plug at the owner-provided
+ *     size, tinted by the row (the retired DOM patch is gone).
  *
  * Everything here drives the packed artifact, so a bundle regression that the
  * source-level suites cannot see (a type-only import that leaked into the
@@ -60,6 +63,7 @@ if (typeof factory !== 'function') fail('lib/client.js did not call __ModuleLoad
 
 const React = require('react')
 const { createRoot } = require('react-dom/client')
+const { renderToStaticMarkup } = require('react-dom/server')
 // React 18.3 exposes act() on the React namespace; the test-utils copy is the
 // fallback for an older resolution.
 const act = React.act ?? require('react-dom/test-utils').act
@@ -73,6 +77,8 @@ const t = (key, params) =>
   String(dictionary[key] ?? key).replace(/\{(\w+)\}/g, (_, name) => String(params?.[name] ?? ''))
 
 const registrations = []
+/** `settings.section.icon` contributions: the official seat for our nav mark. */
+const iconSeats = []
 /** Conversation-event definitions the notice lane registers (optional service). */
 const noticeDefinitions = []
 const listeners = new Set()
@@ -182,13 +188,23 @@ const ctx = {
     })
   },
   slots: {
-    // The settings section is not mounted here.
+    // The settings section itself is not mounted here (its component needs the
+    // full inject face); the icon seat IS exercised, because the packed bundle
+    // must register its nav mark through it.
     inject(key, callback) {
+      if (key === 'settings.section.icon') {
+        const off = callback()
+        return typeof off === 'function' ? off : () => {}
+      }
       if (key !== 'tool.call.toolview' && key !== 'conversation.chat.node') return () => {}
       const off = callback()
       return typeof off === 'function' ? off : () => {}
     },
     register(spec, component) {
+      if (spec.name === 'settings.section.icon') {
+        iconSeats.push({ spec, component })
+        return () => {}
+      }
       registrations.push({ spec, component })
       return () => {
         const index = registrations.findIndex((entry) => entry.spec.key === spec.key)
@@ -198,35 +214,31 @@ const ctx = {
   },
 }
 
-// The settings shell renders a section nav row as
-// <button><svg/><span>label</span></button> and picks the glyph itself (a map by
-// section id with a gear fallback) with no icon seat for registrants, so the
-// browser half patches ITS row. Seed such a row before the mount: the patch finds
-// it by the plugin's own nav copy and must have replaced the shell glyph by the
-// time apply() returns (a dropped wiring fails this check, not a later one).
-const navPanel = document.createElement('div')
-navPanel.setAttribute('role', 'dialog')
-const navRow = document.createElement('button')
-const navShellGlyph = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-navShellGlyph.setAttribute('viewBox', '0 0 16 16')
-navShellGlyph.setAttribute('class', 'Shell_navIcon__fixture')
-const navLabel = document.createElement('span')
-navLabel.textContent = 'MCP servers'
-navRow.append(navShellGlyph, navLabel)
-navPanel.append(navRow)
-document.body.append(navPanel)
-
 bundle.apply(ctx)
 if (!bundle.inject.includes('sessions')) fail('the browser half no longer injects the sessions service')
-const navGlyph = navRow.firstElementChild
+
+// The settings sidebar mark: the shell renders every nav row's icon through the
+// declared `settings.section.icon` seat, keyed by section id, and falls back to
+// its own glyph when nothing matches. The packed bundle must contribute the plug
+// there — a dropped or mis-addressed registration silently shows the shell gear
+// instead (the retired DOM patch was exactly such a silent no-op).
+const iconSeat = iconSeats[0]
+if (iconSeat === undefined) fail('the packed bundle registered no settings.section.icon contribution')
 check(
-  'the settings sidebar row draws the plugin plug, not the shell gear',
-  navGlyph !== null &&
-    navGlyph.getAttribute('data-mcp-scope-nav-glyph') === '1' &&
-    navGlyph.getAttribute('viewBox') === '0 0 24 24' &&
-    // The shell glyph's own class rides along: sizing and colour stay shell-owned.
-    navGlyph.getAttribute('class') === 'Shell_navIcon__fixture',
+  'the settings sidebar icon rides the official settings.section.icon seat',
+  iconSeats.length === 1 && iconSeat.spec.name === 'settings.section.icon' && iconSeat.spec.id === 'mcp-scope',
 )
+const iconMarkupOf = (active) => renderToStaticMarkup(React.createElement(iconSeat.component, { size: 20, active }))
+const iconActive = iconMarkupOf(true)
+check(
+  'the icon seat draws the plugin plug at the owner-provided size, tinted by the row',
+  iconActive.includes('width="20"') &&
+    iconActive.includes('height="20"') &&
+    iconActive.includes('viewBox="0 0 24 24"') &&
+    iconActive.includes('M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z') &&
+    iconActive.includes('currentColor'),
+)
+check('the icon seat leaves the tint to the row (active is ignored)', iconActive === iconMarkupOf(false))
 
 const keys = registrations
   .map((entry) => entry.spec.key)

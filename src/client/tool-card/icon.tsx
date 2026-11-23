@@ -35,11 +35,11 @@ import type { McpToolRowState } from './names.js'
 const CHEVRON_PATH_14 = 'M11.8486 5.5L11.4238 5.92383L8.69727 8.65137C8.44157 8.90706 8.21562 9.13382 8.01172 9.29785C7.79912 9.46883 7.55595 9.61756 7.25 9.66602C7.08435 9.69222 6.91565 9.69222 6.75 9.66602C6.44405 9.61756 6.20088 9.46883 5.98828 9.29785C5.78438 9.13382 5.55843 8.90706 5.30273 8.65137L2.57617 5.92383L2.15137 5.5L3 4.65137L3.42383 5.07617L6.15137 7.80273C6.42595 8.07732 6.59876 8.24849 6.74023 8.3623C6.87291 8.46904 6.92272 8.47813 6.9375 8.48047C6.97895 8.48703 7.02105 8.48703 7.0625 8.48047C7.07728 8.47813 7.12709 8.46904 7.25977 8.3623C7.40124 8.24849 7.57405 8.07732 7.84863 7.80273L10.5762 5.07617L11 4.65137L11.8486 5.5Z'
 
 /**
- * Plug mark geometry on a private 24-unit canvas. Exported because the settings
- * sidebar paints the same mark into the shell's nav row as a DOM node
- * (`src/client/nav-icon.ts`), and one geometry must not exist twice.
+ * Plug mark geometry on a private 24-unit canvas. One geometry feeds both the
+ * tool row and the settings-nav mark (`McpSectionGlyph`), so the two surfaces
+ * can never drift apart.
  */
-export const MCP_PLUG_PATHS = [
+const MCP_PLUG_PATHS = [
   'M12 22v-5',
   'M9 8V2',
   'M15 8V2',
@@ -66,6 +66,21 @@ export function McpPlugIcon({ size = 14 }: { size?: number }) {
       ))}
     </svg>
   )
+}
+
+/**
+ * The settings-navigation mark of this plugin, offered through the official
+ * `settings.section.icon` seat (the shell's settings nav renders it in our
+ * section row). The seat passes the row's `size` (16px) and `active`; the
+ * glyph deliberately ignores `active` and strokes with `currentColor`, so the
+ * shell's own row colour paints both states and the mark can never drift from
+ * the surrounding chrome. Inline SVG keeps the browser bundle's runtime
+ * surface to react alone.
+ *
+ * @param props - the owner share the icon seat provides; only `size` is used.
+ */
+export function McpSectionGlyph({ size }: { size: number }) {
+  return <McpPlugIcon size={size} />
 }
 
 /** Expand affordance: the same downward chevron the shipped rows swap in. */

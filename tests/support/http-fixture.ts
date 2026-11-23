@@ -4,14 +4,14 @@
  * One in-process Node HTTP server wraps the official createMcpHandler +
  * McpServer (2025-era stateless serving). It exposes one echo tool, records
  * every request's transport headers, and can require or reject the bearer
- * token so the transport/supervisor error mapping is exercised on the wire.
+ * token so the transport/seat error mapping is exercised on the wire.
  */
 import { createServer } from 'node:http'
 import { Readable } from 'node:stream'
 import { McpServer, createMcpHandler } from '@modelcontextprotocol/server'
 import { z } from 'zod'
 
-export interface HttpFixtureRequest {
+interface HttpFixtureRequest {
   method: string
   url: string
   authorization: string | undefined
@@ -25,9 +25,9 @@ export interface HttpFixture {
   close(): Promise<void>
 }
 
-export type HttpFixtureAuth = 'open' | 'required' | 'forbid'
+type HttpFixtureAuth = 'required' | 'forbid'
 
-export interface HttpFixtureOptions {
+interface HttpFixtureOptions {
   auth?: HttpFixtureAuth
   token?: string
 }

@@ -3,9 +3,13 @@ import { buttonsOf, flush, mountSection as mountShared, t, type Harness, type Mo
 import type { CredentialInfo } from '@deepseek-ai/dsh-credentials/types'
 import type { McpScopeDoc } from '../../src/shared/model.ts'
 import type { SaveOutcome, ServerSaveInput } from '../../src/client/controller.ts'
-import type { RuntimeTestResult, RuntimeToolEntry } from '../../src/client/runtime.ts'
+import type {
+  RuntimeAuthorizeResult,
+  RuntimeTestResult,
+  ToolListView,
+} from '../../src/client/runtime.ts'
 
-export interface Actions {
+interface Actions {
   addServer?(input: ServerSaveInput): Promise<SaveOutcome>
   replaceServer?(oldName: string, input: ServerSaveInput): Promise<SaveOutcome>
   removeServer?(name: string): Promise<SaveOutcome>
@@ -17,8 +21,12 @@ export interface Actions {
   unsetCredential?(ref: string): Promise<SaveOutcome>
   connectServer?(serverName: string): Promise<unknown>
   disconnectServer?(serverName: string): Promise<unknown>
+  restartServer?(serverName: string): Promise<unknown>
   testServer?(serverName: string): Promise<RuntimeTestResult>
-  loadTools?(serverName: string): Promise<{ tools: RuntimeToolEntry[]; truncated: boolean; total: number }>
+  authorizeServer?(serverName: string): Promise<RuntimeAuthorizeResult>
+  cancelAuthorization?(serverName: string, attemptId: string): Promise<void>
+  signOutServer?(serverName: string): Promise<void>
+  loadTools?(serverName: string): Promise<ToolListView>
   refreshRuntime?(options?: { silent?: boolean; server?: string }): Promise<void>
 }
 

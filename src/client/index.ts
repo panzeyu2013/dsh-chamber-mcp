@@ -1,6 +1,7 @@
 /**
  * Browser half of dsh-chamber-mcp: registers the `mcp-scope` settings section
- * (locale + section registration + controller wiring).
+ * and its navigation icon (locale + section + `settings.section.icon`
+ * registrations + controller wiring).
  *
  * Required cordis services (fiber inject): slots, locale, remote
  * (settings/credentials wire events + the credentials namespace), the
@@ -18,7 +19,6 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { registerInjectionRow, type InjectionRegistrationHost } from './injection-row.js'
-import { mountNavGlyph } from './nav-icon.js'
 import type { CredentialInfo as CredentialInfoView } from '@deepseek-ai/dsh-credentials/types'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client' // 'settings.section' SlotMap entry + ctx.configForms merge (type-only)
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client' // 'tool.call.toolview' SlotMap entry (type-only)
@@ -37,6 +37,7 @@ import {
 import { McpScopeSection } from './section.js'
 import { mountStyles } from './styles.js'
 import { createRuntimeStore, readShellBasePath } from './runtime.js'
+import { McpSectionGlyph } from './tool-card/icon.js'
 import { mcpToolView } from './tool-card/view.js'
 import {
   DEFAULT_TOOL_VIEW_LIMIT,
@@ -67,6 +68,13 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 interface McpRemoteWire {
   $on(event: 'settings/document-updated', listener: (ns: string, revision: number) => void): () => void
   $on(event: 'credentials/reference-updated', listener: (ref: string) => void): () => void
+  /**
+   * Forwarded credentials event (alpha.2, mode emit): a stored credential
+   * RECORD changed. The OAuth grant commit lands here, which is what makes the
+   * authorization pill flip without a fast poll; the store filters the
+   * mcp-client/ namespace and refreshes silently.
+   */
+  $on(event: 'credentials/record-updated', listener: (key: string) => void): () => void
   credentials: {
     describe(refs: string[]): Promise<RemoteResultLike<Record<string, CredentialInfoView>>>
     set(ref: string, value: string): Promise<RemoteResultLike<void>>
@@ -74,26 +82,14 @@ interface McpRemoteWire {
   }
 }
 
-// Type-only re-exports (FE-10): the entry is the one exported subpath, so the
-// useful component/controller types are re-exported here for typed consumers.
-export type { SettingsKey } from './locales.js'
-export type { McpScopeDoc, ServerDef } from '../shared/model.js'
-export type {
-  McpScopeFace,
-  McpStoreSnapshot,
-  McpStoreSource,
-  SaveOutcome,
-  SaveFailure,
-  ServerSaveInput,
-  SecretWrite,
-  ConfigFormPort,
-  CredentialsGateway,
-  RemoteResultLike,
-} from './controller.js'
-export type { McpScopeSectionProps, SectionT, SnapshotHook } from './section.js'
-export type { ServerEditorProps } from './views/server-editor.js'
-export type { AddDraft, AddProblems } from './draft.js'
-export type { WorkspaceItem, WorkspaceListHook, WorkspaceListStatus } from './workspaces.js'
+// Type-only re-exports: the entry is the one exported browser subpath
+// (`dsh-chamber-mcp/client`), so only the types a typed consumer actually names
+// are re-exported. The consumer-types gate (scripts/verify-package.mjs) is
+// authoritative: it pins exactly the five types below, and every other
+// component/controller type the browser half defines is internal.
+export type { McpScopeFace, McpStoreSnapshot, SaveOutcome } from './controller.js'
+export type { McpScopeSectionProps } from './section.js'
+export type { AddDraft } from './draft.js'
 
 /** Fold the Remote result union: business failures become thrown errors. */
 async function unwrap<T>(result: RemoteResultLike<T>): Promise<T> {
@@ -122,8 +118,8 @@ function remoteCredentials(wire: McpRemoteWire): CredentialsGateway {
  * Required services (cordis fiber inject names). `remote.credentials` is the
  * dotted service this plugin actually calls; see the FE-3 note at the top.
  * `sessions` is the transcript lane's data source (the staged session's event
- * window), and `slots` carries both the settings section and the keyed tool
- * rows.
+ * window), and `slots` carries the settings section, its nav icon and the
+ * keyed tool rows.
  */
 export const inject = ['slots', 'locale', 'remote', 'remote.credentials', 'configForms', 'workspaces', 'sessions']
 
@@ -149,19 +145,28 @@ export function apply(ctx: Context): void {
 
   const t = ctx.locale.bind(NS)
 
-  // (a1) settings sidebar glyph. The shell owns the nav row's mark and picks it
-  // from a hardcoded map by section id, falling back to its settings gear for
-  // ours — and the section registration carries no icon option — so the plugin
-  // paints its own plug into ITS row. Degrades to no-op wherever the shell's DOM
-  // shape differs (see nav-icon.ts); never throws.
-  ctx.effect(
-    () =>
-      mountNavGlyph({
-        label: () => t('nav'),
-        subscribe: (onChange) => ctx.locale.subscribe(onChange),
-      }),
-    'mcp-scope: sidebar glyph',
-  )
+  // Registration containment (ADR-10). A slot registration must degrade to the
+  // shipped fallback — no section, no icon, generic tool row — instead of
+  // throwing into the app: `apply` runs in the shell's mount path, where a throw
+  // kills the whole browser half. A Promise returned by the registration body is
+  // absorbed too, so an async failure becomes one warning instead of an
+  // unhandled rejection. Each seat warns once per apply.
+  const contained = new Set<string>()
+  const contain = (what: string, run: () => unknown): void => {
+    const report = (error: unknown): void => {
+      if (contained.has(what)) return
+      contained.add(what)
+      logger?.warn('mcp-scope: ' + what + ' could not register — the shipped fallback stays in place: ' + String(error))
+    }
+    try {
+      const pending = run()
+      if (typeof (pending as { then?: unknown } | null | undefined)?.then === 'function') {
+        void Promise.resolve(pending as PromiseLike<unknown>).catch(report)
+      }
+    } catch (error) {
+      report(error)
+    }
+  }
 
   // (b/c) controller over the entry's own Config form + the credentials wire.
   // 0.1.7 derives settings forms from each Loader entry's Config, so the
@@ -222,6 +227,12 @@ export function apply(ctx: Context): void {
         remote.$on('credentials/reference-updated', (ref: string) => {
           controller.onCredentialRefUpdated(ref)
         }),
+        // OAuth grant commits arrive as credential-record updates; the browser
+        // cannot derive the hashed per-server key, so the store filters the
+        // mcp-client/ namespace and silently refreshes the whole status.
+        remote.$on('credentials/record-updated', (key: string) => {
+          runtime.onCredentialRecordUpdated(key)
+        }),
       )
       // A fresh connection generation can mean a restarted host or a different
       // instance: forget every base proven dead by the previous generation (and
@@ -242,27 +253,65 @@ export function apply(ctx: Context): void {
   // (b) settings.section registration through the declaration inject seam.
   // The runtime store joins the same inject face: the section receives a
   // `useRuntime` hook seat plus the action callbacks.
-  ctx.slots.inject('settings.section', () => {
-    const face = controller.face()
-    return ctx.slots.register(
-      {
-        name: 'settings.section',
-        id: 'mcp-scope',
-        order: 25,
-        label: () => t('nav'),
-        locale: NS,
-        inject: () => ({
-          ...face,
-          hooks: { ...face.hooks, runtime },
-          refreshRuntime: (options?: { silent?: boolean; server?: string }) => runtime.refresh(options),
-          connectServer: (serverName: string) => runtime.act(serverName, 'connect'),
-          disconnectServer: (serverName: string) => runtime.act(serverName, 'disconnect'),
-          testServer: (serverName: string) => runtime.test(serverName),
-          loadTools: (serverName: string) => runtime.tools(serverName),
-        }),
-      },
-      McpScopeSection,
-    )
+  //
+  // The registration body runs once per declaration epoch (the renderer runs
+  // the injected callback inside a nested effect), so containment lives INSIDE
+  // that callback as well: a throw on a LATER reconcile is rethrown by the
+  // renderer in a microtask, where no caller-side catch can see it.
+  contain('the settings section', () => {
+    ctx.slots.inject('settings.section', () => {
+      let dispose: (() => void) | undefined
+      contain('the settings section', () => {
+        const face = controller.face()
+        dispose = ctx.slots.register(
+          {
+            name: 'settings.section',
+            id: 'mcp-scope',
+            order: 25,
+            label: () => t('nav'),
+            locale: NS,
+            inject: () => ({
+              ...face,
+              hooks: { ...face.hooks, runtime },
+              refreshRuntime: (options?: { silent?: boolean; server?: string }) => runtime.refresh(options),
+              connectServer: (serverName: string) => runtime.act(serverName, 'connect'),
+              disconnectServer: (serverName: string) => runtime.act(serverName, 'disconnect'),
+              restartServer: (serverName: string) => runtime.act(serverName, 'restart'),
+              testServer: (serverName: string) => runtime.test(serverName),
+              authorizeServer: (serverName: string) => runtime.authorize(serverName),
+              cancelAuthorization: (serverName: string, attemptId: string) =>
+                runtime.cancelAuthorization(serverName, attemptId),
+              signOutServer: (serverName: string) => runtime.signOut(serverName),
+              loadTools: (serverName: string) => runtime.tools(serverName),
+            }),
+          },
+          McpScopeSection,
+        )
+      })
+      return dispose ?? (() => {})
+    })
+  })
+
+  // (b1) settings.section.icon: the official seat for a section's navigation
+  // mark. The shell renders every nav row through
+  // `renderSlot('settings.section.icon', { size, active }, { only: row.id,
+  // fallback: navIcon(row.id) })`, so a contribution whose id equals our
+  // section id is the supported way to own the mark. The retired DOM patch
+  // was a measured no-op on the real shell (its row is
+  // `button > span.navIcon > svg` + `span.navLabel`, while the patch required a
+  // first-child svg) — this seat is what actually paints the plug. The glyph
+  // inherits the row's currentColor, so `active` needs no handling.
+  contain('the settings sidebar icon', () => {
+    ctx.slots.inject('settings.section.icon', () => {
+      let dispose: (() => void) | undefined
+      contain('the settings sidebar icon', () => {
+        dispose = ctx.slots.register(
+          { name: 'settings.section.icon', id: 'mcp-scope', locale: NS },
+          McpSectionGlyph,
+        )
+      })
+      return dispose ?? (() => {})
+    })
   })
 
   // (d) transcript lane: one keyed tool view per MCP tool the model was

@@ -22,6 +22,12 @@ const managerMock = vi.hoisted(() => ({
   options: [] as unknown[],
 }))
 
+vi.mock('../../src/upstream.js', () => ({
+  loadUpstreamMcpClient: async () => {
+    throw new Error('the peer is not installed')
+  },
+}))
+
 vi.mock('../../src/manager.js', () => ({
   createManager: (options: unknown) => {
     managerMock.options.push(options)
@@ -33,6 +39,10 @@ vi.mock('../../src/manager.js', () => ({
       connect: async () => ({ ok: false, code: 'unknown', error: 'not connected' }),
       disconnect: async () => ({ ok: false, code: 'unknown', error: 'not connected' }),
       test: async () => ({ ok: false, code: 'unknown', error: 'not connected' }),
+      restart: async () => ({ ok: false, code: 'unknown', error: 'not connected' }),
+      authorize: async () => ({ ok: false, code: 'unknown', error: 'not connected' }),
+      cancelAuthorization: async () => ({ ok: false, code: 'unknown', error: 'not connected' }),
+      signOut: async () => ({ ok: false, code: 'unknown', error: 'not connected' }),
     }
   },
   RuntimeActionError: class RuntimeActionError extends Error {},
@@ -88,7 +98,7 @@ describe('plugin entry shape', () => {
     expect(typeof entry.apply).toBe('function')
     expect(entry.Config).toBeDefined()
     expect((entry as { default?: unknown }).default).toBeUndefined()
-    expect(Object.keys(entry).sort()).toEqual(['Config', 'apply', 'inject', 'name'])
+    expect(Object.keys(entry).sort()).toEqual(['Config', 'apply', 'inject', 'managedPlaneNames', 'name'])
   })
 
   it('Config resolves the mcp-scope document with live volatile fields', () => {
@@ -159,6 +169,42 @@ describe('plugin entry shape', () => {
   // a per-root reservation in a WeakSet — these two cases pin that discipline
   // (a leaked reservation would make the second mount throw, and a missing
   // guard would let a duplicate activation shadow the first silently).
+  it('wires the live document loader and the read-only official-plane conflict reader', async () => {
+    const first = build()
+    managerMock.options.length = 0
+    await first.ctx.plugin(entry, { servers: [] } as never)
+    const options = managerMock.options.at(-1) as {
+      getDoc: () => { servers: unknown[] }
+      upstream?: unknown
+      managedNames?: () => readonly string[]
+    }
+    expect(typeof options.upstream).toBe('function')
+    expect(typeof options.managedNames).toBe('function')
+    // Absent official plane degrades to no pre-check.
+    expect(options.managedNames!()).toEqual([])
+    // A present manager plane is read structurally and non-string entries dropped.
+    first.ctx.provide('mcpManager', { list: () => [{ name: 'alpha' }, { name: 42 }, null] } as never)
+    expect(options.managedNames!()).toEqual(['alpha'])
+
+    // A broken official plane degrades to no pre-check instead of throwing.
+    const second = build()
+    second.ctx.provide('mcpManager', { list: () => { throw new Error('broken') } } as never)
+    managerMock.options.length = 0
+    await second.ctx.plugin(entry, { servers: [] } as never)
+    const secondOptions = managerMock.options.at(-1) as { managedNames?: () => readonly string[] }
+    expect(secondOptions.managedNames!()).toEqual([])
+  })
+
+  it('logs an upstream peer load failure at boot without failing activation', async () => {
+    const { ctx } = build()
+    const warn = vi.spyOn(ctx.logger, 'warn')
+    await ctx.plugin(entry, { servers: [] } as never)
+    await sleep(20)
+    expect(warn.mock.calls.some((call) => String(call[0]).includes('unavailable at boot'))).toBe(true)
+    // Activation stays usable: the manager mock still reconciles.
+    expect(managerMock.reconcile).toHaveBeenCalled()
+  })
+
   it('is effect-owned: disposing the activation releases the root and stops its listeners', async () => {
     const { ctx } = build()
     managerMock.reconcile.mockClear()

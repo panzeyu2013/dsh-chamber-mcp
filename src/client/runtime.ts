@@ -1,111 +1,144 @@
 /**
  * Browser-side runtime-status store of the mcp-scope settings section.
  *
- * Deliberately dependency-free (global `fetch`, no client package import — the
+ * Wire v2 (dsh 0.2.6 line): the store speaks the frozen contract declared in
+ * src/shared/wire.ts — the host publishes fixed phases, fixed failure codes and
+ * token-free authorization attempt views; the browser never parses upstream
+ * diagnostic text and never receives credential material.
+ *
+ * Public store API consumed by the section/views:
+ *
+ * - getSnapshot(): RuntimeSnapshot and subscribe(listener) — the hook seat.
+ *   RuntimeSnapshot = { phase: 'loading'|'ready'|'unavailable'|'error', at?,
+ *   servers: Record<string, ServerRuntimeView>, error? }; error is the
+ *   host-fixed fallback message of the last FAILED refresh (the document UI
+ *   keeps working regardless).
+ * - refresh({ silent?, server? }) — full pass (failure folds into the snapshot)
+ *   or one server's view merged into the current map (failure rejects; the
+ *   detail owns the error).
+ * - resetBases() — forget every remembered base and re-arm discovery (call on
+ *   connection/reset).
+ * - act(name, 'connect'|'disconnect'|'restart'), test(name) — POST the action
+ *   route; the returned value is the host's post-action projection / probe
+ *   result. A refusal rejects with RuntimeCallError carrying the fixed wire
+ *   code; the store refreshes in finally either way.
+ * - authorize(name) -> RuntimeAuthorizeResult (the attempt view the click
+ *   handler needs; a composition that cannot authorize answers the fixed
+ *   oauth-unavailable refusal, which surfaces as a typed RuntimeCallError)
+ *   — cancelAuthorization(name, attemptId) and signOut(name) -> the post-action
+ *   RuntimeActionResult.
+ * - tools(name) -> wire ToolListView: mode 'definitions' (eager, entries
+ *   available) or 'catalog' (on-demand; tools is empty, total is the offered
+ *   catalog size).
+ * - onCredentialRecordUpdated(key) — silent refresh when a credential record in
+ *   this plugin's mcp-client/ namespace changed (OAuth grant commit). The caller
+ *   (index.ts fiber effect) owns the credentials/record-updated subscription;
+ *   the store owns NO timer, DOM listener or fiber child.
+ *
+ * Deliberately dependency-free (global fetch, no client package import — the
  * built bundle may require react only): the host routes are plain JSON on the
  * Connection carrier, so the chamber gateway proxy, Host/Origin fence and
  * browser authentication apply unchanged. The store never throws into a render
  * path: a missing route/host degrades the section to "runtime status
  * unavailable" while the document UI keeps working.
  *
- * The store owns no timer. The section orchestrates when to poll (visible
- * panel / after actions); this keeps unit tests deterministic.
- *
- * Wire paths mirror `src/routes.ts` (host half) — the two halves must move
- * together.
- *
  * @module
  */
 
-/** Runtime phases the host reports (wire vocabulary; additive). */
-export type RuntimePhase =
-  | 'connected'
-  | 'connecting'
-  | 'reconnecting'
-  | 'failed'
-  | 'stopped'
-  | 'disabled'
-  | 'unknown'
+import {
+  MCP_CLIENT_KEY_PREFIX,
+  MCP_SCOPE_ACTION_PATH,
+  MCP_SCOPE_STATUS_PATH,
+  MCP_SCOPE_TOOLS_PATH,
+  type RuntimeActionRequest,
+  type RuntimeActionResult,
+  type RuntimeAuthorizeResult,
+  type RuntimeStatusView,
+  type RuntimeTestResult,
+  type ServerRuntimeView,
+  type ToolListView,
+} from '../shared/wire.js'
 
-/** One server's runtime view as received from the host. */
-export interface ServerRuntimeView {
-  name: string
-  state: RuntimePhase
-  attempts: number
-  maxAttempts: number
-  nextRetryAt?: number
-  connectedAt?: number
-  syncedAt?: number
-  toolCount: number
-  error?: { code: string; message: string }
+export {
+  MCP_CLIENT_KEY_PREFIX,
+  MCP_SCOPE_ACTION_PATH,
+  MCP_SCOPE_STATUS_PATH,
+  MCP_SCOPE_TOOLS_PATH,
 }
+export type {
+  RuntimeActionErrorCode,
+  RuntimeActionKind,
+  RuntimeActionRequest,
+  RuntimeActionResult,
+  RuntimeAuthorizationPhase,
+  RuntimeAuthorizationReason,
+  RuntimeAuthorizationView,
+  RuntimeAuthorizeResult,
+  RuntimeErrorCode,
+  RuntimeErrorView,
+  RuntimePhase,
+  RuntimeStatusView,
+  RuntimeTestResult,
+  RuntimeToolEntry,
+  ServerRuntimeView,
+  ToolListMode,
+  ToolListView,
+} from '../shared/wire.js'
+
+/** Host route paths (aliases of the frozen wire constants; tests import these). */
+export const RUNTIME_STATUS_PATH = MCP_SCOPE_STATUS_PATH
+export const RUNTIME_ACTION_PATH = MCP_SCOPE_ACTION_PATH
+export const RUNTIME_TOOLS_PATH = MCP_SCOPE_TOOLS_PATH
 
 /** Store snapshot consumed by the section through the hooks seat. */
 export interface RuntimeSnapshot {
   phase: 'loading' | 'ready' | 'unavailable' | 'error'
   at?: number
   servers: Readonly<Record<string, ServerRuntimeView>>
-  /** Human-readable detail of the last refresh failure. */
+  /** Host-fixed fallback message of the last failed refresh (never upstream text). */
   error?: string
-}
-
-/** One manual connect/disconnect outcome. */
-export interface RuntimeActionResult {
-  name: string
-  state: RuntimePhase
-}
-
-/** One probe outcome (test connection). */
-export interface RuntimeTestResult {
-  ok: boolean
-  toolCount?: number
-  /** Stable failure code when the probe failed (localized by the detail). */
-  code?: string
-  /** Host-generated fallback message for an unknown code. */
-  error?: string
-}
-
-/** One synced tool entry of the tool list. */
-export interface RuntimeToolEntry {
-  publicName: string
-  rawName: string
-  description: string
 }
 
 /** Options for one refresh pass. */
 export interface RuntimeRefreshOptions {
-  /** Quiet poll: never flips the snapshot to `loading`. */
+  /** Quiet poll: never flips the snapshot to loading. */
   silent?: boolean
   /**
    * Refresh only this server's view: the host projects that one entry and the
    * store MERGES it into the current map, leaving every other server entry
-   * untouched. A failure rejects with its RuntimeCallError and leaves the
-   * global snapshot exactly as it was (the detail renders its own error).
+   * untouched. A failure rejects with its RuntimeCallError and leaves the global
+   * snapshot exactly as it was (the detail renders its own error).
    */
   server?: string
 }
 
-/** Observable runtime store + the actions the views call. */
+/** Observable runtime store + the actions the views call (see module docs). */
 export interface RuntimeStore {
   getSnapshot(): RuntimeSnapshot
   subscribe(listener: () => void): () => void
   refresh(options?: RuntimeRefreshOptions): Promise<void>
-  /**
-   * Forget every remembered/dead base and re-arm discovery. Called on
-   * `connection/reset`: a fresh connection generation can mean a restarted host
-   * or a different instance, and a base proven dead by the previous generation
-   * must not keep the panel dark.
-   */
+  /** Forget every remembered/dead base and re-arm discovery (connection/reset). */
   resetBases(): void
-  act(name: string, action: 'connect' | 'disconnect'): Promise<RuntimeActionResult>
+  /** POST connect/disconnect/restart; resolves to the post-action projection. */
+  act(name: string, action: 'connect' | 'disconnect' | 'restart'): Promise<RuntimeActionResult>
+  /** POST the read-only probe; resolves to the fixed probe result. */
   test(name: string): Promise<RuntimeTestResult>
-  tools(name: string): Promise<{ tools: RuntimeToolEntry[]; truncated: boolean; total: number }>
+  /** Start one browser authorization attempt and return its token-free view. */
+  authorize(name: string): Promise<RuntimeAuthorizeResult>
+  /** Cancel one attempt by its opaque id (stale ids are ignored host-side). */
+  cancelAuthorization(name: string, attemptId: string): Promise<RuntimeActionResult>
+  /** Delete this server's stored grant (the host owns cleanup ordering). */
+  signOut(name: string): Promise<RuntimeActionResult>
+  /** Tool list of the live generation (on-demand servers carry a catalog marker). */
+  tools(name: string): Promise<ToolListView>
+  /**
+   * Silent refresh after a credential RECORD changed. Only keys in this plugin's
+   * mcp-client/ namespace are considered; anything else is an inert no-op. The
+   * browser cannot derive the host's hashed per-server key, so a full silent
+   * pass (one cheap GET) is the documented refresh. Never throws.
+   */
+  onCredentialRecordUpdated(key: string): void
 }
-
-/** Host route paths (mirror of `src/routes.ts`). */
-export const RUNTIME_STATUS_PATH = '/api/mcp-scope.status'
-export const RUNTIME_ACTION_PATH = '/api/mcp-scope.action'
-export const RUNTIME_TOOLS_PATH = '/api/mcp-scope.tools'
 
 /** Failure of one runtime call; carries the host's stable code when present. */
 export class RuntimeCallError extends Error {
@@ -141,9 +174,9 @@ export interface RuntimeStoreOptions {
   fetchLike?: typeof fetch
   /**
    * Authoritative per-instance proxy prefix supplied by the EMBEDDING shell — the
-   * chamber desktop provides `chamberBasePath` to the client plugins it mounts,
-   * which is the only signal its topology exposes (see `discoverShellBasePath`).
-   * Read before every other signal; `undefined` leaves the other signals alone.
+   * chamber desktop provides chamberBasePath to the client plugins it mounts,
+   * which is the only signal its topology exposes (see discoverShellBasePath).
+   * Read before every other signal; undefined leaves the other signals alone.
    */
   shellBasePath?: () => string | undefined
 }
@@ -151,8 +184,8 @@ export interface RuntimeStoreOptions {
 /**
  * Global some desktop shells publish for the per-instance proxy prefix. The
  * chamber build measured 2026-09-15 injects no such global (only
- * `__DSH_BOOT__`/`__DSH_CONNECTION_RECOVERY__`), so it is kept as a secondary
- * signal for other generations and the serving location is the primary one.
+ * __DSH_BOOT__/__DSH_CONNECTION_RECOVERY__), so it is kept as a secondary signal
+ * for other generations and the serving location is the primary one.
  */
 const BASE_PATH_GLOBAL = '__DSH_BASE_PATH__'
 
@@ -163,8 +196,8 @@ const INSTANCE_PREFIX = /^\/api\/i\/[^/]+/
 const SHELL_CONNECTIONS_PATH = '/api/connections'
 
 /** Instance ids are opaque tokens; anything else must never reach a URL. */
-// The shell mints ids as `local` or `(dsh|gateway|ssh)-` + a token of up to 64
-// `[A-Za-z0-9_-]` characters (its own pattern validates the token AFTER the
+// The shell mints ids as local or (dsh|gateway|ssh)- + a token of up to 64
+// [A-Za-z0-9_-] characters (its own pattern validates the token AFTER the
 // prefix), so the total may reach 72: a plain total-length cap would silently
 // refuse a legitimate long id and leave that instance's panel permanently
 // unavailable. Dots, percent signs, backslashes and tildes are never minted.
@@ -188,7 +221,7 @@ function normalizeBasePath(value: unknown): string | undefined {
   if (!trimmed.startsWith('/') || trimmed.startsWith('//')) return undefined
   const normalized = trimmed.replace(/\/+$/, '')
   // A dotted segment is normalized by the browser into a DIFFERENT path than the
-  // one intended (`/api/i/../api` → `/api/api`), and percent-encoding or a
+  // one intended (/api/i/../api -> /api/api), and percent-encoding or a
   // backslash reaches the same place on some layers, so no signal may carry any
   // of them.
   if (normalized.split('/').some((segment) => segment === '.' || segment === '..')) return undefined
@@ -425,10 +458,10 @@ function basePathFromResources(): string | undefined {
 
 /**
  * Create the runtime store. Full refreshes dedupe concurrent runs (exactly one
- * trailing pass); per-server refreshes dedupe per server NAME and merge into
- * the current snapshot without ever joining a full pass. The action calls fold
- * business failures into thrown RuntimeCallErrors and refresh the snapshot
- * afterwards on success.
+ * trailing pass); per-server refreshes dedupe per server NAME and merge into the
+ * current snapshot without ever joining a full pass. Actions funnel through one
+ * POST helper and ALWAYS refresh in `finally` — a refusal can still move host
+ * state (a cleanup guard or a conflict is information the panel must show).
  */
 export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeStore {
   const fetchLike = options.fetchLike ?? ((...args: Parameters<typeof fetch>) => globalThis.fetch(...args))
@@ -450,14 +483,14 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
     for (const listener of [...listeners]) listener()
   }
 
-  /** Remembered working base (`undefined` = root-relative, the plain topology). */
+  /** Remembered working base (undefined = root-relative, the plain topology). */
   let basePath: string | undefined
   let hasBase = false
   /** Bases that answered without this plugin's wire envelope: never retried. */
   const deadBases = new Set<string>()
 
   /**
-   * Prefix recovered by `discoverShellBasePath` (chamber topology), if any, and
+   * Prefix recovered by discoverShellBasePath (chamber topology), if any, and
    * the in-flight probe: concurrent callers JOIN one discovery instead of one of
    * them failing while the other is still awaiting.
    */
@@ -474,12 +507,13 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
   /** Discoveries attempted for this store; bounded so a dead shell costs two. */
   let discoveryAttempts = 0
   /**
-   * Bumped by {@link resetBases}. A call that awaited a probe (or a full pass
-   * that awaited a route) across a reset must discard its answer: the previous
+   * Bumped by resetBases. A call that awaited a probe (or a full pass that
+   * awaited a route) across a reset must discard its answer: the previous
    * connection generation's instance may no longer be the one on screen, and
    * adopting it would show — and act on — the wrong one.
    */
   let baseGeneration = 0
+
   const candidateBases = (): string[] => {
     const bases: string[] = []
     const add = (value: string): void => {
@@ -541,9 +575,9 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
       payload = undefined
     }
     if (payload === null || typeof payload !== 'object' || typeof (payload as { ok?: unknown }).ok !== 'boolean') {
-      // Not our wire: a static layer (or a proxy) answered. A 404 here means
-      // the route is simply not mounted at THIS origin, so another base is
-      // worth trying; anything else is reported as-is.
+      // Not our wire: a static layer (or a proxy) answered. A 404 here means the
+      // route is simply not mounted at THIS origin, so another base is worth
+      // trying; anything else is reported as-is.
       const missing = response.status === 404
       const detail =
         (missing ? 'runtime route is not mounted at this origin' : 'runtime route returned no wire envelope') +
@@ -561,10 +595,10 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
   }
 
   /**
-   * Call one route, trying the deployment bases in order. Only an
-   * origin-level 404 falls through to the next candidate: a transport error, an
-   * auth refusal or a business failure would repeat identically, and a POST is
-   * never delivered twice by accident. The base that answered is remembered and
+   * Call one route, trying the deployment bases in order. Only an origin-level
+   * 404 falls through to the next candidate: a transport error, an auth refusal
+   * or a business failure would repeat identically, and a POST is never
+   * delivered twice by accident. The base that answered is remembered and
    * re-validated on every call, so a stale guess self-heals.
    */
   async function call<T>(path: string, init?: RequestInit): Promise<T> {
@@ -573,7 +607,7 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
     let delivered = false
     /**
      * The connection generation this attempt belongs to. Everything the awaits
-     * below learn describes THAT generation: after a `connection/reset` the
+     * below learn describes THAT generation: after a connection/reset the
      * remembered base, the dead-base cache and the recovered prefix must keep the
      * new generation's meaning, or a stale answer could re-arm a base the reset
      * dropped — or mark the NEW live base dead forever, which is exactly the
@@ -641,17 +675,17 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
 
   /**
    * One FULL pass: replaces the whole server map. Business/transport failures
-   * are folded into the snapshot instead of thrown — stale-while-revalidate:
-   * the previous views (and their `at`) stay readable — because polls and
-   * post-action refreshes are fire-and-forget.
+   * are folded into the snapshot instead of thrown — stale-while-revalidate: the
+   * previous views (and their at) stay readable — because polls and post-action
+   * refreshes are fire-and-forget.
    */
   async function refreshAll(refreshOptions?: RuntimeRefreshOptions): Promise<void> {
-    // A pass that crosses a `connection/reset` describes the PREVIOUS connection
+    // A pass that crosses a connection/reset describes the PREVIOUS connection
     // generation: its answer must not be published (the instance on screen may
     // have changed with it).
     const generation = baseGeneration
     if (fullInFlight !== undefined) {
-      // An action's post-write refresh must not be absorbed by a poll that was
+      // An action's post-action refresh must not be absorbed by a poll that was
       // already in flight when the click landed.
       trailing = true
       return fullInFlight
@@ -659,7 +693,7 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
     if (refreshOptions?.silent !== true && snapshot.phase !== 'ready') publish({ ...snapshot, phase: 'loading' })
     const run = (async () => {
       try {
-        const value = await call<{ v: 1; at: number; servers: ServerRuntimeView[] }>(RUNTIME_STATUS_PATH)
+        const value = await call<RuntimeStatusView>(RUNTIME_STATUS_PATH)
         if (generation !== baseGeneration) return
         const servers: Record<string, ServerRuntimeView> = {}
         for (const server of value.servers) servers[server.name] = server
@@ -691,27 +725,25 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
 
   /**
    * One PER-SERVER pass: the host projects the requested server and the store
-   * merges those entries into the current map (any other entry the host
-   * returned is merged too, never dropped). No loading flip and no failure
-   * snapshot: a failure rejects with its RuntimeCallError and leaves the global
-   * snapshot exactly as it was, so the asking detail can render its own error.
+   * merges those entries into the current map (any other entry the host returned
+   * is merged too, never dropped). No loading flip and no failure snapshot: a
+   * failure rejects with its RuntimeCallError and leaves the global snapshot
+   * exactly as it was, so the asking detail can render its own error.
    */
   async function refreshServer(server: string): Promise<void> {
     const running = serverInFlight.get(server)
     if (running !== undefined) return running
-    // Same rule as a full pass: an answer that crossed a `connection/reset`
+    // Same rule as a full pass: an answer that crossed a connection/reset
     // describes the instance that was on screen BEFORE it.
     const generation = baseGeneration
     const run = (async () => {
-      const value = await call<{ v: 1; at: number; servers: ServerRuntimeView[] }>(
-        RUNTIME_STATUS_PATH + '?server=' + encodeURIComponent(server),
-      )
+      const value = await call<RuntimeStatusView>(RUNTIME_STATUS_PATH + '?server=' + encodeURIComponent(server))
       if (generation !== baseGeneration) return
       const servers: Record<string, ServerRuntimeView> = { ...snapshot.servers }
       for (const entry of value.servers) servers[entry.name] = entry
-      // One server answering does not prove the OTHER entries are fresh: keep
-      // the snapshot's phase/error (the section's stale banner depends on it)
-      // unless the panel was still on its very first load.
+      // One server answering does not prove the OTHER entries are fresh: keep the
+      // snapshot's phase/error (the section's stale banner depends on it) unless
+      // the panel was still on its very first load.
       publish({
         ...snapshot,
         phase: snapshot.phase === 'loading' ? 'ready' : snapshot.phase,
@@ -728,8 +760,8 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
   }
 
   /**
-   * Refresh the runtime status. Without `server` the whole map is replaced and
-   * failures degrade the section; with `server` only that view is re-pulled and
+   * Refresh the runtime status. Without server the whole map is replaced and
+   * failures degrade the section; with server only that view is re-pulled and
    * merged, and a failure rejects (the detail owns the error).
    */
   async function refresh(refreshOptions?: RuntimeRefreshOptions): Promise<void> {
@@ -737,7 +769,7 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
     // another chance — but never the dead-base cache: "a base that answered
     // without this plugin's wire envelope costs one request, not one per poll" is
     // a documented contract of the cheap poll path. The full reset (dead bases
-    // included) belongs to `connection/reset`, where a new connection generation
+    // included) belongs to connection/reset, where a new connection generation
     // means the old answers prove nothing.
     if (refreshOptions?.silent !== true) discoveryAttempts = 0
     const server = refreshOptions?.server
@@ -745,17 +777,15 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
     return refreshAll(refreshOptions)
   }
 
-  /**
-   * Drop every remembered base and re-arm discovery (see {@link RuntimeStore.resetBases}).
-   */
+  /** Drop every remembered base and re-arm discovery (see RuntimeStore.resetBases). */
   function resetBases(): void {
     baseGeneration += 1
     discoveryInFlight = undefined
     // A pass from the previous generation would return without publishing, so a
     // caller joining it would see neither a request nor a fresh snapshot (and a
-    // request that never settles would hold the panel on `loading` forever).
-    // The passes' own `finally` blocks use identity checks, so they cannot clear
-    // the fresh ones.
+    // request that never settles would hold the panel on loading forever). The
+    // passes' own finally blocks use identity checks, so they cannot clear the
+    // fresh ones.
     serverInFlight.clear()
     fullInFlight = undefined
     deadBases.clear()
@@ -766,29 +796,22 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
     basePath = undefined
   }
 
-  async function act(name: string, action: 'connect' | 'disconnect'): Promise<RuntimeActionResult> {
-    const value = await call<RuntimeActionResult>(RUNTIME_ACTION_PATH, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action, server: name }),
-    })
-    void refresh({ silent: true })
-    return value
-  }
-
-  async function test(name: string): Promise<RuntimeTestResult> {
-    const value = await call<RuntimeTestResult>(RUNTIME_ACTION_PATH, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'test', server: name }),
-    })
-    void refresh({ silent: true })
-    return value
-  }
-
-  async function tools(name: string): Promise<{ tools: RuntimeToolEntry[]; truncated: boolean; total: number }> {
-    const query = RUNTIME_TOOLS_PATH + '?server=' + encodeURIComponent(name)
-    return call(query)
+  /**
+   * The ONE action funnel: POST the action body, then refresh silently in
+   * finally (a fixed refusal can still change host state — e.g. the cleanup
+   * guard or an attempt teardown). The POST itself is never re-delivered: call()
+   * only falls through on an origin-level route-missing 404.
+   */
+  async function callAction<T>(body: RuntimeActionRequest): Promise<T> {
+    try {
+      return await call<T>(RUNTIME_ACTION_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    } finally {
+      void refresh({ silent: true })
+    }
   }
 
   return {
@@ -799,8 +822,33 @@ export function createRuntimeStore(options: RuntimeStoreOptions = {}): RuntimeSt
     },
     refresh,
     resetBases,
-    act,
-    test,
-    tools,
+    act(name, action) {
+      return callAction<RuntimeActionResult>({ action, server: name })
+    },
+    test(name) {
+      return callAction<RuntimeTestResult>({ action: 'test', server: name })
+    },
+    authorize(name) {
+      // The host answers the attempt view (with the authorization URL while
+      // waiting-browser) or the fixed oauth-unavailable refusal when the
+      // composition cannot authorize.
+      return callAction<RuntimeAuthorizeResult>({ action: 'authorize', server: name })
+    },
+    cancelAuthorization(name, attemptId) {
+      return callAction<RuntimeActionResult>({ action: 'cancel-authorization', server: name, attemptId })
+    },
+    signOut(name) {
+      return callAction<RuntimeActionResult>({ action: 'sign-out', server: name })
+    },
+    tools(name) {
+      return call<ToolListView>(RUNTIME_TOOLS_PATH + '?server=' + encodeURIComponent(name))
+    },
+    onCredentialRecordUpdated(key) {
+      if (typeof key !== 'string' || !key.startsWith(MCP_CLIENT_KEY_PREFIX)) return
+      // No key -> server map exists in the browser (the host key is a hash): one
+      // full silent pass is the cheap, total refresh; the store's in-flight
+      // dedupe coalesces a burst of record updates.
+      void refresh({ silent: true })
+    },
   }
 }

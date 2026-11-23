@@ -27,6 +27,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { Config, fieldValue, readDocument, type McpScopeConfig } from '../../src/schema.js'
+import { canonicalDoc } from '../../src/shared/model.js'
 import { MCP_SCOPE_NAMESPACE, type ServerDef } from '../../src/shared/model.js'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -108,6 +109,80 @@ describe('mcp-scope Config (the entry document, every field volatile)', () => {
     expect(doc.servers).toEqual([{ ...RESOLVED_SERVER, command: 'last-wins' }])
     expect(doc.overrides).toEqual({})
     expect(doc.disabled).toEqual({ keep: true })
+  })
+
+  it('decodes a legacy document (timeoutMs, envKeys, headers[].ref) without losing the timeout', () => {
+    const doc = readDocument(
+      resolveConfig({
+        servers: [
+          {
+            serverName: 'legacy',
+            transport: 'stdio',
+            command: 'node',
+            args: ['server.js'],
+            envKeys: ['LEGACY_TOKEN'],
+            timeoutMs: 5_000,
+          },
+          {
+            serverName: 'http',
+            transport: 'streamable-http',
+            url: 'https://mcp.example/x',
+            headers: [{ name: 'Authorization', ref: 'TOKEN' }],
+            timeoutMs: 2_000,
+          },
+        ],
+      }),
+    )
+    const stdio = doc.servers[0] as Extract<ServerDef, { transport: 'stdio' }> & { timeoutMs?: number }
+    expect(stdio.toolCallTimeoutMs).toBe(5_000)
+    expect(stdio.timeoutMs).toBeUndefined()
+    expect(stdio.envKeys).toEqual(['LEGACY_TOKEN'])
+    const http = doc.servers[1] as ServerDef & { timeoutMs?: number }
+    expect(http.toolCallTimeoutMs).toBe(2_000)
+    expect((http as unknown as { headers?: unknown }).headers).toEqual([{ name: 'Authorization', ref: 'TOKEN' }])
+  })
+
+  it('does not materialize defaults for the new fields (absent stays absent)', () => {
+    const doc = readDocument(resolveConfig({ servers: [RESOLVED_SERVER] }))
+    const row = doc.servers[0] as ServerDef & Record<string, unknown>
+    for (const field of ['toolCallTimeoutMs', 'startupTimeoutMs', 'closeTimeoutMs', 'toolLoading', 'reconnect']) {
+      expect(row[field], field + ' must stay absent').toBeUndefined()
+    }
+  })
+
+  it('round-trips a document carrying all four exposed fields and the reconnect policy', () => {
+    const input = {
+      servers: [
+        {
+          serverName: 'tuned',
+          transport: 'stdio',
+          command: 'node',
+          args: ['server.js'],
+          toolCallTimeoutMs: 1_234,
+          startupTimeoutMs: 2_500,
+          closeTimeoutMs: 700,
+          toolLoading: 'on-demand',
+          reconnect: { enabled: true, initialDelayMs: 250, maxDelayMs: 5_000, maxAttempts: 3 },
+        },
+      ],
+    }
+    const doc = readDocument(resolveConfig(input))
+    const row = doc.servers[0] as ServerDef
+    expect(row.toolCallTimeoutMs).toBe(1_234)
+    expect(row.startupTimeoutMs).toBe(2_500)
+    expect(row.closeTimeoutMs).toBe(700)
+    expect(row.toolLoading).toBe('on-demand')
+    expect(row.reconnect).toEqual({ enabled: true, initialDelayMs: 250, maxDelayMs: 5_000, maxAttempts: 3 })
+    // A second decode of the canonical document is a no-op (round-trip stable).
+    expect(canonicalDoc(doc)).toEqual(doc)
+  })
+
+  it('refuses new-field values the schema can check', () => {
+    expect(() => resolveConfig({ servers: [{ serverName: 'a', transport: 'stdio', command: 'node', toolLoading: 'sometimes' }] })).toThrow()
+    expect(() => resolveConfig({
+      servers: [{ serverName: 'a', transport: 'stdio', command: 'node', reconnect: { initialDelayMs: 'soon' } }],
+    })).toThrow()
+    expect(() => resolveConfig({ servers: [{ serverName: 'a', transport: 'stdio', command: 'node', timeoutMs: 'later' }] })).toThrow()
   })
 
   it('pins the entry id the browser form and the legacy import both address', () => {

@@ -1,260 +1,60 @@
 /**
- * THE GATING CORE — integration tests for src/agents.ts.
+ * THE GATING CORE — integration tests for src/agents.ts (the per-agent applier).
  *
- * Mounts a REAL ToolRuntime (official test recipe: SystemPrompt plugin +
- * ToolRuntime plugin on a root Context) plus real dsh-scope agent contexts
- * (createScope keyed by agent objects), a stubbed workspace registry over
- * real temp directories, and drives the agent applier with fake server defs:
+ * Mounts the REAL ToolRuntime (0.2.3 recipe: SessionProjections -> SystemPrompt
+ * -> ToolRuntime -> the tools-injecting factory ctx), real dsh-scope agent
+ * contexts (createScope keyed by agent objects), a stubbed workspace registry
+ * over real temp directories, and drives the production applier with capture
+ * snapshots:
  *
  * - tools visible only to agents whose session cwd canonicalizes to a
  *   registered workspace holding an explicit ENABLE record for the server
  *   (default off: an absent record means invisible);
- * - no enable record → invisible; cwd outside every workspace → invisible;
- * - settings reconcile + sync-driven revocation; nothing ever lands in the
- *   global layer.
+ * - no enable record -> invisible; cwd outside every workspace -> invisible;
+ * - settings reconcile + capture-driven revocation; nothing ever lands in the
+ *   global layer; context (sections/resources) follows the same gate once per
+ *   epoch and survives a same-epoch tool generation swap (A2/A4).
  */
 
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { rmSync } from 'node:fs'
 import { Context, Service } from '@deepseek-ai/cordis'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime, { type ToolDefinition } from '@deepseek-ai/dsh-tools'
-import { createScope, scopeOf, type Scope } from '@deepseek-ai/dsh-scope'
+import { scopeOf } from '@deepseek-ai/dsh-scope'
+import type { ToolDefinition, ToolRuntime } from '@deepseek-ai/dsh-tools'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { createAgentApplier, type AgentApplier } from '../../src/agents.js'
-import type { WorkspaceLike } from '../../src/workspace.js'
-import type { WorkspaceOverrides } from '../../src/shared/model.js'
-
-/** A minimal ToolDefinition with a canned executor. */
-function def(name: string, reply = 'ok'): ToolDefinition {
-  return {
-    name,
-    description: `tool ${name}`,
-    parameters: { type: 'object', properties: {} },
-    output: {
-      schema: {
-        type: 'object',
-        properties: {
-          content: { type: 'array', items: {} },
-        },
-        required: ['content'],
-        additionalProperties: false,
-      },
-      render() {
-        return [{ type: 'text', text: reply }]
-      },
-    },
-    async execute() {
-      return { content: [{ type: 'text', text: reply }] }
-    },
-  }
-}
+import { createAgentApplier } from '../../src/agents.js'
+import { mountReal } from '../support/mount-real.js'
+import type { CaptureSnapshot } from '../../src/facade.js'
+import {
+  captureOf,
+  capturedSection,
+  descriptorEvent,
+  execContext,
+  mountAgentHarness,
+  resourceProvider,
+  settle,
+  toolDef as def,
+  type LoggedLine,
+} from '../support/agent-kit.js'
 
 const SERVER = 'files'
 const TOOL_A = 'mcp__files__read_file'
 const TOOL_B = 'mcp__files__write_file'
 
-interface LoggedLine { level: 'info' | 'warn' | 'error'; message: string }
-
-/**
- * One durable `subagent/descriptor` session event, shaped like the harness's own
- * (`@deepseek-ai/dsh-subagent`): version 3, the envelope field is `data`, and
- * only a continuable child carries a `toolFilter`.
- */
-function descriptorEvent(toolFilter?: unknown): unknown {
-  return {
-    type: 'subagent/descriptor',
-    seq: 0,
-    time: 0,
-    data: {
-      version: 3,
-      mode: 'continuable',
-      provider: 'in-process',
-      label: 'child',
-      ...(toolFilter === undefined ? {} : { toolFilter }),
-    },
-  }
-}
-
-/** Live fake agents + workspace registry backed by real temp directories. */
-class Harness {
-  readonly ctx = new Context()
-  /** The tools-injecting fiber ctx that agent scopes derive from. */
-  factoryCtx!: Context
-  /** The applier's own fiber ctx (listeners/effects live here). */
-  hostCtx!: Context
-  readonly live = new Map<string, Agent>()
-  workspaces: WorkspaceLike[] = []
-  /** Per-workspace explicit enables: a row exists ⇔ the server is on there. */
-  overrides: WorkspaceOverrides = {}
-  /** serverNames the harness reports as globally disabled (manager's live view). */
-  readonly globalDisabled = new Set<string>()
-  applier!: AgentApplier
-  /** Captured applier log lines (apply/revoke/tracking evidence). */
-  readonly lines: LoggedLine[] = []
-  private readonly agentsScope = new Map<Agent, Scope>()
-  private readonly tempRoots: string[] = []
-
-  /** Create a workspace directory on disk and register it. */
-  async addWorkspace(name: string): Promise<{ id: string; path: string }> {
-    const base = mkdtempSync(join(tmpdir(), `mcp-scope-gate-${name}-`))
-    this.tempRoots.push(base)
-    const path = realpathSync(base)
-    const id = `ws-${name}`
-    this.workspaces.push({ id, path })
-    return { id, path }
-  }
-
-  /** Create a directory that is NOT a registered workspace. */
-  makeOutsideDir(): string {
-    const dir = mkdtempSync(join(tmpdir(), 'mcp-scope-outside-'))
-    this.tempRoots.push(dir)
-    return realpathSync(dir)
-  }
-
-  /**
-   * Spawn a fake agent whose session cwd is `cwd`. `origin` mirrors
-   * `session.header.origin` ('subagent' on delegation children; absent on
-   * top-level agents).
-   *
-   * `options.events` is the agent's OWN event window, `options.inheritedEvents`
-   * the fork-inherited prefix the session serves before it: `snapshotEvents`
-   * mirrors the real session (its own window starts at `inheritedEventCount`),
-   * and `options.withoutSnapshotApi` removes the read API entirely, standing in
-   * for a generation that predates it.
-   */
-  spawnAgent(
-    id: string,
-    cwd: string | undefined,
-    origin?: 'subagent',
-    options: {
-      events?: readonly unknown[]
-      inheritedEvents?: readonly unknown[]
-      withoutSnapshotApi?: boolean
-      withoutInheritedCount?: boolean
-    } = {},
-  ): Agent {
-    const inheritedEvents = options.inheritedEvents ?? []
-    const ownEvents = options.events ?? []
-    const log = [...inheritedEvents, ...ownEvents]
-    // Spy for the session-write contract: the applier must NEVER append. A
-    // third-party event type is required-on-read (the envelope's `ignorable`
-    // marker has no write path in this generation), so one append would make the
-    // stored session unreadable to every reader, the writing harness included.
-    // The notice is derived client-side from `request/header` events instead.
-    const session: Record<string, unknown> = {
-      header: { cwd, origin: origin ?? undefined },
-      append(type: string, data: unknown): void {
-        appended.push({ type, data })
-      },
-    }
-    if (options.withoutSnapshotApi !== true) {
-      if (options.withoutInheritedCount !== true) session.inheritedEventCount = inheritedEvents.length
-      session.snapshotEvents = (from = 0): readonly unknown[] => log.slice(from)
-    }
-    // The agent object itself is the scope key (production: createScope(loopCtx, agent)).
-    const agent = { id, session } as unknown as Agent
-    const scope = createScope(this.factoryCtx, agent as never)
-    ;(agent as unknown as { ctx: Context }).ctx = scope.ctx
-    this.live.set(id, agent)
-    this.agentsScope.set(agent, scope)
-    return agent
-  }
-
-  /** Publish + announce an agent, mirroring the real registry's emits. */
-  createAgent(agent: Agent): void {
-    // 0.1.6 requires the lifecycle source on this event (a vetoing listener
-    // settles the announcement); 'startup' is the seeded-create case.
-    this.ctx.emit('agent/created', { agent, source: 'startup' })
-  }
-
-  disposeAgent(agent: Agent): void {
-    this.ctx.emit('agent/disposed', { agent })
-    this.live.delete(agent.id)
-  }
-
-  /** Dispose one agent's scope ctx (its scope-layer entries die with it). */
-  async teardownAgent(agent: Agent): Promise<void> {
-    const scope = this.agentsScope.get(agent)
-    if (scope !== undefined) await scope.dispose()
-  }
-
-  /** Push one server state through the harness applier (epoch defaults to 1). */
-  push(serverName: string, syncId: number, defs: Map<string, ToolDefinition>, epoch = 1): void {
-    this.applier.pushServerState(serverName, { epoch, syncId, defs })
-  }
-
-  /** The registry projection the applier consumes, with production semantics. */
-  registry(): { list(): Agent[]; get(id: string): Agent | undefined } {
-    return {
-      // list() reports every live agent, delegation children included — the
-      // only projection the supported generations expose since 0.2.2-rc.3.
-      list: () => [...this.live.values()],
-      get: (id: string) => this.live.get(id),
-    }
-  }
-
-  cleanup(): void {
-    for (const root of this.tempRoots) rmSync(root, { recursive: true, force: true })
-  }
-}
-
-/** A minimal live-session run context for executor probes. */
-function execContext(): Parameters<NonNullable<ToolDefinition['execute']>>[1] {
-  return {
-    signal: new AbortController().signal,
-    deferContext: () => {},
-    concludeTurn: () => {},
-  } as never
-}
-
-/** Mount real ToolRuntime + applier on a fresh root Context. */
-async function mount(): Promise<Harness> {
-  const h = new Harness()
-  await h.ctx.plugin(SystemPrompt)
-  await h.ctx.plugin(ToolRuntime)
-
-  // The applier's own fiber ctx.
-  await h.ctx.plugin(function applierHost(c: Context) {
-    h.hostCtx = c
+/** One capture carrying a prompt section + resource provider (context facets). */
+function contextCapture(defs: Map<string, ToolDefinition>, version = 1): CaptureSnapshot {
+  return captureOf(defs, {
+    version,
+    sections: [
+      capturedSection({ name: 'mcp:files', order: 3100, text: () => '### use add first' }),
+    ],
+    resources: new Map([[SERVER, resourceProvider()]]),
   })
-  // The tools-injecting fiber ctx under which agent scopes are created —
-  // mirrors production: agent scopes derive from the agent-loop ctx whose
-  // fiber injected `tools`, which is what makes agent.ctx.tools resolvable.
-  const factoryPlugin = function agentFactory(c: Context) {
-    h.factoryCtx = c
-  }
-  factoryPlugin.inject = ['tools']
-  await h.ctx.plugin(factoryPlugin)
-
-  await h.hostCtx.plugin(function installApplier(c: Context) {
-    h.applier = createAgentApplier({
-      ctx: c,
-      logger: {
-        info: (message) => void h.lines.push({ level: 'info', message }),
-        warn: (message) => void h.lines.push({ level: 'warn', message }),
-        error: (message) => void h.lines.push({ level: 'error', message }),
-      },
-      agents: h.registry(),
-      workspaceRegistry: { list: () => [...h.workspaces] },
-      overrides: () => h.overrides,
-      disabled: () => {
-        const rows: Record<string, true> = {}
-        for (const name of h.globalDisabled) rows[name] = true
-        return rows
-      },
-    })
-  })
-  return h
 }
-
-const appended: { type: string; data: unknown }[] = []
 
 describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () => {
   it('serves tools only to enabled-workspace agents; the global layer stays empty', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       const wsB = await h.addWorkspace('b')
@@ -296,17 +96,17 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('never writes a session event (the notice is derived client-side)', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       const agentA = h.spawnAgent('agent-a', wsA.path)
       h.overrides = { [wsA.id]: { files: true, other: true } }
       // Prove the spy is LIVE before trusting an empty result, then clear it:
       // adoption itself is part of the exercised surface.
-      appended.length = 0
+      h.sessionWrites.length = 0
       ;(agentA.session as unknown as { append(type: string, data: unknown): void }).append('control/probe', {})
-      expect(appended).toHaveLength(1)
-      appended.length = 0
+      expect(h.sessionWrites).toHaveLength(1)
+      h.sessionWrites.length = 0
       h.createAgent(agentA)
 
       // Every path that used to append an injected-tools notice: adoption, first
@@ -318,7 +118,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       h.overrides = { [wsA.id]: { other: true } } // settings flip: "files" no longer enabled
       h.applier.reconcile()
       h.push('files', 2, new Map())
-      h.applier.revokeServer('other')
+      h.remove('other')
       h.applier.dispose()
 
       // A third-party session event carries no `ignorable` marker (the write
@@ -327,14 +127,14 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       // wrote it. The applier must stay a pure tool-scope writer, and the
       // conversation notice is derived from the harness's own `request/header`
       // events (src/client/injection.ts).
-      expect(appended).toEqual([])
+      expect(h.sessionWrites).toEqual([])
     } finally {
       h.cleanup()
     }
   })
 
   it('keeps two servers side by side in one scope — including a shared tool name — and gates them independently (MULTI-2)', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       const agentA = h.spawnAgent('agent-a', wsA.path)
@@ -375,7 +175,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('re-applies on settings reconcile (enable/disable flip) and revokes on empty sync', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       const agentA = h.spawnAgent('agent-a', wsA.path)
@@ -406,7 +206,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('swaps generations on defsChanged; same-syncId pushes are idempotent', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       const agentA = h.spawnAgent('agent-a', wsA.path)
@@ -431,7 +231,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('adopts pre-existing agents from the list() registry (0.2.2-rc.3 shape)', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       const agentA = h.spawnAgent('agent-a', wsA.path)
@@ -445,9 +245,10 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
         agents: { list: () => [...h.live.values()], get: (id: string) => h.live.get(id) },
         workspaceRegistry: { list: () => [...h.workspaces] },
         overrides: () => h.overrides,
+        disabled: () => ({}),
       })
       try {
-        second.pushServerState(SERVER, { epoch: 1, syncId: 1, defs: new Map([[TOOL_A, def(TOOL_A)]]) })
+        second.syncServerState(SERVER, { epoch: 1, capture: captureOf(new Map([[TOOL_A, def(TOOL_A)]]), { version: 1 }) })
         expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
       } finally {
         second.dispose()
@@ -458,7 +259,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('drops bookkeeping on agent/disposed; scope entries die with the agent ctx', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
@@ -472,7 +273,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       // (we never call disposers after disposal).
       h.disposeAgent(agentA)
       h.push(SERVER, 2, new Map([[TOOL_B, def(TOOL_B)]]))
-      h.applier.revokeServer(SERVER)
+      h.remove(SERVER)
       expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
 
       // Disposing the agent scope ctx removes its scope-layer entries.
@@ -486,7 +287,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('registers through agent.ctx so the agent scope itself sees the tools', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
@@ -503,7 +304,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('re-registers a restarted server whose fresh handle reuses syncId 1 (epoch guard, PERF-2)', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
@@ -543,7 +344,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('reconcile is a no-op for unchanged pairs and still applies real flips (PERF-1/IMPL-2)', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
@@ -582,7 +383,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('a globally disabled server is revoked everywhere and re-applied on re-enable', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
@@ -608,7 +409,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it("revokes tools when the entry's workspace disappears from the registry (IMPL-1/ARCH-2)", async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
@@ -634,7 +435,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it("revokes when the workspace's directory disappears from disk (R2I-7)", async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('dirgone')
       h.overrides = { [wsA.id]: { files: true } }
@@ -656,7 +457,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('applies tools once a workspace appears for a previously workspace-less agent (IMPL-1/ARCH-2)', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const dir = h.makeOutsideDir()
       const agentA = h.spawnAgent('agent-a', dir)
@@ -678,7 +479,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('adopts delegation children: the workspace MCP tools reach a subagent (listener + boot scan)', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
@@ -718,6 +519,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
         agents: h.registry(),
         workspaceRegistry: { list: () => [...h.workspaces] },
         overrides: () => h.overrides,
+        disabled: () => ({}),
       })
       try {
         expect(bootLines.some((l) => l.message.includes('tracking agent agent-root'))).toBe(true)
@@ -726,7 +528,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
         // the previous applier releases its registrations (what a plugin reload
         // does) and a push through the reloaded one must reach the child's scope.
         h.applier.dispose()
-        second.pushServerState(SERVER, { epoch: 2, syncId: 1, defs })
+        second.syncServerState(SERVER, { epoch: 2, capture: captureOf(defs, { version: 1 }) })
         expect(h.ctx.tools.get(TOOL_A, child)).toBeDefined()
         expect(bootLines.some((l) => l.level === 'error')).toBe(false)
       } finally {
@@ -738,7 +540,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it("mirrors a continuable child's allow list: only admitted names register", async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
@@ -756,7 +558,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('mirrors a deny list per name', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
@@ -773,7 +575,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('withholds the whole server — tools AND context — when the filter admits none of it', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const resources = new RecordingResources(h.ctx)
       const wsA = await h.addWorkspace('a')
@@ -784,15 +586,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       })
       h.createAgent(parent)
       h.createAgent(child)
-      h.applier.pushServerState(SERVER, {
-        epoch: 1,
-        syncId: 1,
-        defs: new Map([[TOOL_A, def(TOOL_A)], [TOOL_B, def(TOOL_B)]]),
-        context: {
-          instructions: () => '### use add first',
-          resources: { request: async () => ({}) } as never,
-        },
-      })
+      h.sync(SERVER, contextCapture(new Map([[TOOL_A, def(TOOL_A)], [TOOL_B, def(TOOL_B)]])))
       await settle()
       expect(h.ctx.tools.get(TOOL_A, child)).toBeUndefined()
       expect(h.ctx.tools.get(TOOL_B, child)).toBeUndefined()
@@ -806,9 +600,13 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
       h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A)], [TOOL_B, def(TOOL_B)]]))
       expect(h.lines.filter((l) => l.message.includes('withheld from agent agent-child'))).toHaveLength(withheld)
 
-      // Turning the pair off revokes the recorded suppression like any other.
+      // The recorded suppression is invisible state: a repeated OFF decision for
+      // the same generation is a no-op (nothing was ever registered), while
+      // removing the server revokes the record like any other generation.
       h.overrides = {}
       h.applier.reconcile()
+      expect(h.lines.some((l) => l.message.includes('revoked server "files" from agent agent-child'))).toBe(false)
+      h.remove(SERVER)
       expect(h.lines.some((l) => l.message.includes('revoked server "files" from agent agent-child'))).toBe(true)
     } finally {
       h.cleanup()
@@ -816,7 +614,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('fails open with a warning when the descriptor is unreadable (unknown version)', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
@@ -833,7 +631,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('fails open when the descriptor payload or its filter is malformed', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
@@ -852,7 +650,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it("ignores a descriptor inherited from a forked parent's prefix", async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
@@ -872,7 +670,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('fails open when the read API exists without the inherited-event boundary', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
@@ -895,7 +693,7 @@ describe('per-agent scope gating (real ToolRuntime + dsh-scope contexts)', () =>
   })
 
   it('fails open when the generation has no session snapshot API', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const wsA = await h.addWorkspace('a')
       h.overrides = { [wsA.id]: { files: true } }
@@ -935,14 +733,9 @@ class RecordingResources extends Service {
   }
 }
 
-/** Cordis activates an inject fiber off the current tick; let it land. */
-async function settle(): Promise<void> {
-  for (let i = 0; i < 10; i += 1) await Promise.resolve()
-}
-
 describe('server context publication (per enabled agent)', () => {
   it('registers the context through the agent scope, never host-level', async () => {
-    const h = await mount()
+    const h = await mountAgentHarness()
     try {
       const resources = new RecordingResources(h.ctx)
       const wsA = await h.addWorkspace('a')
@@ -953,15 +746,7 @@ describe('server context publication (per enabled agent)', () => {
       h.createAgent(agentB)
 
       const defs = new Map<string, ToolDefinition>([[TOOL_A, def(TOOL_A)]])
-      h.applier.pushServerState(SERVER, {
-        epoch: 1,
-        syncId: 1,
-        defs,
-        context: {
-          instructions: () => '### use add first',
-          resources: { request: async () => ({}) } as never,
-        },
-      })
+      h.sync(SERVER, contextCapture(defs))
       await settle()
       // Default off: a host-level registration would have published the three
       // shared resource tools to this agent (and to the global layer) here.
@@ -984,5 +769,190 @@ describe('server context publication (per enabled agent)', () => {
     } finally {
       h.cleanup()
     }
+  })
+})
+
+describe('capture facets and generation semantics (A2/A4)', () => {
+  it("serves a tool-less capture's prompt section and resource to an enabled agent", async () => {
+    const h = await mountAgentHarness()
+    try {
+      const resources = new RecordingResources(h.ctx)
+      const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
+      const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.createAgent(agentA)
+      // Enablement is decided by the workspace pair, never by tool count: a
+      // server that lists no tools still publishes its context facets.
+      h.sync(SERVER, contextCapture(new Map()))
+      await settle()
+      expect(resources.registered).toHaveLength(1)
+      expect(resources.registered[0]?.server).toBe(SERVER)
+      expect(h.lines.some((l) => l.message.includes('applied 0 tools of server "files"'))).toBe(true)
+      expect(h.ctx.tools.get(TOOL_A)).toBeUndefined()
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('keeps the replayed context across a same-epoch tool generation swap', async () => {
+    const h = await mountAgentHarness()
+    try {
+      const resources = new RecordingResources(h.ctx)
+      const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
+      const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.createAgent(agentA)
+      h.sync(SERVER, contextCapture(new Map([[TOOL_A, def(TOOL_A)]]), 1))
+      await settle()
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
+      expect(resources.registered).toHaveLength(1)
+
+      // Same instance (epoch), new tool generation: only the tools swap; the
+      // sections/resources are NOT re-registered (no retirement churn).
+      h.push(SERVER, 2, new Map([[TOOL_B, def(TOOL_B)]]))
+      await settle()
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeUndefined()
+      expect(h.ctx.tools.get(TOOL_B, agentA)).toBeDefined()
+      expect(resources.registered).toHaveLength(1)
+      expect(resources.unloaded).toEqual([])
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('replays the context once per epoch after an instance change', async () => {
+    const h = await mountAgentHarness()
+    try {
+      const resources = new RecordingResources(h.ctx)
+      const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
+      const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.createAgent(agentA)
+      h.sync(SERVER, contextCapture(new Map([[TOOL_A, def(TOOL_A)]]), 1), 1)
+      await settle()
+      expect(resources.registered).toHaveLength(1)
+
+      // A new epoch is a new instance: the previous context is disposed and the
+      // capture's facets are replayed exactly once for the new generation.
+      h.sync(SERVER, contextCapture(new Map([[TOOL_A, def(TOOL_A)]]), 1), 2)
+      await settle()
+      expect(resources.unloaded).toEqual([SERVER])
+      expect(resources.registered).toHaveLength(2)
+      expect([...new Set(resources.registered.map((entry) => entry.server))]).toEqual([SERVER])
+    } finally {
+      h.cleanup()
+    }
+  })
+})
+
+
+describe('applier failure containment', () => {
+  it('rolls a tool generation back when a registration conflicts, and retries next generation', async () => {
+    const h = await mountAgentHarness()
+    try {
+      const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
+      const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.createAgent(agentA)
+      // A foreign registration occupies the name inside the SAME agent scope:
+      // registering the captured generation must fail and roll the whole set back.
+      const tools = agentA.ctx.get('tools') as ToolRuntime
+      tools.register(def(TOOL_A, 'foreign'))
+      h.push(SERVER, 1, new Map([[TOOL_A, def(TOOL_A)] , [TOOL_B, def(TOOL_B)]]))
+      expect(h.lines.some((line) => line.level === 'error' && line.message.includes('tool registration failed'))).toBe(true)
+      expect(h.ctx.tools.get(TOOL_B, agentA)).toBeUndefined()
+      // The next generation (without the conflicting name) applies normally.
+      h.push(SERVER, 2, new Map([[TOOL_B, def(TOOL_B)]]))
+      expect(h.ctx.tools.get(TOOL_B, agentA)).toBeDefined()
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('contains a throwing replayed-context disposer and keeps the tools path alive', async () => {
+    const h = await mountAgentHarness()
+    try {
+      class ThrowingResources extends Service {
+        constructor(ctx: Context) {
+          super(ctx, 'mcpResources')
+        }
+        register(): () => void {
+          return this.ctx.effect(() => () => {
+            throw new Error('context cleanup exploded')
+          }, 'fake.throwing.register')
+        }
+      }
+      new ThrowingResources(h.ctx)
+      const wsA = await h.addWorkspace('a')
+      h.overrides = { [wsA.id]: { files: true } }
+      const agentA = h.spawnAgent('agent-a', wsA.path)
+      h.createAgent(agentA)
+      h.sync(SERVER, contextCapture(new Map([[TOOL_A, def(TOOL_A)]])))
+      await settle()
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
+      h.overrides = {}
+      h.applier.reconcile()
+      await settle()
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeUndefined()
+      // The throwing cleanup stays contained: no unhandled rejection reaches the
+      // suite, and the applier keeps serving other facets afterwards.
+      h.overrides = { [wsA.id]: { files: true } }
+      h.applier.reconcile()
+      await settle()
+      expect(h.ctx.tools.get(TOOL_A, agentA)).toBeDefined()
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('contains a malformed agent adoption without vetoing agent/created', async () => {
+    const h = await mountAgentHarness()
+    try {
+      const broken = { id: 'agent-broken' } as unknown as Agent
+      Object.defineProperty(broken, 'session', {
+        get() {
+          throw new Error('session exploded')
+        },
+      })
+      h.live.set('agent-broken', broken)
+      expect(() => h.createAgent(broken)).not.toThrow()
+      expect(h.lines.some((line) => line.level === 'error' && line.message.includes('could not adopt agent agent-broken'))).toBe(true)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('contains a throwing agent scan and a throwing live-doc source', async () => {
+    const ctx = new Context()
+    const { factoryCtx } = await mountReal(ctx)
+    void factoryCtx
+    const lines: LoggedLine[] = []
+    const logger = {
+      info: (message: string) => void lines.push({ level: 'info', message }),
+      warn: (message: string) => void lines.push({ level: 'warn', message }),
+      error: (message: string) => void lines.push({ level: 'error', message }),
+    }
+    const applier = createAgentApplier({
+      ctx,
+      logger,
+      agents: {
+        list: () => {
+          throw new Error('registry exploded')
+        },
+        get: () => undefined,
+      },
+      workspaceRegistry: { list: () => [] },
+      overrides: () => {
+        throw new Error('doc exploded')
+      },
+      disabled: () => ({}),
+    })
+    await settle()
+    expect(lines.some((line) => line.level === 'error' && line.message.includes('agent scan failed'))).toBe(true)
+    // A capture push whose live-doc read throws is contained to one error line.
+    expect(() => applier.syncServerState(SERVER, { epoch: 1, capture: captureOf(new Map([[TOOL_A, def(TOOL_A)]])) })).not.toThrow()
+    expect(lines.some((line) => line.level === 'error' && line.message.includes('could not publish server'))).toBe(true)
+    applier.dispose()
+    await ctx.fiber.dispose()
   })
 })

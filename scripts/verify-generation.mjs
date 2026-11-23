@@ -1,12 +1,10 @@
 // Per-generation type guard: compile this tree's src and tests against the
 // @deepseek-ai/dsh-* generation named on the command line, in a scratch tree
-// that shares nothing with the dev install. CI runs it for every declared peer
-// line besides the pinned dev tree, so "the peers say we support it" is backed
-// by an actual compile on each PR instead of a release-time smoke alone.
+// that shares nothing with the dev install. It is a manual pre-tag gate for the
+// single declared line; CI's `check` job only compiles the dev pin, and there
+// is no cross-line compatibility matrix any more.
 //
-//   node scripts/verify-generation.mjs 0.2.0-rc.1 \
-//     --pin @deepseek-ai/cordis@4.0.4 --pin @deepseek-ai/cordis-plugin-loader@1.0.5 \
-//     --pin @deepseek-ai/schemastery@~3.18.4
+//   node scripts/verify-generation.mjs 0.2.3-alpha.2
 //
 // The scratch tree is <ROOT>/.scratch/verify-generation/<generation>/: a copy of
 // src, tests and the two typecheck tsconfigs plus a package.json derived from
@@ -14,25 +12,20 @@
 // tsc runs with --noEmit against src (tsconfig.json) and tests
 // (tsconfig.tests.json); the run costs one npm install plus two tsc passes.
 //
-// A generation OTHER than the dev pin peers on different framework packages, so
-// the exact install fails ERESOLVE. Pass those packages explicitly — an older
-// line (the compat matrix) or a newer one (auditing a line ahead of a move):
+// --pin names a framework package explicitly (cordis, cordis-plugin-loader,
+// schemastery) when auditing a generation whose framework packages differ from
+// the exact dev pin — the install would otherwise fail with ERESOLVE. The pins
+// may only name packages other than the generation's own @deepseek-ai/dsh-* set
+// (that set is what is under test), and the install stays EXACT (no
+// --legacy-peer-deps): the closure is complete, so the framework types are
+// exercised too. On the declared line the dev pin and the peer range name the
+// same generation, so no --pin is needed.
 //
 //   node scripts/verify-generation.mjs 0.2.1-rc.5 \
 //     --pin @deepseek-ai/cordis@4.0.5 \
 //     --pin @deepseek-ai/cordis-plugin-loader@1.0.6 \
 //     --pin @deepseek-ai/schemastery@~3.18.5
-//
-//   node scripts/verify-generation.mjs 0.2.0-rc.1 \
-//     --pin @deepseek-ai/cordis@4.0.4 \
-//     --pin @deepseek-ai/cordis-plugin-loader@1.0.5 \
-//     --pin @deepseek-ai/schemastery@~3.18.4
-//
-// The install stays EXACT (no --legacy-peer-deps): the closure is complete, so
-// the framework types are exercised too. The pins may only name packages other
-// than the generation's own @deepseek-ai/dsh-* set — that set is what is under
-// test. CI passes the pins its compat matrix declares, so a generation that
-// stops resolving still fails there loudly.
+
 import { execFileSync, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -104,7 +97,7 @@ const dir = join(ROOT, '.scratch', 'verify-generation', generation)
 rmSync(dir, { recursive: true, force: true })
 mkdirSync(dir, { recursive: true })
 writeFileSync(join(dir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`)
-for (const entry of ['src', 'tests', 'tsconfig.json', 'tsconfig.tests.json']) {
+for (const entry of ['src', 'tests', 'tsconfig.json', 'tsconfig.tests.json', 'cordis.patch.yml', 'vitest.config.ts', 'LICENSE']) {
   cpSync(join(ROOT, entry), join(dir, entry), { recursive: true })
 }
 
@@ -137,16 +130,16 @@ function install(extraArgs = [], label = 'exact') {
 
 /**
  * The scratch tree's own `semver` (the manifest carries it as a devDependency).
- * Loaded lazily from the INSTALLED tree: the CI compat job runs this script
- * without installing this checkout's node_modules, so a top-level import of a
- * non-builtin would fail before the first line of work.
- * @returns a prerelease-inclusive range test, or undefined when unavailable.
+ * Loaded lazily from the INSTALLED tree: this manual gate may run before this
+ * checkout's node_modules exists, so a top-level import of a non-builtin would
+ * fail before the first line of work.
+ * @returns an npm-semantics range test, or undefined when unavailable.
  */
 function peerRangeTest() {
   try {
     const scratchRequire = createRequire(join(dir, 'package.json'))
     const semver = scratchRequire('semver')
-    return (version, range) => semver.satisfies(version, range, { includePrerelease: true })
+    return (version, range) => semver.satisfies(version, range)
   } catch {
     return undefined
   }
@@ -203,9 +196,8 @@ try {
   if (/ERESOLVE|Could not resolve dependency/.test(output)) {
     fail('peer conflict: this generation peers on framework packages other than this tree\'s. '
       + 'Pass them explicitly with --pin <name>@<range>; the ranges npm just named are in the '
-      + 'output above. The per-generation pins this repository uses live in '
-      + '.github/workflows/ci.yml (compat matrix) and docs/RELEASE.md §Auditing a new '
-      + 'upstream line (6).')
+      + 'output above. See docs/RELEASE.md §Auditing a new upstream line (6) for the '
+      + 'pin/checklist procedure.')
   }
   fail('npm install failed for a reason other than peer resolution — see the output above')
 }

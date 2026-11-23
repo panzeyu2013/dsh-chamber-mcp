@@ -58,8 +58,8 @@
  * @module
  */
 
-import { MAX_PUBLIC_NAME_LENGTH, MCP_TOOL_PREFIX, type ServerDef } from '../shared/model.js'
-import { identifyMcpTool } from './tool-card/names.js'
+import { MAX_PUBLIC_NAME_LENGTH, MCP_TOOL_PREFIX, SERVER_NAME_PATTERN, type ServerDef } from '../shared/model.js'
+import { LOADER_RAW_NAME, identifyMcpTool } from './tool-card/names.js'
 
 /** Chat-node kind the browser half renders the registered-tools notice under. */
 export const MCP_INJECTION_NODE_KIND = 'mcp-scope-injected'
@@ -75,14 +75,35 @@ export const INJECTION_NAME_LIMIT = 256
 /** One registered server and how many tools it contributed. */
 export interface InjectionServer {
   name: string
-  toolCount: number
   /**
    * Public `mcp__…` names the request exposed for the server, sorted. A
    * projection this module produced carries at most `toolCount` of
    * them, and fewer only under the name cap — the body then reports the
-   * difference as not listed.
+   * difference as not listed. The on-demand LOADER tool is never counted.
    */
   tools: readonly string[]
+  /** Public tool names the server contributed (LOADER excluded). */
+  toolCount: number
+  /**
+   * On-demand servers only: how many distinct tools the server's catalog
+   * offers. Definitions never cross the wire — only this size and a bounded
+   * list of RAW catalog names.
+   */
+  catalog?: number
+  /** On-demand servers only: bounded raw catalog names, in catalog order. */
+  catalogNames?: readonly string[]
+  /** Marks an on-demand catalog entry for the row's catalog rendering. */
+  onDemand?: true
+}
+
+/** One on-demand catalog section parsed from a rendered system prompt. */
+export interface CatalogSection {
+  /** Configured server the section claims to belong to (validated by the caller). */
+  name: string
+  /** Bounded raw catalog names carried for the expanded body. */
+  tools: readonly string[]
+  /** Exact number of distinct catalog tool names in the section. */
+  total: number
 }
 
 /** Normalized payload of one injection notice. */
@@ -238,6 +259,109 @@ export function injectionNamesOfHeader(data: unknown): string[] {
 }
 
 /**
+ * Heading line that opens one on-demand catalog section (upstream verbatim,
+ * `dsh-mcp-client/src/tool-loading.ts`).
+ */
+const CATALOG_HEADING = '### On-demand tools from MCP server '
+
+/** Bound of one prompt scan: catalog sections beyond this many chars are not read. */
+const CATALOG_SCAN_LIMIT = 256 * 1024
+
+/** Maximum catalog sections carried per prompt (bounded work per request). */
+export const CATALOG_SECTION_LIMIT = 64
+
+/** Longest raw catalog name carried (a public name is capped at 64; gold-plate). */
+const CATALOG_RAW_NAME_LIMIT = 256
+
+/**
+ * The exact sentence the upstream renderer puts directly under a catalog
+ * heading. Used as the anti-spoof signature of one catalog section.
+ *
+ * @param name - server name from the heading line.
+ * @returns the sentence the mounted client renders for that server.
+ */
+function catalogLoaderSentence(name: string): string {
+  return 'These tools are not in your tool list. Before calling one, load it with mcp__' + name + '__' + LOADER_RAW_NAME + '.'
+}
+
+/**
+ * Extract every on-demand catalog section DECLARED by one rendered system
+ * prompt.
+ *
+ * The upstream renderer (`dsh-mcp-client/src/tool-loading.ts`) emits one
+ * section per on-demand server:
+ *
+ * ```text
+ * ### On-demand tools from MCP server <name>
+ * These tools are not in your tool list. Before calling one, load it with mcp__<name>__load_tools.
+ * - <raw tool name>: <summary>
+ * ```
+ *
+ * SECURITY, not style: MCP tool DESCRIPTIONS are attacker-controlled text and
+ * render into the SAME prompt, so a bare heading match would let one server
+ * forge another configured server's catalog. A section is accepted only when
+ * (a) the heading starts a line and names a legal server name, (b) the first
+ * non-empty line below it is the EXACT loader sentence naming THAT server —
+ * the mounted client's own wording, which a description rendered as a JSDoc /
+ * catalog-summary line cannot reproduce at line start — and (c) the caller
+ * additionally filters sections by configured-server ownership in
+ * {@link injectionServersOfNames}. Catalog lines carry RAW names only, never
+ * `mcp__` public names.
+ *
+ * Total/linear: the text is scanned once, sections and carried names are
+ * bounded, and malformed input yields `[]` — this runs for every header
+ * evaluation, inside the assembler, so it must never throw.
+ *
+ * @param text - rendered system-prompt text (untrusted).
+ * @returns accepted catalog sections in prompt order, empty when there are none.
+ */
+export function catalogSectionsOfPrompt(text: unknown): CatalogSection[] {
+  if (typeof text !== 'string' || text === '') return []
+  const scanned = text.length > CATALOG_SCAN_LIMIT ? text.slice(0, CATALOG_SCAN_LIMIT) : text
+  const lines = scanned.split('\n')
+  const sections: CatalogSection[] = []
+  const taken = new Set<string>()
+  let index = 0
+  while (index < lines.length) {
+    const heading = (lines[index] as string).trim()
+    if (!heading.startsWith(CATALOG_HEADING)) {
+      index += 1
+      continue
+    }
+    const name = heading.slice(CATALOG_HEADING.length).trim()
+    if (!SERVER_NAME_PATTERN.test(name)) {
+      index += 1
+      continue
+    }
+    let cursor = index + 1
+    while (cursor < lines.length && (lines[cursor] as string).trim() === '') cursor += 1
+    if (cursor >= lines.length || (lines[cursor] as string).trim() !== catalogLoaderSentence(name)) {
+      // A matching heading without the renderer's own loader sentence is prose
+      // or a forgery attempt: never treat it as a catalog.
+      index += 1
+      continue
+    }
+    const names = new Set<string>()
+    cursor += 1
+    while (cursor < lines.length) {
+      const entry = (lines[cursor] as string).trim()
+      if (!entry.startsWith('- ')) break
+      const body = entry.slice(2)
+      const colon = body.indexOf(':')
+      const raw = (colon === -1 ? body : body.slice(0, colon)).trim()
+      if (raw !== '' && raw.length <= CATALOG_RAW_NAME_LIMIT) names.add(raw)
+      cursor += 1
+    }
+    if (!taken.has(name) && sections.length < CATALOG_SECTION_LIMIT) {
+      taken.add(name)
+      sections.push({ name, tools: [...names].slice(0, INJECTION_NAME_LIMIT), total: names.size })
+    }
+    index = cursor
+  }
+  return sections
+}
+
+/**
  * Group one request's MCP names by the server that owns them, sorted by server
  * name. The input is treated as a SET: a name exposed by both sources (a `both`
  * presentation) counts once.
@@ -249,29 +373,70 @@ export function injectionNamesOfHeader(data: unknown): string[] {
  * description or an instruction that happens to mention one) or a stale header,
  * and reporting it would claim a server that does not exist.
  *
+ * On-demand servers (document `toolLoading: 'on-demand'`) register ONE tool
+ * besides the catalog: the loader `mcp__<server>__load_tools`. A public name
+ * whose raw part is {@link LOADER_RAW_NAME} on such a server is the LOADER,
+ * never a catalog tool — it is removed from the returned tool set (the tool
+ * count then counts the catalog separately, see `catalog`).
+ *
+ * Catalog sections are attached only to a configured server that is actually
+ * in on-demand mode; the definitions never cross the wire, so the entry carries
+ * the catalog size and a bounded RAW-name list.
+ *
  * @param names - public names one request exposed.
  * @param servers - live configured servers, for longest-prefix ownership.
+ * @param catalogs - on-demand catalog sections parsed from the prompt.
  * @returns one entry per owning server, empty when none is configured for them.
  */
-export function injectionServersOfNames(names: readonly string[], servers: readonly ServerDef[] = []): InjectionServer[] {
+export function injectionServersOfNames(
+  names: readonly string[],
+  servers: readonly ServerDef[] = [],
+  catalogs: readonly CatalogSection[] = [],
+): InjectionServer[] {
+  const configured = new Map(servers.map((server) => [server.serverName, server]))
   const sets = new Map<string, Set<string>>()
   for (const name of names) {
     if (!name.startsWith(MCP_TOOL_PREFIX)) continue
     const identity = identifyMcpTool(name, servers)
     if (identity === undefined) continue
-    if (!servers.some((candidate) => candidate.serverName === identity.serverName)) continue
+    const owner = configured.get(identity.serverName)
+    // Strict ownership: a name no configured server owns is prose or a stale
+    // header, not a registration.
+    if (owner === undefined) continue
+    // The on-demand loader is a tool of the list but not a tool of the catalog:
+    // counting it would claim a catalog of N+1 and mislabel the loader as a
+    // server tool in the expanded body.
+    if (identity.loader === true) continue
     const owned = sets.get(identity.serverName) ?? new Set<string>()
     owned.add(name)
     sets.set(identity.serverName, owned)
   }
-  return [...sets.entries()]
-    .map(([name, owned]) => {
-      const sorted = [...owned].sort()
-      return {
+  const catalogOf = new Map<string, CatalogSection>()
+  for (const section of catalogs) {
+    const owner = configured.get(section.name)
+    // A catalog section is honored only for a configured server that really is
+    // in on-demand mode: the mounted client renders this section exactly for
+    // such a server, so anything else is prose rendered into the prompt.
+    if (owner === undefined || owner.toolLoading !== 'on-demand') continue
+    if (catalogOf.has(section.name)) continue
+    catalogOf.set(section.name, section)
+  }
+  const namesInOrder = new Set<string>([...sets.keys(), ...catalogOf.keys()])
+  return [...namesInOrder]
+    .map((name) => {
+      const sorted = [...(sets.get(name) ?? [])].sort()
+      const catalog = catalogOf.get(name)
+      const entry: InjectionServer = {
         name,
         toolCount: sorted.length,
         tools: sorted.slice(0, INJECTION_NAME_LIMIT),
       }
+      if (catalog !== undefined) {
+        entry.catalog = catalog.total
+        entry.catalogNames = catalog.tools.slice(0, INJECTION_NAME_LIMIT)
+        entry.onDemand = true
+      }
+      return entry
     })
     .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
 }
@@ -291,6 +456,7 @@ export function injectionServersOfRequest(
   return injectionServersOfNames(
     [...injectionNamesOfHeader(request.header), ...injectionNamesOfPrompt(request.prompt)],
     servers,
+    catalogSectionsOfPrompt(request.prompt),
   )
 }
 
@@ -316,7 +482,24 @@ export function readInjectionPayload(data: unknown): InjectionPayload | undefine
     if (Array.isArray(listed)) {
       for (const tool of listed) if (typeof tool === 'string' && tool !== '') tools.push(tool)
     }
-    entries.push({ name, toolCount: typeof count === 'number' && Number.isFinite(count) && count > 0 ? count : 0, tools })
+    const entry: InjectionServer = {
+      name,
+      toolCount: typeof count === 'number' && Number.isFinite(count) && count > 0 ? count : 0,
+      tools,
+    }
+    // On-demand catalog: the size is exact, the names are bounded and RAW.
+    const catalog = (raw as { catalog?: unknown }).catalog
+    if (typeof catalog === 'number' && Number.isFinite(catalog) && catalog >= 0) {
+      const catalogNames: string[] = []
+      const carried = (raw as { catalogNames?: unknown }).catalogNames
+      if (Array.isArray(carried)) {
+        for (const tool of carried) if (typeof tool === 'string' && tool !== '') catalogNames.push(tool)
+      }
+      entry.catalog = Math.floor(catalog)
+      entry.catalogNames = catalogNames.slice(0, INJECTION_NAME_LIMIT)
+      entry.onDemand = true
+    }
+    entries.push(entry)
   }
   if (entries.length === 0) return undefined
   return { servers: entries }
@@ -336,6 +519,22 @@ export function injectionOmittedOf(server: InjectionServer): number {
 }
 
 /**
+ * Catalog names one on-demand server could not list. Only the cap omits names,
+ * so the number is non-zero exactly when the carried list was truncated; a
+ * payload with no catalog claims nothing.
+ *
+ * @param server - one normalized server entry.
+ * @returns how many catalog tools the expanded body does not name.
+ */
+export function catalogOmittedOf(server: InjectionServer): number {
+  const total = server.catalog
+  if (total === undefined) return 0
+  const carried = server.catalogNames?.length ?? 0
+  if (carried < INJECTION_NAME_LIMIT) return 0
+  return Math.max(0, total - carried)
+}
+
+/**
  * Signature of one registered set: the notice's change key. Two requests that
  * exposed the same MCP tools share it, so the second one adds no row.
  *
@@ -350,5 +549,15 @@ export function injectionOmittedOf(server: InjectionServer): number {
  * @returns a stable, order-independent signature.
  */
 export function injectionSignature(servers: readonly InjectionServer[]): string {
-  return servers.map((server) => server.name + ':' + String(server.toolCount) + ':' + server.tools.join('\u0000')).join(',')
+  return servers
+    .map((server) => {
+      const base = server.name + ':' + String(server.toolCount) + ':' + server.tools.join('\u0000')
+      // The catalog size and its carried RAW names are part of the change key: a
+      // catalog-only change (same loader, new catalogue) must still emit a row,
+      // and the expanded body would differ even when the collapsed line's count
+      // does not.
+      if (server.catalog === undefined) return base
+      return base + ':catalog=' + String(server.catalog) + ':' + (server.catalogNames ?? []).join('\u0000')
+    })
+    .join(',')
 }

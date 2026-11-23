@@ -8,9 +8,11 @@
  * keyed tool-row registration at shadowing rank 1.
  */
 import { afterEach, describe, expect, it } from 'vitest'
+import { renderToStaticMarkup } from 'react-dom/server'
 import type { Context } from '@deepseek-ai/cordis'
 import { apply, inject } from '../../src/client/index.ts'
 import { McpScopeSection } from '../../src/client/section.tsx'
+import { McpSectionGlyph } from '../../src/client/tool-card/icon.tsx'
 import { en } from '../../src/client/locales.ts'
 import type { McpScopeDoc } from '../../src/shared/model.ts'
 
@@ -20,9 +22,12 @@ function source<T>(get: () => T) {
   return { getSnapshot: get, subscribe: () => noop }
 }
 
-function makeCtx(options: { doc: McpScopeDoc; sessions?: unknown }) {
+function makeCtx(options: { doc: McpScopeDoc; sessions?: unknown; failRegistrations?: readonly string[] }) {
   const specs: { spec: Record<string, unknown>; component: unknown }[] = []
   const effects: (() => void)[] = []
+  const warns: string[] = []
+  /** Forwarded host events the entry subscribed to, and their listeners. */
+  const remoteEvents = new Map<string, ((...args: unknown[]) => void)[]>()
   let dictionaries: { en: Record<string, string>; zh: Record<string, string> } | undefined
   const scope = {
     getSnapshot: () => ({ status: 'ready', value: options.doc, revision: 1, writable: true }),
@@ -46,7 +51,12 @@ function makeCtx(options: { doc: McpScopeDoc; sessions?: unknown }) {
     },
     configForms: { get: (id: string) => (id === 'mcp-scope' ? scope : undefined) },
     remote: {
-      $on: () => noop,
+      $on: (event: string, listener: (...args: unknown[]) => void) => {
+        const listeners = remoteEvents.get(event) ?? []
+        listeners.push(listener)
+        remoteEvents.set(event, listeners)
+        return noop
+      },
       credentials: {
         describe: async () => ({ ok: true, value: {} }),
         set: async () => ({ ok: true, value: undefined }),
@@ -59,17 +69,24 @@ function makeCtx(options: { doc: McpScopeDoc; sessions?: unknown }) {
         return typeof result === 'function' ? result : noop
       },
       register(spec: Record<string, unknown>, component: unknown) {
+        // Seat-failure seam: the containment tests make one registration throw,
+        // exactly as an occupied same-priority slot does in the real slot core.
+        if (options.failRegistrations?.includes(String(spec['name']))) {
+          throw new Error(`slot "${String(spec['name'])}" already has a registration`)
+        }
         specs.push({ spec, component })
         return noop
       },
     },
     ...(options.sessions === undefined ? {} : { sessions: options.sessions }),
-    logger: { warn: noop },
+    logger: { warn: (message: string) => warns.push(message) },
   }
   return {
     ctx: ctx as unknown as Context,
     specs,
     effects,
+    warns,
+    remoteEvents,
     dictionaries: () => dictionaries,
   }
 }
@@ -137,13 +154,102 @@ describe('browser entry composition', () => {
       'refreshRuntime',
       'connectServer',
       'disconnectServer',
+      'restartServer',
       'testServer',
+      'authorizeServer',
+      'cancelAuthorization',
+      'signOutServer',
       'loadTools',
     ]) {
       expect(typeof face[action], action).toBe('function')
     }
 
     expect(harness.dictionaries()?.en['nav']).toBe('MCP servers')
+    expect(document.querySelector('style[data-plugin-css]')).not.toBeNull()
+  })
+
+  it('registers the settings sidebar icon through the official settings.section.icon seat', async () => {
+    const harness = makeCtx({ doc: doc() })
+    mounted.push({ effects: harness.effects })
+    apply(harness.ctx)
+    await flush()
+
+    const icon = harness.specs.find((entry) => entry.spec['name'] === 'settings.section.icon')
+    expect(icon, 'no settings.section.icon contribution registered').toBeDefined()
+    // The seat keys by section id: an unmatched id silently keeps the shell's
+    // gear, so the id is the load-bearing part of the registration.
+    expect(icon!.spec['id']).toBe('mcp-scope')
+    expect(icon!.spec['locale']).toBe('mcp-scope.settings')
+    expect(icon!.component).toBe(McpSectionGlyph)
+
+    // Owner props are {size, active}: the plug renders at the size the shell
+    // asks for, strokes with currentColor and ignores `active`, so the row's
+    // own colour token paints both states (no duplicate state styling here).
+    const markup = renderToStaticMarkup(<McpSectionGlyph size={20} />)
+    expect(markup).toContain('width="20"')
+    expect(markup).toContain('height="20"')
+    expect(markup).toContain('viewBox="0 0 24 24"')
+    expect(markup).toContain('M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z')
+    expect(markup).toContain('currentColor')
+    expect(markup).toContain('aria-hidden="true"')
+  })
+
+  it('subscribes the OAuth grant signal and forwards it into the silent-refresh store API', async () => {
+    // alpha.2 forwards `credentials/record-updated`; that is what flips the
+    // authorization pill after a grant commit without a fast poll. The entry
+    // must subscribe at apply time and the handler must never throw into the
+    // event stream.
+    const harness = makeCtx({ doc: doc() })
+    mounted.push({ effects: harness.effects })
+    apply(harness.ctx)
+    await flush()
+
+    expect(Array.from(harness.remoteEvents.keys())).toEqual(
+      expect.arrayContaining([
+        'settings/document-updated',
+        'credentials/reference-updated',
+        'credentials/record-updated',
+      ]),
+    )
+    const listeners = harness.remoteEvents.get('credentials/record-updated') ?? []
+    expect(listeners).toHaveLength(1)
+    expect(() => listeners[0]!('mcp-client/mcp-scope-abcd1234')).not.toThrow()
+    // A key outside this plugin's namespace is an inert no-op.
+    expect(() => listeners[0]!('other-plugin/key')).not.toThrow()
+    expect(() => listeners[0]!(42)).not.toThrow()
+  })
+
+  it('never registers into the single-occupant settings.notice slot', async () => {
+    // The official account plugin owns settings.notice; a same-priority second
+    // registration throws inside apply and takes the whole browser half down
+    // (alpha.2 slot fact F4) — this entry must never touch that seat.
+    const harness = makeCtx({ doc: doc() })
+    mounted.push({ effects: harness.effects })
+    apply(harness.ctx)
+    await flush()
+
+    expect(harness.specs.some((entry) => entry.spec['name'] === 'settings.notice')).toBe(false)
+  })
+
+  it('contains a throwing section or icon registration instead of failing apply', async () => {
+    const harness = makeCtx({
+      doc: doc(),
+      failRegistrations: ['settings.section', 'settings.section.icon'],
+    })
+    mounted.push({ effects: harness.effects })
+    // ADR-10: a lost seat degrades (no section / no icon) and is reported once;
+    // it must never throw out of the shell's mount path or become an uncaught
+    // microtask error on a later declaration epoch.
+    expect(() => apply(harness.ctx)).not.toThrow()
+    await flush()
+
+    expect(harness.specs.some((entry) => entry.spec['name'] === 'settings.section')).toBe(false)
+    expect(harness.specs.some((entry) => entry.spec['name'] === 'settings.section.icon')).toBe(false)
+    const contained = harness.warns.filter((message) => message.includes('could not register'))
+    expect(contained).toHaveLength(2)
+    expect(contained.some((message) => message.includes('the settings section'))).toBe(true)
+    expect(contained.some((message) => message.includes('the settings sidebar icon'))).toBe(true)
+    // The rest of the composition still mounted: the stylesheet is on the page.
     expect(document.querySelector('style[data-plugin-css]')).not.toBeNull()
   })
 

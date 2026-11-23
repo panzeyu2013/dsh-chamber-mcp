@@ -7,6 +7,9 @@
  * write-only and reach the credentials domain on Save.
  *
  * Supported shapes (the first NAMED server wins, the rest are reported):
+ *   - the official manager config map: `{ servers: { <name>: { transport, ... } } }`
+ *     (dsh-mcp-client Config: upstream-named fields, timeouts, reconnect,
+ *     toolLoading, oauth)
  *   - `{ "mcpServers": { "<name>": { command/url/... } } }` (Claude/Cursor)
  *   - `{ "servers": { "<name>": { type: 'stdio', ... } } }` (VS Code mcp.json)
  *   - `{ "mcp": { "<name>": { type: 'local'|'remote', ... } } }` (opencode)
@@ -21,8 +24,24 @@
  * the first NAMED server wins.
  * The text is parsed with `JSON.parse` only — pasted text is never evaluated.
  *
+ * Credential templates (capability boundary, upgrade plan §8): an env/header
+ * value that is EXACTLY one ${credential:REF} token becomes a ref row (blank
+ * write-only literal); plain text stays a literal write-only value; a value
+ * mixing literal text with a template is REJECTED with a mixed-template
+ * warning (never half-imported, never stored as a document value).
+ *
+ * Unsupported upstream fields are stripped WITH a warning (never silently
+ * dropped) for the same reason: an import must tell the user what it changed.
+ *
  * @module
  */
+
+import {
+  CREDENTIAL_TOKEN_SOURCE,
+  TEMPLATE_OCCURRENCE_SOURCE,
+  isToolLoading,
+  type ToolLoading,
+} from '../shared/model.js'
 
 /** One imported server, in the staged-draft vocabulary. */
 export interface ImportedServer {
@@ -31,11 +50,36 @@ export interface ImportedServer {
   command?: string
   args?: string[]
   cwd?: string
-  env: { key: string; value: string }[]
+  /** Staged env rows (ref '' = derive from the key; value is write-only). */
+  env: { key: string; ref: string; value: string }[]
   url?: string
+  /** Staged request-header rows (value is write-only). */
   headers: { name: string; ref: string; value: string }[]
+  /**
+   * Global allowed flag staged from the official entry. Import never enables a
+   * workspace: this plugin's default is OFF, so an imported server is allowed
+   * (unless the source said disabled) but enabled in NO workspace until the user
+   * turns it on. Presence of the document's disabled map is what this drives.
+   */
   enabled: boolean
-  timeoutMs?: string
+  /** Per-server timeouts as typed strings (absent = upstream default). */
+  startupTimeoutMs?: string
+  closeTimeoutMs?: string
+  toolCallTimeoutMs?: string
+  /** Import-pass-through reconnect policy (the editor does not expose it). */
+  reconnect?: { enabled: boolean; initialDelayMs?: string; maxDelayMs?: string; maxAttempts?: string }
+  toolLoading?: ToolLoading
+  /** Explicit OAuth enablement; clientId/scope are optional (DCR when absent). */
+  oauth?: { clientId?: string; scope?: string }
+  /** Adjustments the import made; rendered as a warning list by the editor. */
+  warnings: ImportWarning[]
+}
+
+/** One field/value adjustment reported by an import. */
+export interface ImportWarning {
+  code: 'mixed-template' | 'dropped-field' | 'invalid-value'
+  /** Field path of the source entry, e.g. env[TOKEN] or oauth.credentialKey. */
+  field: string
 }
 
 /** Outcome of one snippet parse (business failure, never a throw). */
@@ -549,9 +593,13 @@ function objectEntries(value: Record<string, unknown>): [string, Record<string, 
   return entries
 }
 
-/** `name` field of a listed server entry, when it has one. */
+/** Entry name: the map key is authoritative; our own Copy JSON uses serverName. */
 function entryName(entry: Record<string, unknown>): string | undefined {
-  return typeof entry.name === 'string' && entry.name.trim() !== '' ? entry.name.trim() : undefined
+  for (const field of ['name', 'serverName'] as const) {
+    const value = entry[field]
+    if (typeof value === 'string' && value.trim() !== '') return value.trim()
+  }
+  return undefined
 }
 
 /**
@@ -694,43 +742,98 @@ function scalarText(value: unknown): string {
   }
 }
 
+/** Warning sink threaded through one entry conversion (stable field names only). */
+type WarnSink = (code: ImportWarning['code'], field: string) => void
+
+/** Exact-token matcher of one credential reference. */
+const TOKEN_EXACT = new RegExp('^' + CREDENTIAL_TOKEN_SOURCE + '$')
+
+/** Extract the ref of a value that is EXACTLY one credential template token. */
+function tokenRefOf(value: string): string | undefined {
+  const match = TOKEN_EXACT.exec(value)
+  return match === null ? undefined : (match[1] as string)
+}
+
+/** Whether a value carries any brace-delimited dollar expression. */
+function hasTemplateOccurrence(value: string): boolean {
+  return new RegExp(TEMPLATE_OCCURRENCE_SOURCE).test(value)
+}
+
+/**
+ * Classify one env/header value: an exact token (a ref row), a plain literal
+ * (write-only value) or a MIXED expression (rejected with a warning).
+ */
+function templateSplit(value: string): { kind: 'token'; ref: string } | { kind: 'literal' } | { kind: 'mixed' } {
+  if (!hasTemplateOccurrence(value)) return { kind: 'literal' }
+  const ref = tokenRefOf(value)
+  return ref === undefined ? { kind: 'mixed' } : { kind: 'token', ref }
+}
+
 /**
  * Secret rows from `env` / `environment`: an object map, a `{name,value}` list
- * or a list of `KEY=value` strings.
+ * or a list of `KEY=value` strings. Exact credential tokens become ref rows;
+ * plain values stay write-only literals; mixed expressions are dropped with a
+ * warning (capability boundary, upgrade plan §8).
  */
-function envRows(raw: Record<string, unknown>): { key: string; value: string }[] {
+function envRows(raw: Record<string, unknown>, warn: WarnSink): ImportedServer['env'] {
   for (const key of ['env', 'environment'] as const) {
     const value = raw[key]
-    const rows: { key: string; value: string }[] = []
+    const rows: ImportedServer['env'] = []
     if (isObject(value)) {
       for (const [name, entry] of Object.entries(value)) {
         if (name === '') continue
-        rows.push({ key: name, value: scalarText(entry) })
+        const text = scalarText(entry)
+        const split = templateSplit(text)
+        if (split.kind === 'mixed') {
+          warn('mixed-template', 'env[' + name + ']')
+          continue
+        }
+        rows.push(split.kind === 'token' ? { key: name, ref: split.ref, value: '' } : { key: name, ref: '', value: text })
       }
     } else if (Array.isArray(value)) {
       for (const entry of value) {
         if (typeof entry === 'string') {
-          for (const pair of parseKeyValueLines(entry)) rows.push({ key: pair.key, value: pair.value })
+          for (const pair of parseKeyValueLines(entry)) {
+            const split = templateSplit(pair.value)
+            if (split.kind === 'mixed') {
+              warn('mixed-template', 'env[' + pair.key + ']')
+              continue
+            }
+            rows.push(
+              split.kind === 'token'
+                ? { key: pair.key, ref: split.ref, value: '' }
+                : { key: pair.key, ref: '', value: pair.value },
+            )
+          }
           continue
         }
         if (!isObject(entry)) continue
         const name = typeof entry.name === 'string' ? entry.name : typeof entry.key === 'string' ? entry.key : ''
         if (name === '') continue
-        rows.push({ key: name, value: scalarText(entry.value) })
+        const split = templateSplit(scalarText(entry.value))
+        if (split.kind === 'mixed') {
+          warn('mixed-template', 'env[' + name + ']')
+          continue
+        }
+        rows.push(
+          split.kind === 'token'
+            ? { key: name, ref: split.ref, value: '' }
+            : { key: name, ref: '', value: scalarText(entry.value) },
+        )
       }
     }
     if (rows.length > 0) return rows
   }
-  // This plugin's own "Copy JSON" emits the credential-reference list as
-  // envKeys (values are write-only and never exported). Read it back so a
-  // copied definition can be imported without silently losing every ref.
+  // Legacy read-compat: this plugin's own "Copy JSON" exported the reference
+  // list as envKeys (values are write-only and never exported). Read it back as
+  // ref rows so a copied definition keeps every credential reference.
   const envKeys = raw.envKeys
   if (Array.isArray(envKeys)) {
-    const rows: { key: string; value: string }[] = []
+    const rows: ImportedServer['env'] = []
     for (const entry of envKeys) {
       if (typeof entry !== 'string') continue
       const key = entry.trim()
-      if (key !== '') rows.push({ key, value: '' })
+      if (key !== '') rows.push({ key, ref: key, value: '' })
     }
     if (rows.length > 0) return rows
   }
@@ -738,16 +841,27 @@ function envRows(raw: Record<string, unknown>): { key: string; value: string }[]
 }
 
 /**
- * Secret rows from `headers`: an object map, a `{name,ref,value}` list or a list
- * of `Name: value` strings.
+ * Secret rows from `headers`: an object map, a `{name,ref,value}` list or a
+ * list of `Name: value` strings. Exact credential tokens become ref rows;
+ * plain values become write-only literals under a header-derived ref.
  */
-function headerRows(raw: Record<string, unknown>): { name: string; ref: string; value: string }[] {
+function headerRows(raw: Record<string, unknown>, warn: WarnSink): ImportedServer['headers'] {
   const value = raw.headers
-  const rows: { name: string; ref: string; value: string }[] = []
+  const rows: ImportedServer['headers'] = []
   if (isObject(value)) {
     for (const [name, entry] of Object.entries(value)) {
       if (name === '') continue
-      rows.push({ name, ref: refFromHeaderName(name), value: scalarText(entry) })
+      const text = scalarText(entry)
+      const split = templateSplit(text)
+      if (split.kind === 'mixed') {
+        warn('mixed-template', 'headers[' + name + ']')
+        continue
+      }
+      rows.push(
+        split.kind === 'token'
+          ? { name, ref: split.ref, value: '' }
+          : { name, ref: refFromHeaderName(name), value: text },
+      )
     }
     return rows
   }
@@ -755,13 +869,31 @@ function headerRows(raw: Record<string, unknown>): { name: string; ref: string; 
     for (const entry of value) {
       if (typeof entry === 'string') {
         for (const row of parseHeaderLines(entry)) {
-          rows.push({ name: row.name, ref: refFromHeaderName(row.name), value: row.value })
+          const split = templateSplit(row.value)
+          if (split.kind === 'mixed') {
+            warn('mixed-template', 'headers[' + row.name + ']')
+            continue
+          }
+          rows.push(
+            split.kind === 'token'
+              ? { name: row.name, ref: split.ref, value: '' }
+              : { name: row.name, ref: refFromHeaderName(row.name), value: row.value },
+          )
         }
         continue
       }
       if (!isObject(entry) || typeof entry.name !== 'string' || entry.name === '') continue
-      const ref = typeof entry.ref === 'string' && entry.ref !== '' ? entry.ref : refFromHeaderName(entry.name)
-      rows.push({ name: entry.name, ref, value: scalarText(entry.value) })
+      const ref = typeof entry.ref === 'string' && entry.ref !== '' ? entry.ref : undefined
+      const split = templateSplit(scalarText(entry.value))
+      if (split.kind === 'mixed' && ref === undefined) {
+        warn('mixed-template', 'headers[' + entry.name + ']')
+        continue
+      }
+      rows.push({
+        name: entry.name,
+        ref: ref ?? (split.kind === 'token' ? split.ref : refFromHeaderName(entry.name)),
+        value: split.kind === 'literal' ? scalarText(entry.value) : '',
+      })
     }
   }
   return rows
@@ -776,47 +908,178 @@ function remoteTransport(hasCommand: boolean, hasUrl: boolean, remoteTyped: bool
   return hasUrl ? true : remoteTyped
 }
 
-/** First timeout candidate that reads as a finite positive number of ms. */
-function pickTimeout(candidates: readonly unknown[]): number | undefined {
-  for (const candidate of candidates) {
-    if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0) return candidate
-    if (typeof candidate === 'string' && candidate.trim() !== '') {
-      const numeric = Number(candidate.trim())
-      if (Number.isFinite(numeric) && numeric > 0) return numeric
-    }
+/** Timeout candidate -> typed millisecond string (invalid values warn, never throw). */
+function timeoutString(value: unknown, field: string, warn: WarnSink): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return String(Math.round(value))
+  if (typeof value === 'string' && value.trim() !== '') {
+    const numeric = Number(value.trim())
+    if (Number.isFinite(numeric) && numeric > 0) return String(Math.round(numeric))
   }
+  warn('invalid-value', field)
   return undefined
 }
 
-function convert(name: string | undefined, raw: Record<string, unknown>): ImportedServer {
+/** Reconnect policy as staged strings (absent/invalid fields warn and are omitted). */
+function reconnectOf(raw: Record<string, unknown>, warn: WarnSink): ImportedServer['reconnect'] {
+  const value = raw.reconnect
+  if (value === undefined) return undefined
+  if (!isObject(value)) {
+    warn('invalid-value', 'reconnect')
+    return undefined
+  }
+  const reconnect: NonNullable<ImportedServer['reconnect']> = { enabled: flagValue(value.enabled) ?? true }
+  const initial = timeoutString(value.initialDelayMs, 'reconnect.initialDelayMs', warn)
+  if (initial !== undefined) reconnect.initialDelayMs = initial
+  const max = timeoutString(value.maxDelayMs, 'reconnect.maxDelayMs', warn)
+  if (max !== undefined) reconnect.maxDelayMs = max
+  if (value.maxAttempts !== undefined) {
+    const attempts =
+      typeof value.maxAttempts === 'number'
+        ? value.maxAttempts
+        : typeof value.maxAttempts === 'string' && value.maxAttempts.trim() !== ''
+          ? Number(value.maxAttempts.trim())
+          : Number.NaN
+    if (Number.isInteger(attempts) && attempts >= 1) reconnect.maxAttempts = String(attempts)
+    else warn('invalid-value', 'reconnect.maxAttempts')
+  }
+  // A block that only restates the defaults carries nothing: stage absence so
+  // the draft does not materialize a defaulted reconnect object.
+  const isDefault =
+    reconnect.enabled === true &&
+    reconnect.initialDelayMs === undefined &&
+    reconnect.maxDelayMs === undefined &&
+    reconnect.maxAttempts === undefined
+  return isDefault ? undefined : reconnect
+}
+
+/**
+ * Explicit OAuth configuration: clientId/scope are carried; the credential key
+ * and budgets do not transfer (the grant is addressed by a key derived from the
+ * server name, so a foreign record could never be honored).
+ */
+function oauthOf(raw: Record<string, unknown>, warn: WarnSink): ImportedServer['oauth'] {
+  const value = raw.oauth
+  if (value === undefined) return undefined
+  if (!isObject(value)) {
+    warn('invalid-value', 'oauth')
+    return undefined
+  }
+  const oauth: NonNullable<ImportedServer['oauth']> = {}
+  if (typeof value.clientId === 'string' && value.clientId.trim() !== '') oauth.clientId = value.clientId.trim()
+  else if (value.clientId !== undefined) warn('invalid-value', 'oauth.clientId')
+  if (typeof value.scope === 'string' && value.scope.trim() !== '') oauth.scope = value.scope.trim()
+  else if (value.scope !== undefined) warn('invalid-value', 'oauth.scope')
+  for (const dropped of ['credentialKey', 'requestTimeoutMs', 'authorizationTimeoutMs'] as const) {
+    if (value[dropped] !== undefined) warn('dropped-field', 'oauth.' + dropped)
+  }
+  // Presence in the source means "OAuth enabled"; an empty block still stages
+  // explicit enablement (dynamic registration with the server's challenge).
+  return oauth
+}
+
+/** Upstream tool-loading mode; unknown values warn instead of being coerced. */
+function toolLoadingOf(raw: Record<string, unknown>, warn: WarnSink): ToolLoading | undefined {
+  const value = raw.toolLoading
+  if (value === undefined) return undefined
+  if (isToolLoading(value)) return value
+  warn('invalid-value', 'toolLoading')
+  return undefined
+}
+
+/**
+ * Document fields this plugin does not expose; they are STRIPPED with a warning
+ * (the document schema/validateDoc owns what it accepts, and a silent strip
+ * would make the import lie about what it carried).
+ */
+const DROPPED_ENTRY_FIELDS = ['maxInstructionBytes', 'catalogDescriptionMaxLength', 'failOnStartupError', 'expandTemplates'] as const
+
+/**
+ * Chosen transport of one entry: the explicit official `transport` field wins
+ * over the paste heuristics (`type`, command vs url).
+ */
+function transportOf(raw: Record<string, unknown>): { transport: 'stdio' | 'streamable-http'; explicit: boolean } {
+  const declared = typeof raw.transport === 'string' ? raw.transport.trim() : ''
+  if (declared === 'stdio' || declared === 'streamable-http') return { transport: declared, explicit: true }
   const type = typeof raw.type === 'string' ? raw.type.trim().toLowerCase() : undefined
   const remoteTyped = type !== undefined && REMOTE_TYPES.has(type)
-  const commandList = stringArray(raw.command)
-  const args =
-    stringArray(raw.args) ?? (typeof raw.args === 'string' && raw.args.trim() !== '' ? splitCommandLine(raw.args) : [])
-  const commandTokens = commandList ?? (typeof raw.command === 'string' && raw.command.trim() !== '' ? splitCommandLine(raw.command) : [])
-  const url = typeof raw.url === 'string' ? raw.url.trim() : ''
-  const isRemote = remoteTransport(commandTokens.length > 0, url !== '', remoteTyped)
-  const timeout = pickTimeout([raw.timeoutMs, raw.timeout])
+  const commandTokens =
+    stringArray(raw.command) ?? (typeof raw.command === 'string' && raw.command.trim() !== '' ? splitCommandLine(raw.command) : [])
+  const url = typeof raw.url === 'string' && raw.url.trim() !== ''
+  return {
+    transport: remoteTransport(commandTokens.length > 0, url, remoteTyped) ? 'streamable-http' : 'stdio',
+    explicit: false,
+  }
+}
+
+/** Convert one raw entry into the staged-draft vocabulary (never throws). */
+function convert(name: string | undefined, raw: Record<string, unknown>): ImportedServer {
+  const warnings: ImportWarning[] = []
+  const warn: WarnSink = (code, field) => warnings.push({ code, field })
+  const { transport } = transportOf(raw)
   const serverName = typeof name === 'string' ? name.trim() : name
+  const toolCallTimeoutMs =
+    timeoutString(raw.toolCallTimeoutMs, 'toolCallTimeoutMs', warn) ??
+    timeoutString(raw.timeoutMs, 'timeoutMs', warn) ??
+    timeoutString(raw.timeout, 'timeout', warn)
+  const startupTimeoutMs = timeoutString(raw.startupTimeoutMs, 'startupTimeoutMs', warn)
+  const closeTimeoutMs = timeoutString(raw.closeTimeoutMs, 'closeTimeoutMs', warn)
+  const reconnect = reconnectOf(raw, warn)
+  const toolLoading = toolLoadingOf(raw, warn)
+  const oauth = transport === 'streamable-http' ? oauthOf(raw, warn) : undefined
+  for (const field of DROPPED_ENTRY_FIELDS) {
+    if (raw[field] !== undefined) warn('dropped-field', field)
+  }
+  const enabled = flagValue(raw.disabled) === true ? false : flagValue(raw.enabled) ?? true
   const base = {
     ...(serverName !== undefined && serverName !== '' ? { name: serverName } : {}),
-    env: envRows(raw),
-    enabled: flagValue(raw.disabled) === true ? false : flagValue(raw.enabled) ?? true,
-    ...(timeout !== undefined ? { timeoutMs: String(Math.round(timeout)) } : {}),
+    enabled,
+    ...(startupTimeoutMs !== undefined ? { startupTimeoutMs } : {}),
+    ...(closeTimeoutMs !== undefined ? { closeTimeoutMs } : {}),
+    ...(toolCallTimeoutMs !== undefined ? { toolCallTimeoutMs } : {}),
+    ...(reconnect !== undefined ? { reconnect } : {}),
+    ...(toolLoading !== undefined ? { toolLoading } : {}),
+    ...(oauth !== undefined ? { oauth } : {}),
   }
-  if (isRemote) {
-    return { ...base, transport: 'streamable-http', url, headers: headerRows(raw) }
+  if (transport === 'stdio') {
+    // Cross-transport stray fields are dropped with a warning: importing them
+    // would stage a definition the server cannot have.
+    if (raw.url !== undefined) warn('dropped-field', 'url')
+    if (raw.headers !== undefined) warn('dropped-field', 'headers')
+    if (raw.oauth !== undefined) warn('dropped-field', 'oauth')
+    const commandList = stringArray(raw.command)
+    const args =
+      stringArray(raw.args) ?? (typeof raw.args === 'string' && raw.args.trim() !== '' ? splitCommandLine(raw.args) : [])
+    const commandTokens =
+      commandList ?? (typeof raw.command === 'string' && raw.command.trim() !== '' ? splitCommandLine(raw.command) : [])
+    const [command, ...rest] = commandTokens
+    const cwd = typeof raw.cwd === 'string' && raw.cwd.trim() !== '' ? raw.cwd.trim() : undefined
+    return {
+      ...base,
+      transport: 'stdio',
+      command: command ?? '',
+      args: [...rest, ...args],
+      ...(cwd !== undefined ? { cwd } : {}),
+      env: envRows(raw, warn),
+      headers: [],
+      warnings,
+    }
   }
-  const [command, ...rest] = commandTokens
-  const cwd = typeof raw.cwd === 'string' && raw.cwd.trim() !== '' ? raw.cwd.trim() : undefined
+  // The official map is a near-identity shape for the http branch; the paste
+  // heuristics may still hand us stdio-only fields.
+  if (raw.command !== undefined) warn('dropped-field', 'command')
+  if (raw.args !== undefined) warn('dropped-field', 'args')
+  if (raw.cwd !== undefined) warn('dropped-field', 'cwd')
+  if (raw.env !== undefined || raw.environment !== undefined) warn('dropped-field', 'env')
+  if (raw.envKeys !== undefined) warn('dropped-field', 'envKeys')
+  const url = typeof raw.url === 'string' ? raw.url.trim() : ''
   return {
     ...base,
-    transport: 'stdio',
-    command: command ?? '',
-    args: [...rest, ...args],
-    ...(cwd !== undefined ? { cwd } : {}),
-    headers: [],
+    transport: 'streamable-http',
+    url,
+    headers: headerRows(raw, warn),
+    env: [],
+    warnings,
   }
 }
 

@@ -109,6 +109,12 @@ export const styles = {
   injectionServerTools: 'mcpScope_injectionServerTools',
   injectionToolName: 'mcpScope_injectionToolName',
   injectionOmitted: 'mcpScope_injectionOmitted',
+  injectionCatalogTitle: 'mcpScope_injectionCatalogTitle',
+  authStatusRow: 'mcpScope_authStatusRow',
+  authReason: 'mcpScope_authReason',
+  authUrlRow: 'mcpScope_authUrlRow',
+  authUrl: 'mcpScope_authUrl',
+  conflictTag: 'mcpScope_conflictTag',
   tag: 'mcpScope_tag',
   toolList: 'mcpScope_toolList',
   switchBox: 'mcpScope_switchBox',
@@ -593,6 +599,62 @@ export const css = `
 
 .mcpScope_injectionOmitted {
   color: var(--dsw-alias-label-caption);
+}
+
+.mcpScope_injectionCatalogTitle {
+  margin: 4px 0 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+}
+
+/* ---- authorization block (server detail, OAuth E4) ---- */
+
+.mcpScope_authStatusRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mcpScope_authReason {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.mcpScope_authUrlRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mcpScope_authUrl {
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* ---- name-conflict tag (failed{conflict}, ADR-1.6) ---- */
+
+.mcpScope_conflictTag {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  border-radius: 10px;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 17px;
+  white-space: nowrap;
 }
 
 /* ---- transport tag (ui-primitives Tag, tone="outline") ---- */

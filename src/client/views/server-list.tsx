@@ -4,11 +4,16 @@
  * The row is the ONLY interactive target: it opens the server detail. Status,
  * workspace scope and tool count are read-only signals, so there is no
  * ambiguous switch in the list. All strings arrive through the locale seat.
+ *
+ * Retained rows (E7): a server REMOVED from the document can still have a
+ * runtime record until its teardown is confirmed (`configured: false`). Those
+ * rows are rendered non-interactively with the cleanup tag instead of
+ * disappearing while the connection is still shutting down.
  */
 
 import { useMemo, type ReactNode } from 'react'
 import { isEnabled, isServerDisabled, type McpScopeDoc, type ServerDef } from '../../shared/model.js'
-import type { RuntimeSnapshot } from '../runtime.js'
+import type { RuntimePhase, RuntimeSnapshot, ServerRuntimeView } from '../runtime.js'
 import type { SectionT } from '../section.js'
 import type { WorkspaceItem, WorkspaceListStatus } from '../workspaces.js'
 import { EmptyState, StatusBadge } from '../components/ui.js'
@@ -65,9 +70,9 @@ function matchesFilter(
 ): boolean {
   if (filter === 'all') return true
   const view = runtimeOf(runtime, server.serverName)
-  if (filter === 'connected') return view?.state === 'connected'
+  if (filter === 'connected') return view?.phase === 'connected'
   if (filter === 'attention') {
-    if (view !== undefined) return needsAttention(view.state) || view.state === 'reconnecting'
+    if (view !== undefined) return needsAttention(view.phase) || view.phase === 'reconnecting'
     return runtime.phase === 'unavailable' || runtime.phase === 'error'
   }
   if (filter === 'unused') {
@@ -76,6 +81,37 @@ function matchesFilter(
     return !workspaces.some((workspace) => isEnabled(doc.overrides, workspace.workspaceId, server.serverName))
   }
   return true
+}
+
+/** The tool-count label of one row: catalog tools for on-demand servers. */
+function toolCountLabel(t: SectionT, server: ServerDef, view: ServerRuntimeView): string | undefined {
+  if (view.toolCount <= 0) return undefined
+  return server.toolLoading === 'on-demand'
+    ? t('status.catalogTools', { count: view.toolCount })
+    : t('status.tools', { count: view.toolCount })
+}
+
+/** One retained (configured:false) runtime row, non-interactive. */
+function retainedRow(t: SectionT, view: ServerRuntimeView): ReactNode {
+  return (
+    <li key={'retained:' + view.name} className={styles.serverRow} data-server-retained={view.name}>
+      <div className={styles.serverRowButton} aria-disabled="true">
+        <span className={styles.serverRowTop}>
+          <span className={styles.serverRowName}>{view.name}</span>
+          <span className={styles.serverRowTags}>
+            <span className={styles.tag}>{t('server.cleanupTag')}</span>
+          </span>
+          <span className={styles.serverRowStats} />
+        </span>
+        <span className={styles.serverRowMeta}>
+          <StatusBadge
+            tone={statusToneOf(view.phase)}
+            label={t(statusKeyOf(view.phase))}
+          />
+        </span>
+      </div>
+    </li>
+  )
 }
 
 export function ServerListView(props: ServerListViewProps): ReactNode {
@@ -90,6 +126,19 @@ export function ServerListView(props: ServerListViewProps): ReactNode {
       ),
     [doc, runtime, workspaces, workspaceStatus, needle, props.filter],
   )
+  // Detached rows have no document entry: they can only match the "all" and
+  // "attention" filters, and a text query still applies.
+  const retained = useMemo(() => {
+    if (props.filter !== 'all' && props.filter !== 'attention') return []
+    const known = new Set(doc.servers.map((server) => server.serverName))
+    return Object.values(runtime.servers).filter(
+      (view) =>
+        view.configured === false &&
+        !known.has(view.name) &&
+        (needle === '' || view.name.toLowerCase().includes(needle)) &&
+        (props.filter === 'all' || needsAttention(view.phase)),
+    )
+  }, [doc.servers, runtime.servers, needle, props.filter])
   const showSearch = doc.servers.length >= 5 || props.query !== ''
   const hasFilter = needle !== '' || props.filter !== 'all'
   const clearFilters = (): void => {
@@ -137,7 +186,7 @@ export function ServerListView(props: ServerListViewProps): ReactNode {
         </div>
       )}
 
-      {doc.servers.length === 0 ? (
+      {doc.servers.length === 0 && retained.length === 0 ? (
         <EmptyState
           title={t('empty.serversTitle')}
           body={t('empty.serversBody')}
@@ -162,7 +211,7 @@ export function ServerListView(props: ServerListViewProps): ReactNode {
             </>
           }
         />
-      ) : servers.length === 0 ? (
+      ) : servers.length === 0 && retained.length === 0 ? (
         <EmptyState
           compact
           title={hasFilter ? t('empty.filterTitle') : t('list.emptyFiltered')}
@@ -183,26 +232,23 @@ export function ServerListView(props: ServerListViewProps): ReactNode {
             // A missing view means "we do not know yet" (the row usually lands
             // one refresh later), never "stopped": that word claims a state the
             // snapshot did not report.
-            const state = disabled ? 'disabled' : (view?.state ?? 'unknown')
+            const phase: RuntimePhase = disabled ? 'disabled' : (view?.phase ?? 'unknown')
             const scope = scopeOf(doc, server, workspaces, workspaceStatus)
-            const serviceUnavailable =
-              runtime.phase === 'unavailable' || runtime.phase === 'error'
+            const serviceUnavailable = runtime.phase === 'unavailable' || runtime.phase === 'error'
             const statusLabel =
               view === undefined && props.runtimePhase === 'loading'
                 ? t('state.loading')
                 : view === undefined && serviceUnavailable
                   ? t('status.unavailable')
-                  : t(statusKeyOf(state))
+                  : t(statusKeyOf(phase))
             const synced = clockOf(view?.syncedAt)
             const scopeLabel =
               scope === undefined
                 ? t('server.scopeUnknown')
                 : t('server.scopeCount', { enabled: scope.enabled, total: scope.total })
             const unused =
-              !disabled &&
-              workspaceStatus === 'ready' &&
-              scope !== undefined &&
-              scope.enabled === 0
+              !disabled && workspaceStatus === 'ready' && scope !== undefined && scope.enabled === 0
+            const conflict = view?.error?.code === 'conflict'
             return (
               <li key={server.serverName} className={styles.serverRow} data-server={server.serverName}>
                 <button
@@ -218,11 +264,12 @@ export function ServerListView(props: ServerListViewProps): ReactNode {
                         {server.transport === 'stdio' ? t('transport.stdio') : t('transport.http')}
                       </span>
                       {disabled && <span className={styles.tag}>{t('server.disabledTag')}</span>}
+                      {conflict && <span className={styles.conflictTag}>{t('server.conflictTag')}</span>}
                     </span>
                     <span className={styles.serverRowStats}>
                       <span className={styles.scopeText}>{scopeLabel}</span>
-                      {view !== undefined && view.toolCount > 0 && (
-                        <span>{t('status.tools', { count: view.toolCount })}</span>
+                      {view !== undefined && toolCountLabel(t, server, view) !== undefined && (
+                        <span>{toolCountLabel(t, server, view)}</span>
                       )}
                     </span>
                     <span className={styles.serverRowChevron} aria-hidden="true">
@@ -230,12 +277,9 @@ export function ServerListView(props: ServerListViewProps): ReactNode {
                     </span>
                   </span>
                   <span className={styles.serverRowMeta}>
-                    <StatusBadge
-                      tone={disabled ? 'idle' : statusToneOf(state)}
-                      label={statusLabel}
-                    />
+                    <StatusBadge tone={disabled ? 'idle' : statusToneOf(phase)} label={statusLabel} />
                     {unused && <span className={styles.serverRowUnused}>{t('server.unusedTag')}</span>}
-                    {view !== undefined && unused === false && view.state === 'connected' && synced !== undefined && (
+                    {view !== undefined && unused === false && view.phase === 'connected' && synced !== undefined && (
                       <span>{t('server.syncedAt', { time: synced })}</span>
                     )}
                   </span>
@@ -243,6 +287,7 @@ export function ServerListView(props: ServerListViewProps): ReactNode {
               </li>
             )
           })}
+          {retained.map((view) => retainedRow(t, view))}
         </ul>
       )}
     </div>

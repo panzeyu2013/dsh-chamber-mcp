@@ -2,10 +2,13 @@ MIT License
 
 Copyright (c) 2026 dsh-chamber-mcp contributors
 
-Portions of the MCP client bridge logic (tool naming, sync/generation-swap,
-executor, transport and reconnect semantics) mirror the reference
-implementation @deepseek-ai/dsh-mcp-client, Copyright (c) 2026 DeepSeek,
-licensed under the MIT License (https://github.com/deepseek-ai/deepseek-harness).
+Portions of this plugin mirror the reference implementation
+@deepseek-ai/dsh-mcp-client, Copyright (c) 2026 DeepSeek, licensed under the MIT
+License (https://github.com/deepseek-ai/deepseek-harness): the capture-façade
+and applier glue around the mounted official client, the `mcp__` tool-naming
+contract, and the OAuth credential-key / sign-out semantics. Transport,
+sync/generation-swap and reconnect are owned by the mounted official instance
+and are no longer mirrored here.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

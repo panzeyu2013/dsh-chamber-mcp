@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {} from '../../src/client/index.ts'
-import type { SaveOutcome, ServerSaveInput } from '../../src/client/controller.ts'
+import type { SaveOutcome } from '../../src/client/controller.ts'
 import { cleanupSections } from '../support/section-harness.tsx'
 import {
   buttonByText,
@@ -27,7 +27,6 @@ import {
   runtimeWith,
   stdioServer,
   t,
-  type Mounted,
 } from '../support/section-kit.ts'
 
 afterEach(() => {
@@ -342,9 +341,10 @@ describe('server detail', () => {
         loadTools: async (name) => {
           calls.push(name)
           return {
+            mode: 'definitions',
             tools: [
-              { publicName: 'mcp__alpha__search', rawName: 'search', description: 'Search issues' },
-              { publicName: 'mcp__alpha__read', rawName: 'read', description: 'Read an issue' },
+              { publicName: 'mcp__alpha__search', description: 'Search issues' },
+              { publicName: 'mcp__alpha__read', description: 'Read an issue' },
             ],
             truncated: false,
             total: 2,
@@ -618,7 +618,7 @@ describe('fix-round regressions', () => {
         runtime: {
           phase: 'ready',
           servers: {
-            alpha: { name: 'alpha', state: 'unknown', attempts: 0, maxAttempts: 10, toolCount: 0 },
+            alpha: { name: 'alpha', phase: 'unknown', configured: true, attempts: 0, maxAttempts: 10, toolCount: 0 },
           },
         },
       },
@@ -898,11 +898,12 @@ describe('fix-round regressions', () => {
             servers: {
               alpha: {
                 name: 'alpha',
-                state: 'failed',
+                phase: 'failed',
+                configured: true,
                 attempts: 3,
                 maxAttempts: 10,
                 toolCount: 0,
-                error: { code: 'timeout', message: 'timed out' },
+                error: { code: 'timeout' },
               },
             },
           },
@@ -986,6 +987,313 @@ describe('fix-round regressions', () => {
     expect(mounted.text()).toContain(t('toast.undoNothing'))
   })
 
+})
+
+
+describe('server detail: actions and authorization (wire v2)', () => {
+  const httpAuthServer = () => ({
+    serverName: 'remote',
+    transport: 'streamable-http' as const,
+    url: 'https://example.test/mcp',
+    oauth: {},
+  })
+  const viewOf = (name: string, extra: Record<string, unknown> = {}) => ({
+    name,
+    phase: 'connected' as const,
+    configured: true,
+    attempts: 0,
+    maxAttempts: 10,
+    toolCount: 0,
+    ...extra,
+  })
+  const runtimeWithView = (name: string, extra: Record<string, unknown> = {}) => ({
+    phase: 'ready' as const,
+    servers: { [name]: viewOf(name, extra) },
+  })
+
+  it('offers Restart beside Connect/Test and single-flights it', async () => {
+    const calls: string[] = []
+    let release!: () => void
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {
+        restartServer: (name) =>
+          new Promise((resolve) => {
+            calls.push(name)
+            release = () => resolve({})
+          }),
+      },
+      { wsItems: WS, runtime: runtimeWith('alpha') },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    const restart = buttonByText(detail, t('action.restart'))!
+    expect(restart).toBeDefined()
+    expect(buttonByText(detail, t('action.disconnect'))).toBeDefined()
+    expect(buttonByText(detail, t('action.test'))).toBeDefined()
+    restart.click()
+    restart.click()
+    await flush()
+    // ONE action per click burst: the host owns cleanup/serialization.
+    expect(calls).toEqual(['alpha'])
+    expect(mounted.text()).toContain(t('action.restarting'))
+    release()
+    await flush()
+    expect(buttonByText(mounted.host, t('action.restart'))!.disabled).toBe(false)
+  })
+
+  it('disables Connect while the server waits for authorization', async () => {
+    const mounted = mountSection(
+      { servers: [httpAuthServer()], overrides: {} },
+      {},
+      {
+        wsItems: WS,
+        runtime: runtimeWithView('remote', { phase: 'waiting-authorization', authReason: 'missing' }),
+      },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'remote')
+    const connect = buttonByText(detail, t('action.connect'))!
+    expect(connect.disabled).toBe(true)
+    expect(detail.textContent).toContain(t('auth.reason.missing'))
+    expect(detail.textContent).toContain(t('auth.status.waiting'))
+  })
+
+  it('renders the five authorization reasons', async () => {
+    for (const reason of ['missing', 'expired', 'binding', 'rejected', 'scope'] as const) {
+      const mounted = mountSection(
+        { servers: [httpAuthServer()], overrides: {} },
+        {},
+        {
+          wsItems: WS,
+          runtime: runtimeWithView('remote', { phase: 'waiting-authorization', authReason: reason }),
+        },
+      )
+      await flush()
+      const detail = await openServer(mounted, 'remote')
+      expect(detail.textContent, reason).toContain(t(('auth.reason.' + reason) as Parameters<typeof t>[0]))
+      mounted.unmount()
+    }
+  })
+
+  it('renders the attempt phases: authorizing with Cancel, authorized with Sign out', async () => {
+    const authorizing = mountSection(
+      { servers: [httpAuthServer()], overrides: {} },
+      {},
+      {
+        wsItems: WS,
+        runtime: runtimeWithView('remote', {
+          phase: 'waiting-authorization',
+          authorization: { id: 'attempt-1', phase: 'waiting-browser', authorizationUrl: 'https://auth.example/start' },
+        }),
+      },
+    )
+    await flush()
+    let detail = await openServer(authorizing, 'remote')
+    expect(detail.textContent).toContain(t('auth.status.authorizing'))
+    expect(detail.textContent).toContain('https://auth.example/start')
+    expect(buttonByText(detail, t('auth.cancel'))).toBeDefined()
+    authorizing.unmount()
+
+    const authorized = mountSection(
+      { servers: [httpAuthServer()], overrides: {} },
+      {},
+      {
+        wsItems: WS,
+        runtime: runtimeWithView('remote', {
+          phase: 'connected',
+          authorization: { id: 'attempt-2', phase: 'authorized' },
+        }),
+      },
+    )
+    await flush()
+    detail = await openServer(authorized, 'remote')
+    expect(detail.textContent).toContain(t('auth.status.connected'))
+    expect(buttonByText(detail, t('auth.authorizeAgain'))).toBeDefined()
+    expect(buttonByText(detail, t('auth.signOut'))).toBeDefined()
+    // Sign-out is destructive and asks first.
+    buttonByText(detail, t('auth.signOut'))!.click()
+    await flush()
+    expect(dialog().textContent).toContain(t('auth.signOutConfirm'))
+  })
+
+  it('falls back to a copyable authorization URL when the popup is blocked', async () => {
+    const originalOpen = window.open
+    const authorizeCalls: string[] = []
+    window.open = (() => null) as typeof window.open
+    try {
+      const mounted = mountSection(
+        { servers: [httpAuthServer()], overrides: {} },
+        {
+          authorizeServer: async (name) => {
+            authorizeCalls.push(name)
+            return {
+              name,
+              phase: 'waiting-authorization',
+              authorization: {
+                id: 'attempt-1',
+                phase: 'waiting-browser',
+                authorizationUrl: 'https://auth.example/consent',
+              },
+            }
+          },
+        },
+        {
+          wsItems: WS,
+          runtime: runtimeWithView('remote', { phase: 'waiting-authorization', authReason: 'missing' }),
+        },
+      )
+      await flush()
+      const detail = await openServer(mounted, 'remote')
+      buttonByText(detail, t('auth.authorize'))!.click()
+      await flush()
+      await flush()
+      expect(authorizeCalls).toEqual(['remote'])
+      // Popup blocking is the NORMAL path, not an error: the URL must render.
+      expect(mounted.text()).toContain(t('auth.popupBlocked'))
+      expect(mounted.text()).toContain('https://auth.example/consent')
+    } finally {
+      window.open = originalOpen
+    }
+  })
+
+  it('shows the on-demand catalog count and no per-tool table', async () => {
+    const server = { ...stdioServer('alpha'), toolLoading: 'on-demand' as const }
+    const mounted = mountSection(
+      { servers: [server], overrides: {} },
+      {
+        loadTools: async () => ({ mode: 'catalog', tools: [], truncated: false, total: 5 }),
+      },
+      { wsItems: WS, runtime: { phase: 'ready', servers: { alpha: viewOf('alpha', { toolCount: 5 }) } } },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    expect(detail.textContent).toContain(t('status.catalogTools', { count: 5 }))
+    buttonByText(detail, t('tools.title'))!.click()
+    await flush()
+    await flush()
+    expect(detail.textContent).toContain(t('server.catalogCount', { count: 5 }))
+    expect(detail.textContent).toContain(t('server.catalogCountHint'))
+    // Definitions never cross the wire for an on-demand server: no table.
+    expect(detail.querySelector('.' + 'mcpScope_toolList')).toBeNull()
+  })
+
+  it('shows the conflict tag, notice and localized fixed code', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {},
+      {
+        wsItems: WS,
+        runtime: runtimeWithView('alpha', { phase: 'failed', error: { code: 'conflict' } }),
+      },
+    )
+    await flush()
+    const detail = await openServer(mounted, 'alpha')
+    expect(detail.textContent).toContain(t('server.conflictTag'))
+    expect(detail.textContent).toContain(t('server.conflictNotice'))
+    expect(detail.textContent).toContain(t('runtime.error.conflict'))
+    expect(detail.textContent).not.toContain('conflict-message-prose')
+  })
+
+  it('renders a retained configured:false row as a non-interactive cleanup row', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha')], overrides: {} },
+      {},
+      {
+        wsItems: WS,
+        runtime: {
+          phase: 'ready',
+          servers: {
+            alpha: viewOf('alpha'),
+            ghost: viewOf('ghost', { phase: 'failed', configured: false, error: { code: 'cleanup' } }),
+          },
+        },
+      },
+    )
+    await flush()
+    const retained = mounted.host.querySelector<HTMLElement>('[data-server-retained="ghost"]')
+    expect(retained).not.toBeNull()
+    expect(retained!.textContent).toContain(t('server.cleanupTag'))
+    // It is not a detail entry: the server left the document.
+    expect(retained!.querySelector('button')).toBeNull()
+    expect(mounted.host.querySelector('[data-server="ghost"]')).toBeNull()
+  })
+})
+
+describe('servers list: attention and on-demand (wire v2)', () => {
+  it('keeps waiting-authorization, waiting-credentials and failed in the attention filter', async () => {
+    const mounted = mountSection(
+      { servers: [stdioServer('alpha'), stdioServer('beta'), stdioServer('gamma'), stdioServer('delta')], overrides: {} },
+      {},
+      {
+        wsItems: WS,
+        runtime: {
+          phase: 'ready',
+          servers: {
+            alpha: { name: 'alpha', phase: 'waiting-authorization', configured: true, attempts: 0, maxAttempts: 10, toolCount: 0, authReason: 'missing' },
+            beta: { name: 'beta', phase: 'waiting-credentials', configured: true, attempts: 0, maxAttempts: 10, toolCount: 0 },
+            gamma: { name: 'gamma', phase: 'failed', configured: true, attempts: 2, maxAttempts: 3, toolCount: 0, error: { code: 'gave-up' } },
+            delta: { name: 'delta', phase: 'connected', configured: true, attempts: 0, maxAttempts: 10, toolCount: 1 },
+          },
+        },
+      },
+    )
+    await flush()
+    const attention = buttonsOf(mounted.host).find((button) => button.textContent === t('filter.attention'))!
+    attention.click()
+    await flush()
+    for (const name of ['alpha', 'beta', 'gamma']) {
+      expect(mounted.host.querySelector('[data-server="' + name + '"]'), name).not.toBeNull()
+    }
+    expect(mounted.host.querySelector('[data-server="delta"]')).toBeNull()
+  })
+
+  it('labels an on-demand server count as catalog tools', async () => {
+    const mounted = mountSection(
+      { servers: [{ ...stdioServer('alpha'), toolLoading: 'on-demand' as const }], overrides: {} },
+      {},
+      {
+        wsItems: WS,
+        runtime: {
+          phase: 'ready',
+          servers: {
+            alpha: { name: 'alpha', phase: 'connected', configured: true, attempts: 0, maxAttempts: 10, toolCount: 4 },
+          },
+        },
+      },
+    )
+    await flush()
+    const row = serverRow(mounted, 'alpha')
+    expect(row.textContent).toContain(t('status.catalogTools', { count: 4 }))
+    expect(row.textContent).not.toContain(t('status.tools', { count: 4 }))
+  })
+})
+
+describe('polling backoff (wire v2)', () => {
+  it('backs off to the 30s frame after a failed pass', async () => {
+    const originalSet = window.setTimeout.bind(window)
+    const timers: number[] = []
+    const setSpy = vi.spyOn(window, 'setTimeout').mockImplementation(((
+      handler: TimerHandler,
+      delay?: number,
+      ...args: unknown[]
+    ) => {
+      if (Number(delay) === 30_000) timers.push(Number(delay))
+      return originalSet(handler, delay, ...args)
+    }) as typeof window.setTimeout)
+    try {
+      const mounted = mountSection(
+        { servers: [stdioServer('alpha')], overrides: {} },
+        {},
+        { wsItems: WS, runtime: { phase: 'error', servers: {} } },
+      )
+      await flush()
+      expect(timers).toContain(30_000)
+      mounted.unmount()
+    } finally {
+      setSpy.mockRestore()
+    }
+  })
 })
 
 describe('polling and unmount', () => {

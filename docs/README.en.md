@@ -13,13 +13,15 @@ A standalone third-party [dsh](https://github.com/deepseek-ai/deepseek-harness) 
 
 ## Why it exists
 
-dsh ships `@deepseek-ai/dsh-mcp-client`, which **bridges** MCP into the model. Since 0.2.2-rc.2 the Web profile (`dsh-web-app`) also ships the official `@deepseek-ai/dsh-mcp-manager` — but it manages the **host-global plane**:
+dsh ships `@deepseek-ai/dsh-mcp-client`, which **bridges** MCP into the model; this plugin no longer maintains a connection layer of its own. **Every configured server is mounted as an official `McpClientHost` instance** — one isolated seat child fiber per definition (isolating `tools`/`systemPrompt`/`mcpResources`/`credentials`/`mcpClientHost` and installing four capture-only façades). Connection, `${credential:…}` templates, reconnect backoff, generation swap, instructions and the resource provider, plus OAuth grant read/refresh/redaction, all belong to the mounted official instance. The plugin keeps the **per-workspace injection gate**, the settings UI, status/action routes, the OAuth *attempt* flow and the transcript lanes.
+
+The Web profile (`dsh-web-app`) has also mounted the official `@deepseek-ai/dsh-mcp-manager` since 0.2.2-rc.2 (the 0.2.3-alpha.2 Web composition still carries the `mcp-manager` row) — but it manages the **host-global plane**:
 
 - an official-manager server applies to the whole Host: once enabled, **every** session carries all of its MCP tools — context cost plus misfire risk;
 - the official manager covers Settings edits, `${credential:…}` templates and status/restart/probe, but it has **no "workspace" dimension**;
 - `dsh-workspace` is a project-grouping registry that registers no tools — **nothing upstream maps a workspace to a set of tools**.
 
-This plugin supplies that missing piece: a **per-workspace injection gate** on top of the official bridge contract, plus its own **management surface** (server list / server detail / workspaces view in Settings). Both planes can coexist on one Host — global scope to the official manager, workspace granularity to this plugin; don't configure the same `serverName` in both (see the known limitations in `docs/acceptance.md`).
+This plugin supplies that missing piece: a **per-workspace injection gate** on top of the official bridge contract, plus its own **management surface** (server list / server detail / workspaces view in Settings). Both planes can coexist on one Host — global scope to the official manager, workspace granularity to this plugin. But **the same `serverName` must not be configured in both planes**: the official host reserves each name per application root, and this plugin maps a duplicate to the hard `failed{conflict}` error (read-only pre-check plus a mount-race code fallback) — not "two independent registrations".
 
 ## Core advantages
 
@@ -27,9 +29,11 @@ This plugin supplies that missing piece: a **per-workspace injection gate** on t
 | --- | --- |
 | **Settings-native management** | Add, edit and remove servers in *Settings → MCP servers*, never touching `cordis.patch.yml`. UI writes commit into the **running** plugin and only cycle the affected servers — no instance restart |
 | **Per-workspace injection, off by default** | A new server is off for **every** workspace; a new workspace or a fresh session never silently gains MCP tools. Switching a workspace off **revokes** `mcp__<serverName>__*` from that workspace's tool list — a model-visible change, not just an execution-time block |
-| **Credential refs, not secrets** | The settings document stores ref names only; values live in the dsh credentials domain, are **write-only**, and never ride a settings document, an API response or a log line |
+| **Credential refs, not secrets** | The settings document stores `${credential:REF}` template strings only — the mounted official instance resolves them at connect time and never writes a value back; values live in the dsh credentials domain, are **write-only**, and never ride an API response or a log line |
 | **An MCP-specific transcript row** | A call renders as an MCP row registered through the keyed `tool.call.toolview` slot: plug mark, `server · tool` title, transport tag, running/settled/failed/interrupted states, expandable arguments and result — not the shipped generic card |
-| **Official bridge contract** | Naming `mcp__<serverName>__<tool>`, result and image mapping, child-env scrubbing, `tools/list_changed` generation swap and the 500 ms→30 s backoff reconnect all mirror the official client; MCP **resources** are reachable through the official `mcpResources` provider |
+| **Official connection layer** | Connection, `${credential:…}` templates, reconnect backoff, `tools/list_changed` generation swap, `instructions` prompt sections and the `mcpResources` provider are **executed by the mounted official `McpClientHost` instance**; this plugin only captures and replays them per agent — the naming/result/image contract is upstream code again |
+| **On-demand tool loading** | Per server, `toolLoading: on-demand` keeps the tool list down to the loader `mcp__<serverName>__load_tools` and renders the catalog from the mounted client; a tool enters that agent's scope only after the model loads it (still gated by workspace enablement and the subagent `toolFilter`, and revocable) |
+| **OAuth browser authorization** | An HTTP server can enable the official browser-authorization flow (OAuth O2): PKCE/DCR/callback are the official flow's, the grant lives in the credentials domain under a name-derived key the UI never shows, and the detail offers Authorize / Cancel authorization / Sign out, the five authorization-reason hints and a copyable authorization link. Available on this declared line only, and the browser must reach the host origin directly |
 | **A clear split between UI and hand edits** | UI writes are live leaf-level YAML diffs (comments, anchors and formatting survive); a hand-edited patch row applies at the next boot, after the loader validates it |
 
 ## Quick start
@@ -57,13 +61,15 @@ dsh plugin --profile web add file:./.smoke/dsh-chamber-mcp-<version>.tgz
 | Session | Gets MCP tools? |
 | --- | --- |
 | Workspace-root session, pair switched on | Yes — `mcp__<serverName>__<rawName>` |
+| Server in on-demand mode | Only `mcp__<serverName>__load_tools` is in the tool list; a tool becomes visible in that agent's scope after the model loads it |
 | Workspace-root session, pair switched off | No — the definitions are revoked from that agent's scope |
 | Session whose cwd is outside every registered workspace | No |
 | Delegation / subagent child | Inherits the parent's workspace (a `continuable` child is narrowed by its `toolFilter`) |
 
 - **The tools are ordinary tool schemas on the request**: they appear in the composer's context meter under **Tool definitions** (the meter renders only after the model has reported usage); a server publishing `instructions` additionally contributes a literal `### MCP server: <name>` prompt section.
 - **Names are normalized**: `mcp__<serverName>__<rawName>` is trimmed to ≤ 64 chars of `[A-Za-z0-9_-]`; when normalization is lossy a 12-hex SHA-256 identity suffix is appended so two distinct MCP tools can never collapse into one name; `tools/call` sends the raw MCP name.
-- **Listing is bounded**: the official `listMaxPages` (64) plus a 2000-tool cap per server; a non-converging or over-cap listing fails the sync and keeps the previous tool generation; calls time out after 60 s and are aborted with the run's signal.
+- **Listing is bounded**: the official `listMaxPages` (64) owns pagination; the plugin caps one server's captured EAGER generation at 2000 tools — over the cap it trims and flags `truncated` (the sync is not refused, the seam canary is exempt for that generation, and on-demand mode is not forced through the cap). Calls time out after 60 s by default and are aborted with the run's signal.
+- **On-demand mode**: the catalog text is rendered by the mounted official instance; it may name tools a subagent's `toolFilter` excludes (the eager fan-out is filtered and `admit()` refuses the load, but the catalog is upstream-formatted). The tool-list route answers `mode: 'catalog'` with the offered count only — no definitions.
 
 ## Where the configuration lives
 
@@ -75,30 +81,33 @@ The configuration *is* the plugin's own Loader-entry Config — one row in the p
   config:
     servers:                        # serverName is the identity
       - serverName: github
-        transport: streamable-http  # or stdio: command/args/cwd/envKeys
+        transport: streamable-http  # or stdio: command/args/cwd/env
         url: https://mcp.example.com/x
+        toolLoading: eager          # or on-demand (eager is the default)
         headers:
-          - name: Authorization
-            ref: GITHUB_TOKEN       # a credential REF, never a value
+          Authorization: ${credential:GITHUB_TOKEN}   # a credential TEMPLATE; values live in the credentials domain
     overrides:                      # presence = that workspace is ON (default off)
       ws-2f1c:
         github: true
 ```
 
 - **Server identity** is `serverName`; `overrides` values must be exactly `true`; cross-field uniqueness (duplicate servers / env keys / header names) is rejected by the editor before a write, while the schema owns shape and the naming contracts.
-- **Credential values** live only in the credentials domain (default `$DSH_HOME/.credentials.yaml`).
-- **Upgrading from the 0.1.5/0.1.6 generation**: the first boot imports the old `settings.yaml` `mcp-scope:` section once and renames the file `settings.yaml.imported`.
+- **Connection/tool-loading fields:** a server row also carries `startupTimeoutMs`, `closeTimeoutMs`, `toolCallTimeoutMs` (legacy `timeoutMs` read-compat only) and `toolLoading: eager / on-demand`; an HTTP row carries an optional `oauth` block (`clientId`/`scope` optional, `credentialKey` normally derived by the plugin). `reconnect` is import pass-through (the schema stores it and the mounted official host resolves it at connect; the editor does not expose it). `maxInstructionBytes`, `catalogDescriptionMaxLength`, `failOnStartupError` and `expandTemplates` stay in the schema for hand-edited documents, but the editor import strips them with a warning — they are not import pass-through.
+- **Credential values** live only in the credentials domain (default `$DSH_HOME/.credentials.yaml`); the settings document stores the `${credential:REF}` template string, which the mounted official instance resolves at connect and never persists the value of.
+- A legacy `settings.yaml` `mcp-scope:` section is imported once by the loader at first boot (the file is renamed `settings.yaml.imported`) — that is the upstream loader's old-config migration, unrelated to this plugin's generation support.
 - A hand edit that breaks the schema keeps the entry from activating at boot: the log names the error and the settings section reports unavailable (there is no in-place repair form).
 
 ## Compatibility
 
 | | Version |
 | --- | --- |
-| Compile-time anchor / CI guard | dsh **0.2.2-rc.3** (cordis 4.1.0, loader 1.1.0, schemastery 3.19.0) |
-| Live-verified | dsh **0.2.2-rc.3**, **0.2.2-rc.1**, **0.2.1-rc.5** and **0.2.0-rc.1** (final tree, one anchor per declared line) |
-| Peer range | `^0.2.0-rc.1 \|\| ^0.2.1-rc.1 \|\| ^0.2.2-alpha.3` |
+| Compile-time anchor / dev pin | dsh **0.2.3-alpha.2** (cordis **4.2.0-alpha.1**, `cordis-plugin-loader` **1.2.0-alpha.1**, schemastery **~3.20.0-alpha.1**) |
+| Declared line (peer range) | `^0.2.3-alpha.2`; cordis `~4.2.0-alpha.1` (`dsh-mcp-client` is a required peer) |
+| Live-verification anchor | that line only: `DSH_ANCHOR_CLI` / CI's `DSH_SMOKE_ANCHORS` must name a **0.2.3-alpha.2** CLI (one M0/M1 run per declared line) |
 
-The 0.2.0/0.2.1 line stays supported while the 0.2.2 line is still a release candidate; both own the Config/volatile settings model and the official `createMcpToolDefinition` adapter this plugin consumes. The 0.1.7 line has left the peer range — a support-window decision, not an API one: 0.1.7 has owned the same settings model and adapter since 0.1.7, and every declared line owes a compile gate and a live smoke run. The 0.2.2 line splits tool dispatch into executor providers, but the registration contract this plugin uses — `agent.ctx.tools.register(definition, options?)`, called with one argument — is unchanged. The compile anchor moved to `0.2.2-rc.3` on 2026-11-14: rc.3 removed `AgentRegistry.roots()` from `dsh-agent`, so the manager now reads `list()`, which every supported line exposes; the peer range is unchanged because `^0.2.2-alpha.3` already admits the 0.2.2 release candidates; the final-tree live smoke runs one anchor per declared line (0.2.0-rc.1 / 0.2.1-rc.5 / 0.2.2-rc.3, one identical packed tarball) plus the chamber's `0.2.2-rc.1` baseline, and all pass M0.
+**A single-line support window.** The 0.2.6 line declares exactly **one** supported line, `^0.2.3-alpha.2`: compile anchor, dev pin, CI guard and the live smoke all name it. The previous multi-line window is closed — **0.2.5 is frozen as the last release of the old line** (0.2.0/0.2.1/0.2.2 are no longer declared, compiled or smoke-verified). The tree keeps no compatibility layer or shim for older generations: 0.2.3-alpha.2 removed the `ctx.root` property, so the three reads are written directly as `ctx[Context.root]` (no feature-detected fallback), and a host outside the peer range is denied before load by the runtime plugin-compatibility preflight — upgrade dsh first. Landed gate measured on 2026-11-23: `npm run check` green (37 spec files / 812 tests; coverage statements/lines 93.27 %, branches 87.27 %, functions 89.22 %; packed-artifact check included), `verify-generation 0.2.3-alpha.2` PASS (no `--pin` needed on the same generation), and the alpha.2 M0 live smoke PASS (install/boot, settings write → volatile commit → reconcile → connect, the route still listing the fixture tools after a restart; per-workspace gating is asserted by the real-mount seam spec and the applier suites, not by this headless smoke).
+
+**`0.2.6-alpha.0` is the first prerelease of the 0.2.6 line and the architecture-A landing.** The connection layer retires into the official `McpClientHost` instance (one isolated seat fiber per configured server + four capture-only façades + applier-owned fan-out), on-demand tool loading and OAuth browser authorization are new, and the browser half gains the official `settings.section.icon` seat, the OAuth panel, the catalog hint and the "Load tools" transcript row. The full behaviour-change ledger and the deferred register: `docs/design.md` §5(g); the known limitations: `docs/acceptance.md`.
 
 ## Troubleshooting
 
@@ -106,9 +115,13 @@ The 0.2.0/0.2.1 line stays supported while the 0.2.2 line is still a release can
 | --- | --- |
 | No *MCP servers* section in Settings | The post-install client-module scan raced — restart the instance once |
 | Section present but reports settings unavailable | The host half did not load (the `mcp-scope` row in the profile patch) or the connection is read-only; check the row, then restart the profile |
-| A tool never appears | Check, in order: the session's cwd is a **registered workspace**; the server is **on** for it; the server is connected and has listed tools (log line `mcp-scope(...)`) |
+| A tool never appears | Check, in order: the session's cwd is a **registered workspace**; the server is **on** for it; the server is connected and has listed tools (connection log line comes from the mounted official instance as `mcp-client(<server>):`; plugin-owned lines stay `mcp-scope(...)`) |
 | A hand-edited patch had no effect | An invalid schema keeps the whole entry from activating (section unavailable + log names the error); edit through the UI, or fix the row |
-| A server stopped working after a crash | Reconnect backs off 500 ms→30 s, 10 attempts per outage; after giving up, reload the plugin or restart the instance |
+| A server stopped working after a crash | The mounted official instance backs off 500 ms→30 s, 10 attempts per outage; after giving up, reload the plugin or restart the instance |
+| A server shows "Name conflict" | The same `serverName` is also configured on the official manager plane: keep it in one plane. The plugin reports `failed{conflict}` and does not start |
+| The authorization page does not open / the callback fails | The OAuth callback needs the browser to reach the host origin directly (HTTPS or loopback HTTP); a reverse proxy normally breaks it. Also check the composition mounts `authorization` + `webServer` — otherwise the action answers `oauth-unavailable` |
+| Status stays on "Waiting for authorization" | Click Authorize and finish the browser flow; the grant-commit event refreshes the status, or Sign out and retry |
+| "Cleanup pending" after a disconnect | The previous connection could not confirm its close: the server is blocked from remounting until the plugin or Host restarts (this is the cleanup guard, not a configuration error) |
 | Secret input looks empty after saving | By design: values are write-only. The badge shows *Configured* / *Not configured* / *Status unknown* |
 | Switch the plugin off without uninstalling | Compose a patch over the profile (`dsh web --patch <file>`) that sets `disabled: true` under `- id: mcp-scope` |
 
@@ -118,17 +131,17 @@ The 0.2.0/0.2.1 line stays supported while the 0.2.2 line is still a release can
 dsh plugin --profile web remove dsh-chamber-mcp   # then restart the instance
 ```
 
-Removing the package stops the servers and drops the settings section; the data remains in the profile patch row `- id: mcp-scope` (delete that row to remove it) and the related refs must be deleted from `$DSH_HOME/.credentials.yaml` by hand (values are write-only, so the UI cannot read them back).
+Removing the package stops the servers and drops the settings section; the data remains in the profile patch row `- id: mcp-scope` (delete that row to remove it) and the related refs must be deleted from `$DSH_HOME/.credentials.yaml` by hand (values are write-only, so the UI cannot read them back). OAuth grants live in the same credentials domain (`mcp-client/` namespace) and must be deleted by hand too.
 
 ## Documentation
 
 | Doc | Contents |
 | --- | --- |
 | [`../README.md`](../README.md) | The Chinese README (primary) |
-| [`design.md`](design.md) | Architecture: host/browser halves, supervisor and injection model, settings document, upstream contracts and deliberate deviations, UI layout reference |
-| [`acceptance.md`](acceptance.md) | Requirement/cut matrix (R1–R4 / E1–E11 / C1–C6) |
+| [`design.md`](design.md) | Architecture: host/browser halves, mounted-official-instance + per-workspace injection model, settings document, seat lifecycle, OAuth O2, wire vocabulary, behaviour-change ledger, UI layout reference |
+| [`acceptance.md`](acceptance.md) | Requirement/cut matrix (R1–R4 / E1–E13 / C1–C6), the shipped line's known limitations and the 0.2.6-alpha.0 gate evidence |
 | [`RELEASE.md`](RELEASE.md) | Release & CI runbook |
 
 ## License
 
-[MIT](../LICENSE). Tool naming, sync/generation swap, executor and transport semantics mirror the reference implementation `@deepseek-ai/dsh-mcp-client` (Copyright © 2026 DeepSeek, MIT); see `LICENSE` for the attribution notice.
+[MIT](../LICENSE). Adopted from the reference implementation `@deepseek-ai/dsh-mcp-client` (Copyright © 2026 DeepSeek, MIT) are the capture-façade/applier glue, the `mcp__` tool-naming contract and the OAuth credential-key / sign-out semantics; transport and sync/generation-swap are owned by the mounted official instance and are no longer mirrored here. See `LICENSE` for the attribution notice.

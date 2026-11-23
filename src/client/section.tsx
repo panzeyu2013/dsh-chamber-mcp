@@ -20,7 +20,12 @@ import {
   type SaveOutcome,
   type ServerSaveInput,
 } from './controller.js'
-import type { RuntimeSnapshot, RuntimeTestResult, RuntimeToolEntry } from './runtime.js'
+import type {
+  RuntimeAuthorizeResult,
+  RuntimeSnapshot,
+  RuntimeTestResult,
+  ToolListView,
+} from './runtime.js'
 import { NS } from './locales.js'
 import { ServerListView, type ServerFilter } from './views/server-list.js'
 import { ServerDetail } from './views/server-detail.js'
@@ -79,8 +84,12 @@ export interface McpScopeSectionProps {
   refreshRuntime(options?: { silent?: boolean; server?: string }): Promise<void>
   connectServer(serverName: string): Promise<unknown>
   disconnectServer(serverName: string): Promise<unknown>
+  restartServer(serverName: string): Promise<unknown>
   testServer(serverName: string): Promise<RuntimeTestResult>
-  loadTools(serverName: string): Promise<{ tools: RuntimeToolEntry[]; truncated: boolean; total: number }>
+  authorizeServer(serverName: string): Promise<RuntimeAuthorizeResult>
+  cancelAuthorization(serverName: string, attemptId: string): Promise<void>
+  signOutServer(serverName: string): Promise<void>
+  loadTools(serverName: string): Promise<ToolListView>
 }
 
 type BaseView =
@@ -127,6 +136,41 @@ type ConfirmState =
 const scopeKey = (workspaceId: string, serverName: string): string =>
   JSON.stringify([workspaceId, serverName])
 
+/**
+ * Polling interval of the runtime panel: one 10 s frame while the host answers,
+ * a backed-off 30 s frame after a failed pass (ADR-8: no fast poll; OAuth
+ * completion arrives through the action return plus the credentials record
+ * event, never through a tight timer).
+ */
+export function pollDelayOf(snapshot: RuntimeSnapshot): number {
+  return snapshot.phase === 'error' || snapshot.phase === 'unavailable' ? 30_000 : 10_000
+}
+
+/**
+ * Open the authorization popup SYNCHRONOUSLY inside the click handler — a
+ * `window.open` after an `await` is blocked by every popup blocker. Returns
+ * null when the browser refused (the caller then renders the copyable URL
+ * fallback, which is the normal path, not an edge case).
+ */
+export function openAuthorizationPopup(): Window | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const popup = window.open('', '_blank')
+    if (popup !== null) {
+      // The authorization page must not receive an opener handle; a blocked
+      // assignment (already navigated) is fine.
+      try {
+        popup.opener = null
+      } catch {
+        /* the popup is cross-origin already */
+      }
+    }
+    return popup
+  } catch {
+    return null
+  }
+}
+
 export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
   const { t } = props
   const snapshot = props.useDoc((state) => state)
@@ -150,6 +194,10 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
   const activeConfirmId = useRef<number | null>(null)
   const [autoTestName, setAutoTestName] = useState<string | null>(null)
   const [editorAutoImport, setEditorAutoImport] = useState(false)
+  /** Popup-blocked fallback URL per server (the attempt itself is host-owned). */
+  const [authorizationFallback, setAuthorizationFallback] = useState<Readonly<Record<string, string>>>({})
+  /** Per-server single-flight of the three OAuth actions (Cancel/Authorize/Sign out). */
+  const [authorizationPending, setAuthorizationPending] = useState<Readonly<Record<string, boolean>>>({})
   const tokenRef = useRef(0)
   const alive = useRef(true)
   const previousView = useRef<SectionView | null>(null)
@@ -187,7 +235,7 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
     let count = 0
     for (const server of doc.servers) {
       if (isServerDisabled(doc, server.serverName)) continue
-      if (runtimeOf(runtime, server.serverName)?.state === 'connected') count += 1
+      if (runtimeOf(runtime, server.serverName)?.phase === 'connected') count += 1
     }
     return count
   }, [doc, runtime])
@@ -241,7 +289,7 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
     if (doc.servers.length === 0) return undefined
     let stopped = false
     let timer = 0
-    const delay = runtime.phase === 'error' || runtime.phase === 'unavailable' ? 30000 : 10000
+    const delay = pollDelayOf(runtime)
     const tick = async (): Promise<void> => {
       if (stopped) return
       if (typeof document === 'undefined' || document.visibilityState === 'visible') {
@@ -705,6 +753,128 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
     showToast(t(kind === 'added' ? 'add.added' : 'edit.saved', { name }))
   }
 
+  /**
+   * Synchronous in-flight lock: React state alone cannot stop a double click
+   * (the second click lands before the re-render), and a duplicated restart is
+   * a real host action, not a harmless repaint. The state flag still drives the
+   * disabled UI.
+   */
+  const restartLocks = useRef(new Set<string>())
+  const authorizationLocks = useRef(new Set<string>())
+
+  /** Toggle one server's authorization-pending flag. */
+  function markAuthorizationPending(serverName: string, pending: boolean): void {
+    setAuthorizationPending((prev) => {
+      if (pending === (prev[serverName] === true)) return prev
+      const next = { ...prev }
+      if (pending) next[serverName] = true
+      else delete next[serverName]
+      return next
+    })
+  }
+
+  /** Restart one server (single-flight per server; the host owns the guard). */
+  async function restartServer(serverName: string): Promise<void> {
+    if (restartLocks.current.has(serverName)) return
+    restartLocks.current.add(serverName)
+    setFailure(null)
+
+    try {
+      await props.restartServer(serverName)
+    } catch {
+      if (alive.current) {
+        setFailure({ message: t('runtime.error'), retry: () => void restartServer(serverName) })
+      }
+    } finally {
+      restartLocks.current.delete(serverName)
+    }
+  }
+
+  /**
+   * Start one authorization attempt. The popup MUST open synchronously in this
+   * click handler (a post-await window.open is blocked); the action's token-free
+   * attempt view then supplies the page URL to navigate it to. A blocked popup
+   * is a normal outcome: the URL is kept as the copyable fallback instead.
+   */
+  function beginAuthorization(serverName: string): void {
+    if (authorizationLocks.current.has(serverName)) return
+    authorizationLocks.current.add(serverName)
+    const popup = openAuthorizationPopup()
+    markAuthorizationPending(serverName, true)
+    void (async () => {
+      try {
+        const result = await props.authorizeServer(serverName)
+        const url = result.authorization?.authorizationUrl
+        if (url !== undefined && popup !== null) {
+          try {
+            popup.location.href = url
+          } catch {
+            /* the popup was closed by the user: fall through to the fallback */
+          }
+        } else if (popup !== null) {
+          popup.close()
+        }
+        if (url !== undefined && (popup === null || popup.closed)) {
+          setAuthorizationFallback((prev) => ({ ...prev, [serverName]: url }))
+        } else if (url !== undefined) {
+          // Keep the URL on screen even when the popup opened: the user may
+          // still need it after closing the window.
+          setAuthorizationFallback((prev) => ({ ...prev, [serverName]: url }))
+        }
+      } catch {
+        if (popup !== null) popup.close()
+        if (alive.current) {
+          setFailure({ message: t('runtime.error'), retry: () => beginAuthorization(serverName) })
+        }
+      } finally {
+        authorizationLocks.current.delete(serverName)
+        if (alive.current) markAuthorizationPending(serverName, false)
+      }
+    })()
+  }
+
+  async function cancelAuthorization(serverName: string, attemptId: string): Promise<void> {
+    if (authorizationLocks.current.has(serverName)) return
+    authorizationLocks.current.add(serverName)
+    setFailure(null)
+    markAuthorizationPending(serverName, true)
+    try {
+      await props.cancelAuthorization(serverName, attemptId)
+    } catch {
+      if (alive.current) {
+        setFailure({ message: t('runtime.error'), retry: () => void cancelAuthorization(serverName, attemptId) })
+      }
+    } finally {
+      authorizationLocks.current.delete(serverName)
+      if (alive.current) markAuthorizationPending(serverName, false)
+    }
+  }
+
+  async function signOutServer(serverName: string): Promise<void> {
+    if (authorizationLocks.current.has(serverName)) return
+    authorizationLocks.current.add(serverName)
+    setFailure(null)
+    markAuthorizationPending(serverName, true)
+    try {
+      await props.signOutServer(serverName)
+      if (alive.current) {
+        setAuthorizationFallback((prev) => {
+          if (prev[serverName] === undefined) return prev
+          const next = { ...prev }
+          delete next[serverName]
+          return next
+        })
+      }
+    } catch {
+      if (alive.current) {
+        setFailure({ message: t('runtime.error'), retry: () => void signOutServer(serverName) })
+      }
+    } finally {
+      authorizationLocks.current.delete(serverName)
+      if (alive.current) markAuthorizationPending(serverName, false)
+    }
+  }
+
   function requestRemove(serverName: string): void {
     setFailure(null)
     // Prefer the LIVE workspace list, which is also what the list/detail scope
@@ -1104,6 +1274,12 @@ export function McpScopeSection(props: McpScopeSectionProps): ReactNode {
             onConnect={() => props.connectServer(server.serverName)}
             onDisconnect={() => props.disconnectServer(server.serverName)}
             onTest={() => props.testServer(server.serverName)}
+            onRestart={() => restartServer(server.serverName)}
+            onAuthorize={() => beginAuthorization(server.serverName)}
+            onCancelAuthorization={(attemptId) => void cancelAuthorization(server.serverName, attemptId)}
+            onSignOut={() => void signOutServer(server.serverName)}
+            authorizationFallback={authorizationFallback[server.serverName]}
+            authorizationPending={authorizationPending[server.serverName] === true}
             onRefresh={() => props.refreshRuntime({ server: server.serverName, silent: true })}
             onLoadTools={() => props.loadTools(server.serverName)}
             onRemove={() => requestRemove(server.serverName)}

@@ -119,3 +119,19 @@ describe('admissionOf', () => {
     expect(admissionOf({ kind: 'narrowed', allow: ['bash', 'fs'], deny: ['fs'] })('bash')).toBe(true)
   })
 })
+
+describe('delegation narrowing and on-demand MCP names', () => {
+  it('withholds the loader and lazily-loaded names a filter does not admit', () => {
+    // A narrow allow list that names no MCP tool withholds the whole server
+    // (tools + context) AND the loader/admission names the on-demand path would
+    // otherwise register: the filter is mirrored on both fan-out paths.
+    const allow = admissionOf({ kind: 'narrowed', allow: ['fs_read'] })
+    expect(allow('mcp__files__load_tools')).toBe(false)
+    expect(allow('mcp__files__remote_read')).toBe(false)
+    // A deny-only filter leaves unmentioned MCP names loadable but refuses the
+    // denied loaded name.
+    const deny = admissionOf({ kind: 'narrowed', deny: ['mcp__files__remote_read'] })
+    expect(deny('mcp__files__load_tools')).toBe(true)
+    expect(deny('mcp__files__remote_read')).toBe(false)
+  })
+})

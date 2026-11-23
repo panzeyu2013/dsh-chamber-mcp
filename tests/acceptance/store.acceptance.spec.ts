@@ -19,7 +19,8 @@ const json = (body: unknown, status = 200): Response =>
 
 interface View {
   name: string
-  state: string
+  phase: string
+  configured: boolean
   attempts: number
   maxAttempts: number
   nextRetryAt?: number
@@ -27,9 +28,10 @@ interface View {
   error?: { code: string; message: string }
 }
 
-const view = (name: string, state = 'connected', patch: Partial<View> = {}): View => ({
+const view = (name: string, phase = 'connected', patch: Partial<View> = {}): View => ({
   name,
-  state,
+  phase,
+  configured: true,
   attempts: 0,
   maxAttempts: 10,
   toolCount: 2,
@@ -103,8 +105,8 @@ describe('acceptance correctness: version skew and silent per-server refresh', (
     const snapshot = store.getSnapshot()
     expect(snapshot.phase).toBe('ready')
     expect(snapshot.at).toBe(30)
-    expect(snapshot.servers.alpha?.state).toBe('stopped')
-    expect(snapshot.servers.beta?.state).toBe('failed')
+    expect(snapshot.servers.alpha?.phase).toBe('stopped')
+    expect(snapshot.servers.beta?.phase).toBe('failed')
     expect(snapshot.error).toBeUndefined()
   })
 

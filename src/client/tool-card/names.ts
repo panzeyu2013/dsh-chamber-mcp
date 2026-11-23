@@ -33,6 +33,16 @@ import {
   type ServerDef,
 } from '../../shared/model.js'
 
+/**
+ * Raw MCP name of the on-demand loader tool. In `toolLoading: 'on-demand'`
+ * mode the mounted client registers exactly ONE tool per server besides the
+ * catalog: `mcp__<server>__load_tools`, whose call loads one catalog tool by
+ * raw name. It is a real tool of the list but not an MCP `--` tool of the
+ * server's own catalog, so the transcript row titles it specially and the
+ * registered-tools notice never counts it as a server tool.
+ */
+export const LOADER_RAW_NAME = 'load_tools'
+
 /** Transport of the server that exposes one tool. */
 export type McpTransport = ServerDef['transport']
 
@@ -51,6 +61,14 @@ export interface McpToolIdentity {
   transport: McpTransport | undefined
   /** True when `publicName` is a lossy-normalized (truncated/hashed) name. */
   normalized: boolean
+  /**
+   * True when this name is the on-demand LOADER of its server (the owner is
+   * configured for `toolLoading: 'on-demand'` and the raw name is
+   * `load_tools`). Only a configured on-demand owner proves it; an unowned or
+   * eager name stays an ordinary tool so a real `load_tools` tool of an eager
+   * server is never mislabeled.
+   */
+  loader?: true
 }
 
 /** Whether a public name carries the lossy-normalization identity suffix. */
@@ -87,7 +105,8 @@ export function identifyMcpTool(
     toolName = rest.slice(prefix.length)
   }
   if (owner !== undefined) {
-    return { publicName, serverName: owner.serverName, toolName, transport: owner.transport, normalized }
+    const loader = toolName === LOADER_RAW_NAME && owner.toolLoading === 'on-demand' ? ({ loader: true } as const) : {}
+    return { publicName, serverName: owner.serverName, toolName, transport: owner.transport, normalized, ...loader }
   }
   const separator = rest.indexOf('__')
   if (separator <= 0) return undefined
@@ -174,8 +193,25 @@ export function mcpToolNamesOf(entries: readonly unknown[]): string[] {
   return [...names]
 }
 
-/** Call state of one row, mirroring the official tool row's classification. */
-export type McpToolRowState = 'running' | 'ok' | 'error' | 'stopped'
+/**
+ * Whether this identity is the on-demand loader of its server.
+ *
+ * @param identity - display identity derived by {@link identifyMcpTool}.
+ * @returns true for the single `mcp__<server>__load_tools` tool of an
+ *   on-demand server.
+ */
+export function isLoaderTool(identity: McpToolIdentity): boolean {
+  return identity.loader === true
+}
+
+/**
+ * Call state of one row, mirroring the official tool row's classification.
+ *
+ * `preparing` is the renderer's pre-dispatch owner-prop phase: the transcript
+ * node this row reads only carries the running or settled form, so a
+ * preparing call renders as `running` (the UI value the shipped rows use).
+ */
+export type McpToolRowState = 'running' | 'preparing' | 'ok' | 'error' | 'stopped'
 
 /** One tool-call block, structurally narrowed (running and settled forms). */
 export interface McpToolBlockLike {
@@ -209,10 +245,22 @@ export function argsRawOf(block: McpToolBlockLike): string {
  * Row state of one call: `running` while the call streams, `stopped` for an
  * interrupted settlement, `error` for a failed one, `ok` otherwise — the same
  * classification the official rows use, so the two row kinds never disagree.
+ *
+ * ABORTED divergence (deliberate): the shipped row paints only
+ * `error.code === 'interrupted'` as stopped and lets the durable abort codes
+ * `ABORTED` / `ABORTED_BEFORE_DISPATCH` fall through to the error-red branch.
+ * A user-cancelled MCP call is NOT a server failure — the server never ran, or
+ * ran and was cancelled by a deliberate user action — so this row classifies
+ * both as `stopped` (amber, the interrupted treatment). Pinned in
+ * tests/client/tool-card.spec.tsx and documented in docs/design.md.
+ *
+ * @param block - running or settled call node.
+ * @returns the row state.
  */
 export function rowStateOf(block: McpToolBlockLike): McpToolRowState {
   if (!isSettledBlock(block)) return 'running'
   if (block.error?.code === 'interrupted') return 'stopped'
+  if (block.error?.code === 'ABORTED' || block.error?.code === 'ABORTED_BEFORE_DISPATCH') return 'stopped'
   return block.isError === true ? 'error' : 'ok'
 }
 

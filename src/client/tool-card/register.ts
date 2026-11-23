@@ -86,7 +86,8 @@ function sameIdentity(left: McpToolIdentity, right: McpToolIdentity): boolean {
     left.publicName === right.publicName &&
     left.serverName === right.serverName &&
     left.toolName === right.toolName &&
-    left.transport === right.transport
+    left.transport === right.transport &&
+    left.loader === right.loader
   )
 }
 

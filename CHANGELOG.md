@@ -13,6 +13,239 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > only and ignores this one — an entry left here ships in the tree but never
 > appears in the release notes.
 
+## [0.2.6-alpha.0] - 2026-11-23
+
+First prerelease of the 0.2.6 line: the plugin moves to dsh `0.2.3-alpha.2` as
+its ONE supported generation (single support line, no legacy compatibility) and
+lands **architecture A** — the plugin's own connection layer retires into a
+mounted official `@deepseek-ai/dsh-mcp-client` instance per configured server,
+with capture-only isolated façades and an applier-owned per-agent fan-out. The
+same prerelease adds on-demand tool loading, OAuth browser authorization (O2)
+and the browser-half surfaces that manage them. **0.2.5 is frozen as the last
+release of the old multi-line window**, and a host on 0.2.0/0.2.1/0.2.2 must
+upgrade dsh first (the runtime preflight refuses an out-of-range bundle).
+
+**Acceptance status:** the headless gates below are green, but the **manual
+real-browser pass is NOT recorded for this prerelease** — it is required before
+the stable `0.2.6` tag. The pass covers the Factory settings-section render,
+Plugins-page reuse, the `settings.section.icon` seat, the OAuth
+popup/callback round-trip and official-plane coexistence; see
+`docs/RELEASE.md` §Pre-tag checklist step 3a and `docs/acceptance.md`
+§Gate evidence. This prerelease ships with the pass outstanding.
+
+### Added
+
+- **On-demand tool loading.** A server row can set `toolLoading: 'on-demand'`:
+  the mounted instance lists only the loader tool
+  (`mcp__<serverName>__load_tools`) and renders the per-server catalog into the
+  prompt; a loaded tool enters an agent scope only through the applier's
+  fail-closed admission (workspace gate + subagent `toolFilter` narrowing,
+  revocable), loaded records survive gate flips and same-epoch reconnects and
+  are forgotten on a generation change. The editor exposes the mode, the detail
+  renders the catalog count/hint, the transcript row titles the loader "Load
+  tools", and the registered-tools notice parses the catalog from the rendered
+  prompt with the official loader-sentence signature (tool descriptions render
+  into the same prompt, so a bare heading is not trusted).
+- **OAuth browser authorization (O2).** Streamable-HTTP rows can carry an
+  `oauth` block (http only; refused beside an `Authorization` header). The
+  official browser flow is reused through the seat's PRIVATE isolated
+  `McpClientHost`: PKCE S256/DCR and the `webserver/request` callback listener
+  live on the seat fiber, the grant is committed to the credentials domain under
+  the derived key `mcp-client/mcp-scope-<sha256(serverName)[:16]>`, and the
+  mounted instance owns grant read/refresh/CAS/redaction plus the retry on
+  `credentials/record-updated`. Runtime actions `authorize`,
+  `cancel-authorization` and `sign-out` (retire → disposeOwner → unmount →
+  delete record → mount; an unconfirmed cleanup keeps the grant and reports
+  `failed{cleanup}`). The detail shows a status pill, the five reason lines,
+  Authorize/Authorize again, Cancel, confirmed Sign out and a copyable URL
+  fallback when the popup is blocked. An enabled http+OAuth row keeps its seat/
+  host while disabled; a globally disabled one provisions them lazily when the
+  authorize action runs, so authorization works before the server is enabled
+  without paying the seat cost up front; a composition without `authorization`
+  + `webServer` degrades to the fixed `oauth-unavailable` code.
+- **Wire v2 runtime surface.** `src/shared/wire.ts` freezes the host↔browser
+  contract: nine phases (incl. `waiting-credentials`/`waiting-authorization`),
+  fourteen fixed error codes, the token-free authorization attempt view (seven
+  phases, five reasons, a fixed failure enum), tool-list mode
+  `definitions|catalog`, and seven actions. The status view gains
+  `configured`/`syncedAt`/`authReason`/`authorization`; a removed row whose
+  cleanup is unconfirmed is retained as a `configured:false` orphan row; an
+  unknown upstream variant degrades to a fixed `failed{load}` instead of a
+  healthy phase.
+- **Config surface.** Document rows now carry the upstream-named connection
+  knobs (`toolCallTimeoutMs` with the legacy `timeoutMs` read-compat alias,
+  `startupTimeoutMs`, `closeTimeoutMs`, `toolLoading`), the
+  `env`/`headers` credential-template maps (the editor writes them; the old
+  `envKeys`/`{name,ref}` rows remain read-compat) and the HTTP `oauth` block.
+  The editor exposes the three timeouts, the loading mode and OAuth
+  enable/clientId/scope in its advanced disclosure; import normalizes once
+  through `canonicalDoc` and strips the unexposed fields
+  (`maxInstructionBytes`/`catalogDescriptionMaxLength`/`failOnStartupError`/
+  `expandTemplates`) with a warning.
+- **Browser half.** The official `settings.section.icon` seat replaces the DOM
+  patch: the nav row's plug mark is now a real slot contribution
+  (`{name:'settings.section.icon', id:'mcp-scope'}`), verified by
+  `verify-client-artifact`; in the shell's Plugins page the section is claimed
+  by the Loader row page. The OAuth panel, the catalog view and the
+  "Load tools" transcript row; Restart joins Connect/Disconnect; the runtime
+  store speaks wire v2 (phase pills, attempt view, catalog marker) and refreshes
+  OAuth state from the forwarded `credentials/record-updated` event.
+- **Host modules.** NEW `src/facade.ts` (capture-only
+  `tools`/`systemPrompt`/`mcpResources`/`credentials` façades +
+  `CaptureStore`), `src/host-config.ts` (document row → upstream
+  `ConfigInput`, the one template parser and the derived OAuth key),
+  `src/upstream.ts` (lazy official-host acquisition; a failed load is not
+  cached), `src/server-fiber.ts` (per-definition seat child fiber + private
+  `McpClientHost`), `src/oauth-authorization.ts` (owner/registry),
+  `src/status.ts` (pure status classifier/projection + wire mapping),
+  `src/log.ts` (the one logger surface + control-character sanitizer),
+  `src/shared/{wire,defaults,oauth}.ts`; `manager.ts`/`agents.ts`/
+  `index.ts`/`routes.ts`/`schema.ts`/`shared/model.ts` rewritten around
+  them.
+
+### Changed
+
+- **The compile-time and declared generation moves to dsh `0.2.3-alpha.2`, and
+  the support window is now ONE line.** All 28 `@deepseek-ai/dsh-*`
+  devDependencies pin `0.2.3-alpha.2`, with `@deepseek-ai/cordis`
+  `4.2.0-alpha.1`, `@deepseek-ai/cordis-plugin-loader` `1.2.0-alpha.1` and
+  `@deepseek-ai/schemastery` `~3.20.0-alpha.1` (a single range; the old
+  `^3.18.4 || ~3.18.6-alpha.2` union is gone). The peer range becomes the single
+  line `^0.2.3-alpha.2` (cordis `~4.2.0-alpha.1`): the 0.2.0/0.2.1/0.2.2
+  lines are no longer declared, compiled or smoke-verified.
+  `@deepseek-ai/dsh-mcp-client` becomes a REQUIRED peer (it was optional), and
+  `@deepseek-ai/dsh-scope`, `@deepseek-ai/dsh-client-ui-slots` and
+  `@deepseek-ai/dsh-api-workspace-controller` join it as required peers (a
+  shipped value import for the capture façades, and the browser half's
+  slot/workspace-controller type + service surface). `@deepseek-ai/dsh-mcp-resources` and
+  `@deepseek-ai/dsh-system-prompt` remain the ONLY optional peers. The
+  `@deepseek-ai/dsh-attachment` peer is GONE — attachment is not a peer at all
+  any more (devDependency only) — and the required `-subprocess` and
+  `-timeout` peers are REMOVED too (both remain devDependencies). The runtime
+  dependency surface is
+  `@deepseek-ai/schemastery` alone: `@modelcontextprotocol/client` and
+  `zod` are no longer runtime dependencies (`zod` and
+  `@modelcontextprotocol/server` are devDependencies used by the test
+  fixtures, and `@modelcontextprotocol/client` is not declared at all — the
+  mounted official instance brings its own SDK copy).
+  `@deepseek-ai/dsh-session-projection` and
+  `@deepseek-ai/dsh-authorization` join the devDependencies. The lockfile was
+  re-resolved in a clean tree — an in-place refresh cannot cross a generation
+  move, because the old lock's peers conflict with the new framework pins —
+  `npm ci` installs it without rewriting, and every non-root entry carries
+  `integrity`.
+- **The connection layer is retired into the official instance.** Every
+  configured server is a SEAT: one child fiber that isolates
+  `tools`/`systemPrompt`/`mcpResources`/`credentials`/`mcpClientHost`,
+  installs four capture-only façades and constructs ONE private
+  `McpClientHost`; the mounted instance now owns the transport,
+  `${credential:…}` templates, reconnect/backoff, generation swap,
+  instructions and the resource provider. The plugin no longer opens a
+  connection, builds a tool definition or registers a tool globally: captures
+  are coalesced by the manager and fanned out by `src/agents.ts` into live
+  agent scopes only, with idempotence `(epoch, capture.version)`.
+  `src/host-config.ts` performs the ONE `host.validate` resolution shared by
+  mount/probe/authorization; the manager keeps document→lifecycle reconcile,
+  the status projection, the conflict/cleanup guards, the seven actions and the
+  OAuth lifecycle port. Client identity on the wire is the official
+  `dsh-mcp-client`; connection-layer log lines are upstream's
+  `mcp-client(<server>):`, plugin lines stay `mcp-scope(…)`.
+- **Behaviour changes from 0.2.5 (ledger; full text `docs/design.md` §5(g)).**
+  A same-name server in the official manager plane is a hard
+  `failed{conflict}` (read-only pre-check + mount-race classification), not
+  shadowing/two processes; a missing credential ref reports
+  `waiting-credentials` instead of silently skipping the key; the tool-list
+  wire entry has no `rawName` field at all — it carries `publicName` plus the
+  capped description, and the raw MCP name only ever goes to the server — and
+  on-demand servers are marked `mode:'catalog'`; `DEFAULT_MAX_SYNC_TOOLS`
+  (2000) is an eager-capture truncate-and-flag (the seam canary is exempt,
+  on-demand is not forced);
+  reconnect becomes a document pass-through with upstream defaults; a
+  tool-less server still publishes its instruction section/resources
+  (enablement-only gate); a gate flip no longer replays context sections (only
+  an epoch change does); an unconfirmed teardown retains a
+  `configured:false` orphan row and blocks remount (`failed{cleanup}`) until
+  the plugin/Host restarts; the editor writes the upstream credential-template
+  maps instead of the legacy containers; settings-document downgrade is not
+  promised.
+- **Source adaptation, no compatibility shim.** dsh 0.2.3-alpha.2 removed the
+  `ctx.root` property, so the three reads in `src/index.ts` are written directly
+  as `ctx[Context.root]` (a VALUE import of `Context` replaces the type-only
+  one). No feature-detected accessor or old-line path is kept: the plugin
+  declares one line.
+- **Test recipe: the real-service mount now needs session projections first.**
+  `@deepseek-ai/dsh-system-prompt` on this line injects `sessionProjections`,
+  and `fiber.await()` resolves for a PENDING fiber, so a bare
+  `ctx.plugin(SystemPrompt)` left the tools-injecting factory ctx `undefined`
+  (25 suite failures in the unpatched derived tree). The shared recipe
+  `tests/support/mount-real.ts` mounts `SessionProjectionRegistry` →
+  `SystemPrompt` → `ToolRuntime` → the factory ctx;
+  `tests/host/agents.spec.ts` and `tests/host/applier-admission.spec.ts` use
+  it.
+- **Adapter output-schema assertion widened.** The official
+  `createMcpToolDefinition` canonical output now carries a `description` on
+  `content.items`; `tests/tools.spec.ts` asserts it instead of the previous
+  exact shape.
+- **CI: single line, no compat matrix.** `.github/workflows/ci.yml` drops the
+  cross-line `compat` job (and the per-line framework pins it carried) and runs
+  `npm ci` + `npm run check` against the one dev generation. The manual smoke
+  job now REQUIRES `DSH_SMOKE_ANCHORS` — a comma-separated list of anchor CLI
+  paths inside `^0.2.3-alpha.2` — and hard-fails when the variable is empty
+  instead of silently falling back to the chamber gateway anchor, which is
+  outside the declared range. `scripts/verify-generation.mjs` gained the
+  `cordis.patch.yml`/`vitest.config.ts`/`LICENSE` copy entries for the scratch
+  tree, and its peer diagnostic now uses npm semantics (no
+  `includePrerelease`).
+- **Release flow: prereleases are marked as such.**
+  `.github/workflows/release.yml` sets `prerelease: contains(version, '-')`, so
+  the `0.2.6-alpha.N` series publishes as GitHub prereleases; only the stable
+  `0.2.6` (after upstream 0.2.3 stabilises) becomes the normal Release.
+  Tagging/publishing remain maintainer actions.
+- **Docs refreshed to the landed reality.** `docs/design.md` §5(g) is now the
+  LANDED architecture A (module responsibilities, seat lifecycle sequence,
+  capture/applier split, OAuth O2 data flow, frozen wire vocabulary, the
+  16-item behaviour-change ledger and the deferred register); the module/file
+  map, §4 runtime behaviour, §5 deviations, §6 browser overview, §9.4 (official
+  `settings.section.icon` seat; the DOM patch is deleted) and §10 are updated
+  to the shipped tree. `docs/acceptance.md` carries the shipped-line known
+  limitations, E12 (on-demand) / E13 (OAuth), the updated evidence matrix and
+  the gate-evidence section. The READMEs state the mounted-official-instance
+  architecture, add on-demand and OAuth features/limits and the single-line
+  support window; `AGENTS.md` maps the landed modules and adds the
+  architecture/wire/OAuth invariants; `docs/RELEASE.md` records the
+  dynamic-import rule for the HOST (not the old adapter) and the single-line
+  smoke. The release-notes flow is unchanged; the release workflow now gates the
+  GitHub-Release mutation to TAG PUSHES (with an explicit `tag_name`, so a manual
+  dispatch can never create a branch-named release) and marks `-alpha` versions
+  as GitHub prereleases, described above.
+- **Tests and gates.** The suite is now 37 spec files / 812 tests (host, client
+  and acceptance) with coverage statements 93.27 %, branches 87.27 % and
+  functions 89.22 % (floors 93/85/86/93). Measured on the landed tree
+  (2026-11-23): `npm run check` green (typecheck, coverage, build,
+  `verify:package` incl. 65 tarball entries, consumer types, client-bundle
+  purity, `verify-client-artifact` and determinism over 61 files);
+  `verify-generation 0.2.3-alpha.2` PASS with NO `--pin`; alpha.2 M0 live
+  smoke PASS (install/boot, settings write → volatile commit → reconcile →
+  connect, the tools route before and after a restart; the workspace gate is
+  asserted by the real-mount seam spec and the applier suites, not this smoke).
+  Evidence: `.scratch/exec/{check-ship5,verify-gen-ship4,m0-ship4}.log`.
+
+### Removed
+
+- The plugin's own connection layer: `src/server.ts`, `src/transport.ts`,
+  `src/server-context.ts` and `src/tools.ts` (transport factory, connection
+  supervision, instruction/resource publication, definition builder), together with their
+  suites (`server-*`, `transport`, `http`, `manager-*` groups) — replaced by
+  the architecture-A suites (`server-seat`, `upstream-mount-gate`,
+  `facade`, `facade-integration`, `upstream-lifecycle`, `status-mapping`,
+  `host-config`, `config-parity`, `applier-admission`, `oauth-*`).
+- The `src/client/nav-icon.ts` settings-sidebar DOM patch, its spec and its
+  `verify-client-artifact` nav seed — replaced by the official
+  `settings.section.icon` seat.
+- The multi-line peer range `^0.2.0-rc.1 || ^0.2.1-rc.1 || ^0.2.2-alpha.3`,
+  the cross-line CI `compat` matrix, and the optional
+  `@deepseek-ai/dsh-mcp-client` peer declaration.
+
 ## [0.2.5] - 2026-11-14
 
 A maintenance/build-compatibility release: the compile-time dsh generation

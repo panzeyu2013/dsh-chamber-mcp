@@ -14,20 +14,25 @@ import type {} from '../../src/client/index.ts'
 import { en, zh } from '../../src/client/locales.ts'
 import type { CredentialInfo } from '@deepseek-ai/dsh-credentials/types'
 import type { McpScopeDoc } from '../../src/shared/model.ts'
-import type { RuntimeSnapshot, RuntimeTestResult, RuntimeToolEntry } from '../../src/client/runtime.ts'
-export { flush, httpServer, overridesOf, runtimeWith, stdioServer, t, translate, viewOf } from './section-fixtures.ts'
+import type {
+  RuntimeAuthorizeResult,
+  RuntimeSnapshot,
+  RuntimeTestResult,
+  ToolListView,
+} from '../../src/client/runtime.ts'
+export { flush, httpServer, overridesOf, runtimeWith, stdioServer, t, viewOf } from './section-fixtures.ts'
 
-export type Dictionary = Record<string, string>
+type Dictionary = Record<string, string>
 
-export const dictionaries: Record<'en' | 'zh', Dictionary> = { en, zh }
+const dictionaries: Record<'en' | 'zh', Dictionary> = { en, zh }
 
 /** The dictionary rendered by a mount (en unless stated). */
-export function dictOf(locale: 'en' | 'zh' = 'en'): Dictionary {
+function dictOf(locale: 'en' | 'zh' = 'en'): Dictionary {
   return dictionaries[locale]
 }
 
 /** Locale reader with a missing-key recorder (never throws inside a render). */
-export function makeT(dict: Dictionary, missing: string[] = []) {
+function makeT(dict: Dictionary, missing: string[] = []) {
   return (key: string, params?: Record<string, string | number>): string => {
     const text = dict[key]
     if (text === undefined) {
@@ -38,9 +43,9 @@ export function makeT(dict: Dictionary, missing: string[] = []) {
   }
 }
 
-export const EMPTY_RUNTIME: RuntimeSnapshot = { phase: 'ready', servers: {} }
+const EMPTY_RUNTIME: RuntimeSnapshot = { phase: 'ready', servers: {} }
 
-export interface RecordedWrite {
+interface RecordedWrite {
   action:
     | 'addServer'
     | 'replaceServer'
@@ -54,19 +59,23 @@ export interface RecordedWrite {
   args: readonly unknown[]
 }
 
-export interface RecordedCalls {
+interface RecordedCalls {
   refresh: { silent?: boolean; server?: string }[]
   connect: string[]
   disconnect: string[]
+  restart: string[]
   test: string[]
   tools: string[]
+  authorize: string[]
+  cancel: { server: string; attemptId: string }[]
+  signOut: string[]
   /** Any document-writing action (settings write) the section was observed to call. */
   writes: string[]
   /** The arguments of each write, keyed by action (the acceptance contract). */
   writeArgs: RecordedWrite[]
 }
 
-export interface Actions {
+interface Actions {
   refreshRuntime?: (options?: { silent?: boolean; server?: string }) => Promise<void>
   addServer?: (input: unknown) => Promise<{ ok: boolean }>
   replaceServer?: (oldName: string, input: unknown) => Promise<{ ok: boolean }>
@@ -89,11 +98,15 @@ export interface Actions {
   unsetCredential?: (ref: string) => Promise<{ ok: boolean }>
   connectServer?: (name: string) => Promise<unknown>
   disconnectServer?: (name: string) => Promise<unknown>
+  restartServer?: (name: string) => Promise<unknown>
   testServer?: (name: string) => Promise<RuntimeTestResult>
-  loadTools?: (name: string) => Promise<{ tools: RuntimeToolEntry[]; truncated: boolean; total: number }>
+  authorizeServer?: (name: string) => Promise<RuntimeAuthorizeResult>
+  cancelAuthorization?: (name: string, attemptId: string) => Promise<void>
+  signOutServer?: (name: string) => Promise<void>
+  loadTools?: (name: string) => Promise<ToolListView>
 }
 
-export type DocStatus = 'loading' | 'ready' | 'unavailable'
+type DocStatus = 'loading' | 'ready' | 'unavailable'
 
 export interface MountOptions {
   doc: McpScopeDoc
@@ -178,8 +191,12 @@ export function mountSection(options: MountOptions): Harness {
     refresh: [],
     connect: [],
     disconnect: [],
+    restart: [],
     test: [],
     tools: [],
+    authorize: [],
+    cancel: [],
+    signOut: [],
     writes: [],
     writeArgs: [],
   }
@@ -272,15 +289,31 @@ export function mountSection(options: MountOptions): Harness {
     calls.disconnect.push(name)
     return actions.disconnectServer !== undefined ? actions.disconnectServer(name) : {}
   }
+  const restartServer = async (name: string): Promise<unknown> => {
+    calls.restart.push(name)
+    return actions.restartServer !== undefined ? actions.restartServer(name) : {}
+  }
   const testServer = async (name: string): Promise<RuntimeTestResult> => {
     calls.test.push(name)
     return actions.testServer !== undefined ? actions.testServer(name) : { ok: true, toolCount: 0 }
   }
-  const loadTools = async (name: string) => {
+  const authorizeServer = async (name: string): Promise<RuntimeAuthorizeResult> => {
+    calls.authorize.push(name)
+    return actions.authorizeServer !== undefined ? actions.authorizeServer(name) : { name, phase: 'unknown' }
+  }
+  const cancelAuthorization = async (name: string, attemptId: string): Promise<void> => {
+    calls.cancel.push({ server: name, attemptId })
+    if (actions.cancelAuthorization !== undefined) await actions.cancelAuthorization(name, attemptId)
+  }
+  const signOutServer = async (name: string): Promise<void> => {
+    calls.signOut.push(name)
+    if (actions.signOutServer !== undefined) await actions.signOutServer(name)
+  }
+  const loadTools = async (name: string): Promise<ToolListView> => {
     calls.tools.push(name)
     return actions.loadTools !== undefined
       ? actions.loadTools(name)
-      : { tools: [], truncated: false, total: 0 }
+      : { mode: 'definitions', tools: [], truncated: false, total: 0 }
   }
 
   const docHook = ((selector: (snapshot: unknown) => unknown) =>
@@ -315,7 +348,11 @@ export function mountSection(options: MountOptions): Harness {
     refreshRuntime,
     connectServer,
     disconnectServer,
+    restartServer,
     testServer,
+    authorizeServer,
+    cancelAuthorization,
+    signOutServer,
     loadTools,
   })
 

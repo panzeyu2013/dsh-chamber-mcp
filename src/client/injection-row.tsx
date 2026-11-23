@@ -53,6 +53,7 @@ import { styles } from './styles.js'
 import type { ServerDef } from '../shared/model.js'
 import {
   MCP_INJECTION_NODE_KIND,
+  catalogOmittedOf,
   injectionOmittedOf,
   injectionServersOfRequest,
   injectionSignature,
@@ -91,8 +92,15 @@ export function McpInjectionRow({ node, t }: InjectionNodeProps): ReactElement |
   const [openServers, setOpenServers] = useState<readonly string[]>([])
   const payload = readInjectionPayload(node?.data)
   if (payload === undefined) return null
+  // One fragment per source: an eager server names its registered tools, an
+  // on-demand server names its catalog (its tool LIST is the loader's, so no
+  // "0 tools" ever reaches the row).
   const summary = payload.servers
-    .map((server) => t('injection.entry', { name: server.name, count: server.toolCount }))
+    .map((server) =>
+      server.onDemand === true
+        ? t('injection.catalog', { name: server.name, count: server.catalog ?? 0 })
+        : t('injection.entry', { name: server.name, count: server.toolCount }),
+    )
     .join(' · ')
   const toggle = (): void => setOpen((current) => !current)
   const toggleServer = (name: string): void => {
@@ -137,12 +145,15 @@ export function McpInjectionRow({ node, t }: InjectionNodeProps): ReactElement |
           {payload.servers.map((server) => {
             const serverOpen = openServers.includes(server.name)
             const serverOmitted = injectionOmittedOf(server)
+            const catalogOmitted = catalogOmittedOf(server)
+            const catalogNames = server.catalogNames ?? []
             return (
               <div
                 key={server.name}
                 className={styles.injectionServer}
                 data-injection-server={server.name}
                 data-open={serverOpen || undefined}
+                data-on-demand={server.onDemand === true ? '' : undefined}
               >
                 <div
                   className={styles.injectionServerHead}
@@ -157,7 +168,9 @@ export function McpInjectionRow({ node, t }: InjectionNodeProps): ReactElement |
                     <McpChevronIcon size={12} />
                   </span>
                   <span className={styles.injectionServerName}>
-                    {t('injection.entry', { name: server.name, count: server.toolCount })}
+                    {server.onDemand === true
+                      ? t('injection.catalog', { name: server.name, count: server.catalog ?? 0 })
+                      : t('injection.entry', { name: server.name, count: server.toolCount })}
                   </span>
                 </div>
                 {serverOpen && (
@@ -175,6 +188,30 @@ export function McpInjectionRow({ node, t }: InjectionNodeProps): ReactElement |
                     ))}
                     {serverOmitted > 0 && (
                       <div className={styles.injectionOmitted}>{t('injection.omitted', { count: serverOmitted })}</div>
+                    )}
+                    {server.onDemand === true && (
+                      <>
+                        {/* The catalog is NOT in the tool list; its RAW names are
+                            what the loader takes, so the body says so before
+                            naming them. */}
+                        <div className={styles.injectionCatalogTitle} data-injection-catalog="">
+                          {t('injection.catalogTitle')}
+                        </div>
+                        {catalogNames.map((name, index) => (
+                          <div
+                            key={name + '#' + String(index)}
+                            className={styles.injectionToolName}
+                            data-injection-catalog-tool={name}
+                          >
+                            {name}
+                          </div>
+                        ))}
+                        {catalogOmitted > 0 && (
+                          <div className={styles.injectionOmitted}>
+                            {t('injection.catalogOmitted', { count: catalogOmitted })}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 )}

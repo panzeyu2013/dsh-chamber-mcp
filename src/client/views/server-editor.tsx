@@ -27,6 +27,32 @@ import {
   splitCommandLine,
   type ImportCandidate,
 } from '../import.js'
+
+/**
+ * One non-fatal import warning, structurally narrowed: the import layer owns
+ * the codes and the field identity; the editor renders one localized line per
+ * warning instead of silently dropping data.
+ */
+interface EditorImportWarning {
+  code: 'mixed-template' | 'dropped-field' | 'invalid-value'
+  field: string
+}
+
+/** Warnings of one parsed candidate, across the in-flight import shape. */
+function warningsOf(server: unknown): readonly EditorImportWarning[] {
+  const warnings = (server as { warnings?: unknown } | null | undefined)?.warnings
+  if (!Array.isArray(warnings)) return []
+  const out: EditorImportWarning[] = []
+  for (const warning of warnings) {
+    if (warning === null || typeof warning !== 'object') continue
+    const code = (warning as { code?: unknown }).code
+    const field = (warning as { field?: unknown }).field
+    if (typeof field !== 'string') continue
+    if (code !== 'mixed-template' && code !== 'dropped-field' && code !== 'invalid-value') continue
+    out.push({ code, field })
+  }
+  return out
+}
 import { failureText, type SaveFailure, type SaveOutcome, type ServerSaveInput } from '../controller.js'
 import type { SectionT } from '../section.js'
 import { ConfirmDialog, InlineNotice, Modal } from '../components/ui.js'
@@ -57,20 +83,30 @@ interface ProblemEntry {
   message: string
 }
 
-const STORAGE_PREFIX = 'mcp-scope.draft.v2:'
+const STORAGE_PREFIX = 'mcp-scope.draft.v3:'
 
 function storageKeyOf(mode: 'add' | 'edit', name: string | undefined): string {
   return STORAGE_PREFIX + (mode === 'add' ? 'add' : 'edit:' + (name ?? ''))
 }
 
+/**
+ * Draft form safe for sessionStorage: every credential VALUE is blanked, every
+ * NAME/REF is kept (refs are not secrets — the key tab needs them to render a
+ * restored form; the value is re-entered or left blank to keep the stored one).
+ */
 function withoutSecrets(draft: AddDraft): AddDraft {
   return {
     ...draft,
-    env: draft.env.map((row) => ({ key: row.key, value: '' })),
+    env: draft.env.map((row) => ({ key: row.key, ref: row.ref, value: '' })),
     headers: draft.headers.map((row) => ({ name: row.name, ref: row.ref, value: '' })),
   }
 }
 
+/**
+ * Restore one v3 draft. Secret values are never restored (the persisted form
+ * carries none); a corrupt/old-shaped draft is dropped silently — persistence is
+ * a convenience, not a promise (v2 drafts are gone with the field rewrite).
+ */
 function loadPersistedDraft(key: string): AddDraft | null {
   if (typeof sessionStorage === 'undefined') return null
   try {
@@ -80,31 +116,41 @@ function loadPersistedDraft(key: string): AddDraft | null {
     if (parsed === null || typeof parsed !== 'object') return null
     const candidate = parsed as Partial<AddDraft>
     if (candidate.transport !== 'stdio' && candidate.transport !== 'streamable-http') return null
-    const base = { ...EMPTY_DRAFT }
-    const merged: AddDraft = {
-      ...base,
-      ...candidate,
-      name: typeof candidate.name === 'string' ? candidate.name : '',
-      command: typeof candidate.command === 'string' ? candidate.command : '',
-      cwd: typeof candidate.cwd === 'string' ? candidate.cwd : '',
-      url: typeof candidate.url === 'string' ? candidate.url : '',
-      timeoutMs: typeof candidate.timeoutMs === 'string' ? candidate.timeoutMs : '',
+    const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+    const toolLoading = candidate.toolLoading === 'on-demand' ? 'on-demand' : 'eager'
+    const env = Array.isArray(candidate.env)
+      ? candidate.env.map((row) => ({
+          key: text((row as { key?: unknown }).key),
+          ref: text((row as { ref?: unknown }).ref),
+          value: '',
+        }))
+      : []
+    const headers = Array.isArray(candidate.headers)
+      ? candidate.headers.map((row) => ({
+          name: text((row as { name?: unknown }).name),
+          ref: text((row as { ref?: unknown }).ref),
+          value: '',
+        }))
+      : []
+    return {
+      ...EMPTY_DRAFT,
+      transport: candidate.transport,
+      name: text(candidate.name),
+      command: text(candidate.command),
+      cwd: text(candidate.cwd),
+      url: text(candidate.url),
       args: Array.isArray(candidate.args) && candidate.args.length > 0 ? candidate.args.map(String) : [''],
-      env:
-        Array.isArray(candidate.env) && candidate.env.length > 0
-          ? candidate.env.map((row) => ({ key: String(row.key ?? ''), value: '' }))
-          : [{ key: '', value: '' }],
-      headers:
-        Array.isArray(candidate.headers) && candidate.headers.length > 0
-          ? candidate.headers.map((row) => ({
-              name: String(row.name ?? ''),
-              ref: String(row.ref ?? ''),
-              value: '',
-            }))
-          : [{ name: '', ref: '', value: '' }],
+      env: env.length > 0 ? env : [{ key: '', ref: '', value: '' }],
+      headers: headers.length > 0 ? headers : [{ name: '', ref: '', value: '' }],
       enabled: candidate.enabled !== false,
+      startupTimeoutMs: text(candidate.startupTimeoutMs),
+      closeTimeoutMs: text(candidate.closeTimeoutMs),
+      toolCallTimeoutMs: text(candidate.toolCallTimeoutMs),
+      toolLoading,
+      oauthEnabled: candidate.oauthEnabled === true,
+      oauthClientId: text(candidate.oauthClientId),
+      oauthScope: text(candidate.oauthScope),
     }
-    return merged
   } catch {
     return null
   }
@@ -180,8 +226,10 @@ function Field(props: FieldProps): JSX.Element {
   )
 }
 
-function TransportChoice(props: {
+/** One pill radio of a group (transport + tool-loading share the recipe). */
+function ChoiceRadio(props: {
   id: string
+  name: string
   label: string
   checked: boolean
   disabled: boolean
@@ -192,7 +240,7 @@ function TransportChoice(props: {
       <input
         id={props.id}
         type="radio"
-        name="mcp-scope-transport"
+        name={props.name}
         className={styles.choiceInput}
         checked={props.checked}
         disabled={props.disabled}
@@ -220,8 +268,17 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
   const [importText, setImportText] = useState('')
   const [importError, setImportError] = useState<'empty' | 'invalid' | 'unsupported' | null>(null)
   const [importCandidates, setImportCandidates] = useState<ImportCandidate[]>([])
+  const [importWarnings, setImportWarnings] = useState<readonly EditorImportWarning[]>([])
+  // The advanced disclosure opens when the draft carries anything it owns: a
+  // custom cwd, one of the three budgets, on-demand loading or OAuth. OAuth is
+  // the one group inside it that is itself collapsed-but-enabled when set.
   const [advancedOpen, setAdvancedOpen] = useState(
-    initialDraft.cwd !== '' || initialDraft.timeoutMs !== '',
+    initialDraft.cwd !== '' ||
+      initialDraft.startupTimeoutMs !== '' ||
+      initialDraft.closeTimeoutMs !== '' ||
+      initialDraft.toolCallTimeoutMs !== '' ||
+      initialDraft.toolLoading !== 'eager' ||
+      initialDraft.oauthEnabled,
   )
   const [revealed, setRevealed] = useState<Record<string, boolean>>({})
   const autoImported = useRef(false)
@@ -273,13 +330,22 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
   const nameId = 'mcp-scope-editor-name'
   const commandId = 'mcp-scope-editor-command'
   const urlId = 'mcp-scope-editor-url'
-  const timeoutId = 'mcp-scope-editor-timeout'
+  const startupId = 'mcp-scope-editor-startup-timeout'
+  const closeId = 'mcp-scope-editor-close-timeout'
+  const toolCallId = 'mcp-scope-editor-tool-call-timeout'
+  const oauthClientIdId = 'mcp-scope-editor-oauth-client-id'
+  const oauthScopeId = 'mcp-scope-editor-oauth-scope'
+  // Fields that live inside the advanced disclosure: focusing one first opens
+  // its group (the disclosure remembers it is open until the user closes it).
+  const cwdId = 'mcp-scope-editor-cwd'
+  const advancedToggleId = 'mcp-scope-editor-advanced'
+  const ADVANCED_FIELD_IDS = new Set([cwdId, startupId, closeId, toolCallId, oauthClientIdId, oauthScopeId, advancedToggleId])
 
   function patch(next: Partial<AddDraft>): void {
     setDraft((prev) => ({ ...prev, ...next }))
   }
 
-  function patchEnv(index: number, next: { key?: string; value?: string }): void {
+  function patchEnv(index: number, next: { key?: string; ref?: string; value?: string }): void {
     setDraft((prev) => ({
       ...prev,
       env: prev.env.map((row, i) => (i === index ? { ...row, ...next } : row)),
@@ -293,6 +359,13 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
     }))
   }
 
+  /**
+   * Human-readable problems in VISUAL FIELD ORDER (name -> command/url -> args
+   * -> budgets -> env rows -> header rows -> OAuth). The draft layer owns the
+   * codes; this function is the only place they become copy and focus targets,
+   * so a new draft rule that forgets a message fails the editor suite instead of
+   * rendering a bare code.
+   */
   function problemEntries(): ProblemEntry[] {
     const entries: ProblemEntry[] = []
     if (problems.name !== undefined) {
@@ -310,18 +383,47 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
       })
     }
     if (problems.command !== undefined) {
-      entries.push({ key: 'command', id: commandId, label: t('add.command'), message: t('validation.commandRequired') })
+      entries.push({
+        key: 'command',
+        id: commandId,
+        label: t('add.command'),
+        message: t(problems.command === 'template' ? 'validation.templateSyntax' : 'validation.commandRequired'),
+      })
     }
     if (problems.url !== undefined) {
       entries.push({
         key: 'url',
         id: urlId,
         label: t('add.url'),
-        message: t(problems.url === 'required' ? 'validation.urlRequired' : 'validation.invalidUrl'),
+        message: t(
+          problems.url === 'required'
+            ? 'validation.urlRequired'
+            : problems.url === 'template'
+              ? 'validation.templateSyntax'
+              : 'validation.invalidUrl',
+        ),
       })
     }
-    if (problems.timeout !== undefined) {
-      entries.push({ key: 'timeout', id: timeoutId, label: t('add.timeout'), message: t('validation.timeout') })
+    problems.args.forEach((problem, index) => {
+      if (problem === undefined) return
+      entries.push({
+        key: 'arg-' + index,
+        id: 'mcp-scope-editor-arg-' + index,
+        label: t('add.args') + ' ' + (index + 1),
+        message: t(problem),
+      })
+    })
+    if (problems.cwd !== undefined) {
+      entries.push({ key: 'cwd', id: cwdId, label: t('add.cwd'), message: t('validation.cwdTemplate') })
+    }
+    if (problems.startupTimeoutMs !== undefined) {
+      entries.push({ key: 'startup', id: startupId, label: t('add.startupTimeout'), message: t('validation.startupTimeout') })
+    }
+    if (problems.closeTimeoutMs !== undefined) {
+      entries.push({ key: 'close', id: closeId, label: t('add.closeTimeout'), message: t('validation.closeTimeout') })
+    }
+    if (problems.toolCallTimeoutMs !== undefined) {
+      entries.push({ key: 'toolCall', id: toolCallId, label: t('add.toolCallTimeout'), message: t('validation.toolCallTimeout') })
     }
     problems.env.forEach((problem, index) => {
       if (problem === undefined) return
@@ -342,21 +444,58 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
         message: t(problem),
       })
     })
+    if (problems.reconnect !== undefined) {
+      entries.push({
+        key: 'reconnect',
+        id: advancedToggleId,
+        label: t('server.reconnect'),
+        message: t(
+          problems.reconnect === 'initial'
+            ? 'validation.reconnectInitialDelay'
+            : problems.reconnect === 'max'
+              ? 'validation.reconnectMaxDelay'
+              : problems.reconnect === 'attempts'
+                ? 'validation.reconnectMaxAttempts'
+                : 'validation.reconnectOrder',
+        ),
+      })
+    }
+    if (problems.oauth !== undefined) {
+      entries.push({
+        key: 'oauth',
+        id: oauthClientIdId,
+        label: t('auth.clientId'),
+        message: t(
+          problems.oauth === 'stdio'
+            ? 'validation.oauthStdio'
+            : problems.oauth === 'header'
+              ? 'validation.oauthHeader'
+              : 'validation.oauthClientId',
+        ),
+      })
+    }
     return entries
   }
 
   function focusProblem(id: string): void {
     if (typeof document === 'undefined') return
-    const element = document.getElementById(id)
-    if (element !== null) {
-      element.focus()
+    const focus = (): void => document.getElementById(id)?.focus()
+    if (document.getElementById(id) !== null) {
+      focus()
       return
     }
-    // The timeout field lives in the advanced disclosure: open it, then focus
-    // on the next frame once the input exists.
-    if (id === timeoutId) {
+    // Fields inside the advanced disclosure do not exist until it opens; open
+    // it (and the OAuth group, which only renders while advanced is open) and
+    // focus on the next frame. Focus is best effort: a field that still cannot
+    // be found must never throw out of the submit path.
+    if (ADVANCED_FIELD_IDS.has(id)) {
       setAdvancedOpen(true)
-      window.setTimeout(() => document.getElementById(timeoutId)?.focus(), 0)
+      window.setTimeout(focus, 0)
+      return
+    }
+    const argMatch = /^mcp-scope-editor-arg-(\d+)$/.exec(id)
+    if (argMatch !== null) {
+      window.setTimeout(focus, 0)
     }
   }
 
@@ -440,9 +579,9 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
     setDraft((prev) => ({
       ...prev,
       env: [
-        ...prev.env.filter((row) => row.key.trim() !== '' || row.value !== ''),
-        ...rows,
-        { key: '', value: '' },
+        ...prev.env.filter((row) => row.key.trim() !== '' || row.ref !== '' || row.value !== ''),
+        ...rows.map((row) => ({ key: row.key, ref: '', value: row.value })),
+        { key: '', ref: '', value: '' },
       ],
     }))
     setNote(t('paste.envImported', { count: rows.length }))
@@ -473,7 +612,23 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
   }
 
   function applyImport(candidate: ImportCandidate): void {
-    setDraft((prev) => draftFromImport(prev, candidate.server))
+    setDraft((prev) => {
+      const next = draftFromImport(prev, candidate.server)
+      // An imported definition can carry fields the disclosure owns: reveal
+      // them instead of silently staging values the user cannot see.
+      if (
+        next.cwd !== '' ||
+        next.startupTimeoutMs !== '' ||
+        next.closeTimeoutMs !== '' ||
+        next.toolCallTimeoutMs !== '' ||
+        next.toolLoading !== 'eager' ||
+        next.oauthEnabled
+      ) {
+        setAdvancedOpen(true)
+      }
+      return next
+    })
+    setImportWarnings(warningsOf(candidate.server))
     closeImport()
     setImportText('')
     setImportCandidates([])
@@ -512,8 +667,13 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
     // Mount-time intent only; later prop changes must not steal the clipboard.
   }, [props.autoImport])
 
-  const envRevealKey = (row: { key: string; value: string }, index: number): string =>
-    'env:' + (row.key.trim() !== '' ? 'key:' + row.key.trim() : '#' + index)
+  const envRevealKey = (row: { key: string; ref: string; value: string }, index: number): string =>
+    'env:' +
+    (row.ref.trim() !== ''
+      ? 'ref:' + row.ref.trim()
+      : row.key.trim() !== ''
+        ? 'key:' + row.key.trim()
+        : '#' + index)
   const headerRevealKey = (
     row: { name: string; ref: string; value: string },
     index: number,
@@ -532,7 +692,15 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
   const nameProblem = attempted || draft.name.trim() !== '' ? problems.name : undefined
   const commandProblem = attempted || draft.command.trim() !== '' ? problems.command : undefined
   const urlProblem = attempted || draft.url.trim() !== '' ? problems.url : undefined
-  const timeoutProblem = attempted || draft.timeoutMs.trim() !== '' ? problems.timeout : undefined
+  // A budget is revealed as invalid only once it has content (or on submit): an
+  // empty field is the default, not an error.
+  const startupProblem = attempted || draft.startupTimeoutMs.trim() !== '' ? problems.startupTimeoutMs : undefined
+  const closeProblem = attempted || draft.closeTimeoutMs.trim() !== '' ? problems.closeTimeoutMs : undefined
+  const toolCallProblem = attempted || draft.toolCallTimeoutMs.trim() !== '' ? problems.toolCallTimeoutMs : undefined
+  const oauthProblem =
+    draft.transport === 'streamable-http' && (attempted || draft.oauthClientId.trim() !== '')
+      ? problems.oauth
+      : undefined
   const entries = problemEntries()
   const showSummary = attempted && entries.length > 0
   const renameHint =
@@ -571,6 +739,29 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
         </InlineNotice>
       )}
       {note !== null && <p role="status" className={styles.editorNote}>{note}</p>}
+      {importWarnings.length > 0 && (
+        <InlineNotice
+          tone="warn"
+          onDismiss={() => setImportWarnings([])}
+          dismissLabel={t('action.dismiss')}
+        >
+          <span>{t('import.warningTitle')}</span>
+          <ul className={styles.editorErrorList}>
+            {importWarnings.map((warning, index) => (
+              <li key={warning.code + ':' + warning.field + ':' + index}>
+                {t(
+                  warning.code === 'mixed-template'
+                    ? 'import.mixedTemplate'
+                    : warning.code === 'dropped-field'
+                      ? 'import.droppedFields'
+                      : 'import.invalidValue',
+                  { field: warning.field },
+                )}
+              </li>
+            ))}
+          </ul>
+        </InlineNotice>
+      )}
       {showSummary && (
         <div className={styles.editorErrorSummary} role="alert">
           <p className={styles.editorErrorTitle}>
@@ -647,15 +838,17 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
         <div className={styles.editorField}>
           <span className={styles.fieldLabel}>{t('add.transport')}</span>
           <div role="radiogroup" aria-label={t('add.transport')} className={styles.choices}>
-            <TransportChoice
+            <ChoiceRadio
               id="mcp-scope-editor-transport-stdio"
+              name="mcp-scope-transport"
               label={t('transport.stdio')}
               checked={draft.transport === 'stdio'}
               disabled={disabled}
-              onSelect={() => patch({ transport: 'stdio' })}
+              onSelect={() => patch({ transport: 'stdio', oauthEnabled: false })}
             />
-            <TransportChoice
+            <ChoiceRadio
               id="mcp-scope-editor-transport-http"
+              name="mcp-scope-transport"
               label={t('transport.http')}
               checked={draft.transport === 'streamable-http'}
               disabled={disabled}
@@ -682,14 +875,16 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
             {draft.args.map((arg, index) => (
               <div key={index} className={styles.keyValueRow}>
                 <input
+                  id={'mcp-scope-editor-arg-' + index}
                   aria-label={t('add.args') + ' ' + (index + 1)}
                   type="text"
                   value={arg}
                   disabled={disabled}
+                  aria-invalid={problems.args[index] !== undefined || undefined}
                   onChange={(event) =>
                     patch({ args: draft.args.map((value, i) => (i === index ? event.target.value : value)) })
                   }
-                  className={cx(styles.input, styles.keyValueCell)}
+                  className={cx(styles.input, styles.keyValueCell, problems.args[index] !== undefined && styles.inputInvalid)}
                 />
                 <button
                   type="button"
@@ -735,7 +930,8 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
               const problem = problems.env[index]
               const keyInvalid = problem !== undefined
               const revealKey = envRevealKey(row, index)
-              const configured = row.key.trim() !== '' && credentials[row.key.trim()]?.configured === true
+              const ref = row.ref.trim() !== '' ? row.ref.trim() : row.key.trim()
+              const configured = ref !== '' && credentials[ref]?.configured === true
               return (
                 <div key={index} className={styles.keyValueRow}>
                   <input
@@ -747,6 +943,15 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
                     aria-invalid={keyInvalid || undefined}
                     onChange={(event) => patchEnv(index, { key: event.target.value })}
                     className={cx(styles.input, styles.keyValueCell, keyInvalid && styles.inputInvalid)}
+                    placeholder={t('add.credentialRefPlaceholder')}
+                  />
+                  <input
+                    aria-label={t('add.credentialRef') + ' ' + (index + 1)}
+                    type="text"
+                    value={row.ref}
+                    disabled={disabled}
+                    onChange={(event) => patchEnv(index, { ref: event.target.value })}
+                    className={cx(styles.input, styles.keyValueCell)}
                     placeholder={t('add.credentialRefPlaceholder')}
                   />
                   <div className={styles.secretInputWrap}>
@@ -789,7 +994,7 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
                 type="button"
                 className={cx(styles.button, styles.buttonOutline)}
                 disabled={disabled}
-                onClick={() => patch({ env: [...draft.env, { key: '', value: '' }] })}
+                onClick={() => patch({ env: [...draft.env, { key: '', ref: '', value: '' }] })}
               >
                 {t('add.envAdd')}
               </button>
@@ -915,6 +1120,7 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
 
       <div>
         <button
+          id={advancedToggleId}
           type="button"
           className={styles.editorAdvanced}
           aria-expanded={advancedOpen}
@@ -928,22 +1134,106 @@ export function ServerEditor(props: ServerEditorProps): ReactNode {
           <div id="mcp-scope-editor-advanced" className={styles.editorAdvancedBody}>
             {draft.transport === 'stdio' && (
               <Field
-                id="mcp-scope-editor-cwd"
+                id={cwdId}
                 label={t('add.cwd')}
                 value={draft.cwd}
                 disabled={disabled}
+                problem={problems.cwd !== undefined ? t('validation.cwdTemplate') : undefined}
                 onChange={(cwd) => patch({ cwd })}
               />
             )}
             <Field
-              id={timeoutId}
-              label={t('add.timeout')}
-              value={draft.timeoutMs}
+              id={startupId}
+              label={t('add.startupTimeout')}
+              value={draft.startupTimeoutMs}
               disabled={disabled}
-              hint={t('add.timeoutHint')}
-              problem={timeoutProblem !== undefined ? t('validation.timeout') : undefined}
-              onChange={(timeoutMs) => patch({ timeoutMs })}
+              hint={t('add.startupTimeoutHint')}
+              problem={startupProblem !== undefined ? t('validation.startupTimeout') : undefined}
+              onChange={(startupTimeoutMs) => patch({ startupTimeoutMs })}
             />
+            <Field
+              id={closeId}
+              label={t('add.closeTimeout')}
+              value={draft.closeTimeoutMs}
+              disabled={disabled}
+              hint={t('add.closeTimeoutHint')}
+              problem={closeProblem !== undefined ? t('validation.closeTimeout') : undefined}
+              onChange={(closeTimeoutMs) => patch({ closeTimeoutMs })}
+            />
+            <Field
+              id={toolCallId}
+              label={t('add.toolCallTimeout')}
+              value={draft.toolCallTimeoutMs}
+              disabled={disabled}
+              hint={t('add.toolCallTimeoutHint')}
+              problem={toolCallProblem !== undefined ? t('validation.toolCallTimeout') : undefined}
+              onChange={(toolCallTimeoutMs) => patch({ toolCallTimeoutMs })}
+            />
+            <div className={styles.editorField}>
+              <span className={styles.fieldLabel}>{t('add.toolLoading')}</span>
+              <div role="radiogroup" aria-label={t('add.toolLoading')} className={styles.choices}>
+                <ChoiceRadio
+                  id="mcp-scope-editor-tool-loading-eager"
+                  name="mcp-scope-tool-loading"
+                  label={t('add.toolLoadingEager')}
+                  checked={draft.toolLoading === 'eager'}
+                  disabled={disabled}
+                  onSelect={() => patch({ toolLoading: 'eager' })}
+                />
+                <ChoiceRadio
+                  id="mcp-scope-editor-tool-loading-on-demand"
+                  name="mcp-scope-tool-loading"
+                  label={t('add.toolLoadingOnDemand')}
+                  checked={draft.toolLoading === 'on-demand'}
+                  disabled={disabled}
+                  onSelect={() => patch({ toolLoading: 'on-demand' })}
+                />
+              </div>
+              <span className={styles.fieldHint}>{t('add.toolLoadingHint')}</span>
+            </div>
+            {draft.transport === 'streamable-http' && (
+              <div className={styles.editorSection}>
+                <div className={styles.detailSectionHead}>
+                  <div className={styles.detailSectionHeading}>
+                    <h3 className={styles.editorSectionTitle}>{t('auth.advanced')}</h3>
+                    <p className={styles.detailSectionHint}>{t('auth.enableHint')}</p>
+                  </div>
+                </div>
+                <label className={styles.choice} htmlFor="mcp-scope-editor-oauth-enabled">
+                  <input
+                    id="mcp-scope-editor-oauth-enabled"
+                    type="checkbox"
+                    className={styles.choiceInput}
+                    checked={draft.oauthEnabled}
+                    disabled={disabled}
+                    onChange={(event) => patch({ oauthEnabled: event.target.checked })}
+                  />
+                  <span className={styles.choicePill}>{t('auth.enable')}</span>
+                </label>
+                {draft.oauthEnabled && (
+                  <>
+                    <Field
+                      id={oauthClientIdId}
+                      label={t('auth.clientId')}
+                      value={draft.oauthClientId}
+                      disabled={disabled}
+                      hint={t('auth.clientIdHint')}
+                      problem={oauthProblem === 'clientId' ? t('validation.oauthClientId') : undefined}
+                      onChange={(oauthClientId) => patch({ oauthClientId })}
+                    />
+                    <Field
+                      id={oauthScopeId}
+                      label={t('auth.scope')}
+                      value={draft.oauthScope}
+                      disabled={disabled}
+                      hint={t('auth.scopeHint')}
+                      onChange={(oauthScope) => patch({ oauthScope })}
+                    />
+                    <p className={styles.fieldHint}>{t('auth.derivedKeyHint')}</p>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

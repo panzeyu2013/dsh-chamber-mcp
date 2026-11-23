@@ -32,6 +32,7 @@ import { McpToolLeading } from './icon.js'
 import {
   argsRawOf,
   durationOf,
+  isLoaderTool,
   isSettledBlock,
   resultTextOf,
   rowStateOf,
@@ -103,7 +104,11 @@ export function McpToolRow({ identity, t, block }: McpToolRowProps) {
           <McpToolLeading open={open} state={state} expandable={expandable} />
         </span>
         <span className={styles.toolTitle}>
-          {identity.serverName} · {identity.toolName}
+          {identity.serverName} ·{' '}
+          {/* The on-demand loader is titled by WHAT IT DOES, not by its raw
+              name: a row reading "load_tools · {…}" says nothing about why a
+              catalog tool is being called indirectly. */}
+          {isLoaderTool(identity) ? t('tool.loaderName') : identity.toolName}
         </span>
         {summaryText !== '' && <span className={styles.toolSep} aria-hidden="true" />}
         <span className={cx(styles.toolSummary, errorLine !== '' && styles.toolSummaryError)}>{summaryText}</span>

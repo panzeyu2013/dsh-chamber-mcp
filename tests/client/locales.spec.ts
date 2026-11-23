@@ -63,6 +63,69 @@ describe('locales: en/zh parity', () => {
     expect(keys.filter((key) => /new workspaces?/i.test(enDict[key] ?? '') && /default/i.test(enDict[key] ?? ''))).toEqual([])
   })
 
+  it('carries the alpha.2 phase, authorization, on-demand and config key sets', () => {
+    // Phase vocabulary: the two waiting phases are part of the frozen wire.
+    expect(en['status.waitingAuthorization']).toBe('Waiting for authorization')
+    expect(zh['status.waitingAuthorization']).toBe('等待授权')
+    expect(en['status.waitingCredentials']).toBe('Waiting for credentials')
+    expect(zh['status.waitingCredentials']).toBe('等待凭据')
+    // Five authorization reasons, one key each.
+    for (const reason of ['missing', 'expired', 'binding', 'rejected', 'scope'] as const) {
+      const key = ('auth.reason.' + reason) as SettingsKey
+      expect(en[key].length).toBeGreaterThan(0)
+      expect(zh[key].length).toBeGreaterThan(0)
+    }
+    expect(en['auth.authorize']).toBe('Authorize')
+    expect(en['auth.authorizeAgain']).toBe('Authorize again')
+    expect(en['auth.signOut']).toBe('Sign out')
+    expect(en['auth.popupBlocked']).toContain('authorization')
+    expect(zh['auth.popupBlocked'].length).toBeGreaterThan(0)
+    expect(en['auth.derivedKeyHint'].length).toBeGreaterThan(0)
+    // On-demand catalog copy + loader tool title.
+    expect(en['tool.loaderName']).toBe('Load tools')
+    expect(zh['tool.loaderName']).toBe('加载工具')
+    expect(en['injection.catalog']).toContain('{name}')
+    expect(en['injection.catalog']).toContain('{count}')
+    expect(en['injection.catalogTitle'].length).toBeGreaterThan(0)
+    expect(en['injection.catalogOmitted']).toContain('{count}')
+    expect(en['status.catalogTools']).toContain('{count}')
+    expect(en['server.catalogTitle'].length).toBeGreaterThan(0)
+    // Config field surface (renamed timeout keys included).
+    const newKeys: readonly SettingsKey[] = [
+      'add.startupTimeout',
+      'add.closeTimeout',
+      'add.toolCallTimeout',
+      'add.toolLoading',
+      'add.toolLoadingEager',
+      'add.toolLoadingOnDemand',
+      'server.startupTimeout',
+      'server.closeTimeout',
+      'server.toolCallTimeout',
+      'server.msValue',
+      'server.valueDefault',
+      'server.reconnect',
+      'server.reconnectOff',
+      'validation.startupTimeout',
+      'validation.closeTimeout',
+      'validation.toolCallTimeout',
+      'validation.templateSyntax',
+      'validation.oauthClientId',
+      'import.mixedTemplate',
+      'import.droppedFields',
+      'action.restart',
+      'server.conflictTag',
+      'server.cleanupTag',
+      'runtime.error.load',
+      'runtime.error.cleanup',
+      'runtime.error.conflict',
+      'runtime.error.oauth-unavailable',
+    ]
+    for (const key of newKeys) {
+      expect(en[key], key).toBeTruthy()
+      expect(zh[key], key).toBeTruthy()
+    }
+  })
+
   it('carries the new list/detail/workspaces/editor copy in both locales', () => {
     expect(en['tab.servers']).toBe('Servers')
     expect(en['tab.workspaces']).toBe('Workspaces')

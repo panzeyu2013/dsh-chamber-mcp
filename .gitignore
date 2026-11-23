@@ -20,6 +20,9 @@ scripts/smoke/fixture/fixture-events.log
 .scratch/
 .install/
 
+# local working plan (.tmp/upgrade-plan.md) + review/audit artifacts (never committed)
+.tmp/
+
 # editors
 .DS_Store
 .idea/

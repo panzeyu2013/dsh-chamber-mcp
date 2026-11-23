@@ -160,12 +160,14 @@ describe('editor', () => {
     buttonByText(mounted.host, t('editor.saveAndTest'))!.click()
     await flush()
     expect(added).toHaveLength(1)
-    expect(added[0]!.server).toEqual({
-      serverName: 'remote',
-      transport: 'streamable-http',
-      url: 'https://example.test/mcp',
-      headers: [{ name: 'Authorization', ref: 'AUTHORIZATION' }],
-    })
+    expect(added[0]!.server.serverName).toBe('remote')
+    expect(added[0]!.server.transport).toBe('streamable-http')
+    expect((added[0]!.server as { url?: string }).url).toBe('https://example.test/mcp')
+    // The write side is the UPSTREAM shape: a header MAP of credential
+    // templates (refs, never values); legacy {name,ref} rows are read-compat.
+    const written = added[0]!.server as { headers?: unknown; envKeys?: unknown }
+    expect(written.headers).toEqual({ Authorization: '${credential:AUTHORIZATION}' })
+    expect(written.envKeys).toBeUndefined()
     expect(added[0]!.secrets).toEqual([{ ref: 'AUTHORIZATION', value: 'bearer' }])
   })
 
@@ -186,7 +188,7 @@ describe('editor', () => {
   })
 
 
-  it('opens the advanced section and focuses the timeout when that is the first invalid field', async () => {
+  it('opens the advanced section and focuses the tool-call timeout when that is the first invalid field', async () => {
     const mounted = mountSection({ servers: [], overrides: {} })
     await flush()
     buttonByText(mounted.host, t('add.add'))!.click()
@@ -196,7 +198,7 @@ describe('editor', () => {
     const advanced = buttonByText(mounted.host, t('editor.advanced'))!
     advanced.click()
     await flush()
-    setValue(document.getElementById('mcp-scope-editor-timeout') as HTMLInputElement, '1')
+    setValue(document.getElementById('mcp-scope-editor-tool-call-timeout') as HTMLInputElement, '0')
     advanced.click()
     await flush()
     expect(advanced.getAttribute('aria-expanded')).toBe('false')
@@ -204,7 +206,7 @@ describe('editor', () => {
     await flush()
     expect(advanced.getAttribute('aria-expanded')).toBe('true')
     await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(document.activeElement?.id).toBe('mcp-scope-editor-timeout')
+    expect(document.activeElement?.id).toBe('mcp-scope-editor-tool-call-timeout')
   })
 
 
@@ -239,18 +241,24 @@ describe('editor', () => {
 
   it('restores a persisted draft without secret values', async () => {
     sessionStorage.setItem(
-      'mcp-scope.draft.v2:add',
+      'mcp-scope.draft.v3:add',
       JSON.stringify({
         name: 'restored',
         transport: 'stdio',
         command: 'node',
         cwd: '',
         args: ['server.js'],
-        env: [{ key: 'TOKEN', value: '' }],
+        env: [{ key: 'TOKEN', ref: '', value: '' }],
         url: '',
         headers: [{ name: '', ref: '', value: '' }],
         enabled: true,
-        timeoutMs: '',
+        startupTimeoutMs: '',
+        closeTimeoutMs: '',
+        toolCallTimeoutMs: '',
+        toolLoading: 'eager',
+        oauthEnabled: false,
+        oauthClientId: '',
+        oauthScope: '',
       }),
     )
     const mounted = mountSection({ servers: [], overrides: {} })
@@ -291,7 +299,7 @@ describe('editor', () => {
       expect(draftTimer, 'no 300ms draft debounce timer was armed').toBeDefined()
       if (typeof draftTimer!.handler === 'function') draftTimer!.handler()
       await flush()
-      const raw = sessionStorage.getItem('mcp-scope.draft.v2:add')
+      const raw = sessionStorage.getItem('mcp-scope.draft.v3:add')
       expect(raw).not.toBeNull()
       expect(raw).not.toContain('supersecret')
       const persisted = JSON.parse(raw!) as { command: string; env: { key: string; value: string }[] }
@@ -446,7 +454,8 @@ describe('editor', () => {
       { servers: [stdioServer('alpha')], overrides: {} },
       {
         loadTools: async () => ({
-          tools: [{ publicName: 'mcp__alpha__search', rawName: 'search', description: 'Search issues' }],
+          mode: 'definitions',
+          tools: [{ publicName: 'mcp__alpha__search', description: 'Search issues' }],
           truncated: false,
           total: 1,
         }),
@@ -581,6 +590,175 @@ describe('editor', () => {
     expect(mounted.host.querySelector('[data-mcp-server-detail]')).toBeNull()
     expect(mounted.text()).toContain(t('toast.removed', { name: 'alpha' }))
   })
+
+
+describe('editor: alpha.2 advanced fields', () => {
+  it('saves the four exposed fields in ONE servers write', async () => {
+    const added: ServerSaveInput[] = []
+    const mounted = mountSection(
+      { servers: [], overrides: {} },
+      {
+        addServer: async (input) => {
+          added.push(input)
+          return { ok: true }
+        },
+      },
+      { wsItems: WS },
+    )
+    await flush()
+    buttonByText(mounted.host, t('add.add'))!.click()
+    await flush()
+    setValue(document.getElementById('mcp-scope-editor-name') as HTMLInputElement, 'knobs')
+    setValue(document.getElementById('mcp-scope-editor-command') as HTMLInputElement, 'node')
+    buttonByText(mounted.host, t('editor.advanced'))!.click()
+    await flush()
+    setValue(document.getElementById('mcp-scope-editor-startup-timeout') as HTMLInputElement, '30000')
+    setValue(document.getElementById('mcp-scope-editor-close-timeout') as HTMLInputElement, '5000')
+    setValue(document.getElementById('mcp-scope-editor-tool-call-timeout') as HTMLInputElement, '60000')
+    document.getElementById('mcp-scope-editor-tool-loading-on-demand')!.click()
+    await flush()
+    buttonByText(mounted.host, t('editor.saveAndTest'))!.click()
+    await flush()
+    expect(added).toHaveLength(1)
+    expect(added[0]!.server).toMatchObject({
+      serverName: 'knobs',
+      transport: 'stdio',
+      command: 'node',
+      startupTimeoutMs: 30000,
+      closeTimeoutMs: 5000,
+      toolCallTimeoutMs: 60000,
+      toolLoading: 'on-demand',
+    })
+    // Empty budgets are NOT materialized; only what the user typed is written.
+    expect((added[0]!.server as { reconnect?: unknown }).reconnect).toBeUndefined()
+  })
+
+  it('keeps the OAuth group collapsed until enabled, and never writes a credential key', async () => {
+    const added: ServerSaveInput[] = []
+    const mounted = mountSection(
+      { servers: [], overrides: {} },
+      {
+        addServer: async (input) => {
+          added.push(input)
+          return { ok: true }
+        },
+      },
+      { wsItems: WS },
+    )
+    await flush()
+    buttonByText(mounted.host, t('add.add'))!.click()
+    await flush()
+    setValue(document.getElementById('mcp-scope-editor-name') as HTMLInputElement, 'remote')
+    // stdio: no OAuth group at all.
+    buttonByText(mounted.host, t('editor.advanced'))!.click()
+    await flush()
+    expect(document.getElementById('mcp-scope-editor-oauth-enabled')).toBeNull()
+    document.getElementById('mcp-scope-editor-transport-http')!.click()
+    await flush()
+    setValue(document.getElementById('mcp-scope-editor-url') as HTMLInputElement, 'https://example.test/mcp')
+    const enable = document.getElementById('mcp-scope-editor-oauth-enabled') as HTMLInputElement
+    expect(enable).not.toBeNull()
+    expect(enable.checked).toBe(false)
+    // Client/scope stay collapsed until OAuth is explicitly enabled.
+    expect(document.getElementById('mcp-scope-editor-oauth-client-id')).toBeNull()
+    enable.click()
+    await flush()
+    setValue(document.getElementById('mcp-scope-editor-oauth-client-id') as HTMLInputElement, 'client-123')
+    setValue(document.getElementById('mcp-scope-editor-oauth-scope') as HTMLInputElement, 'read write')
+    await flush()
+    expect(mounted.text()).toContain(t('auth.derivedKeyHint'))
+    buttonByText(mounted.host, t('editor.saveAndTest'))!.click()
+    await flush()
+    expect(added).toHaveLength(1)
+    expect((added[0]!.server as { oauth?: unknown }).oauth).toEqual({
+      clientId: 'client-123',
+      scope: 'read write',
+    })
+    // The credential key is host-derived, never written by the UI.
+    expect(JSON.stringify(added[0]!.server)).not.toContain('credentialKey')
+  })
+
+  it('refuses OAuth beside an Authorization header instead of saving', async () => {
+    const added: ServerSaveInput[] = []
+    const mounted = mountSection(
+      { servers: [], overrides: {} },
+      {
+        addServer: async (input) => {
+          added.push(input)
+          return { ok: true }
+        },
+      },
+      { wsItems: WS },
+    )
+    await flush()
+    buttonByText(mounted.host, t('add.add'))!.click()
+    await flush()
+    setValue(document.getElementById('mcp-scope-editor-name') as HTMLInputElement, 'remote')
+    document.getElementById('mcp-scope-editor-transport-http')!.click()
+    await flush()
+    setValue(document.getElementById('mcp-scope-editor-url') as HTMLInputElement, 'https://example.test/mcp')
+    setValue(document.getElementById('mcp-scope-editor-header-name-0') as HTMLInputElement, 'Authorization')
+    buttonByText(mounted.host, t('editor.advanced'))!.click()
+    await flush()
+    document.getElementById('mcp-scope-editor-oauth-enabled')!.click()
+    await flush()
+    // A non-blank client id keeps the HEADER conflict the identified problem
+    // (an empty one is reported first, as the earlier test covers elsewhere).
+    setValue(document.getElementById('mcp-scope-editor-oauth-client-id') as HTMLInputElement, 'client-1')
+    await flush()
+    buttonByText(mounted.host, t('editor.saveAndTest'))!.click()
+    await flush()
+    expect(added).toHaveLength(0)
+    expect(mounted.text()).toContain(t('validation.oauthHeader'))
+  })
+
+  it('drops a v2 draft and restores a v3 one', async () => {
+    sessionStorage.setItem(
+      'mcp-scope.draft.v2:add',
+      JSON.stringify({ name: 'legacy', transport: 'stdio', command: 'node', args: [''], env: [], url: '', headers: [], enabled: true, timeoutMs: '' }),
+    )
+    const v2 = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(v2.host, t('add.add'))!.click()
+    await flush()
+    expect(v2.text()).not.toContain(t('editor.restored'))
+    expect((document.getElementById('mcp-scope-editor-name') as HTMLInputElement).value).toBe('')
+    v2.unmount()
+  })
+
+  it('prefills import-only fields from the official manager map shape', async () => {
+    const mounted = mountSection({ servers: [], overrides: {} })
+    await flush()
+    buttonByText(mounted.host, t('add.add'))!.click()
+    await flush()
+    buttonByText(mounted.host, t('add.importJson'))!.click()
+    await flush()
+    setValue(
+      dialog().querySelector('textarea')!,
+      JSON.stringify({
+        mcpServers: {
+          imported: {
+            command: 'node',
+            toolCallTimeoutMs: 1234,
+            startupTimeoutMs: 2345,
+            closeTimeoutMs: 500,
+            toolLoading: 'on-demand',
+            reconnect: { enabled: false, maxAttempts: 3 },
+          },
+        },
+      }),
+    )
+    buttonByText(dialog(), t('import.parse'))!.click()
+    await flush()
+    expect((document.getElementById('mcp-scope-editor-name') as HTMLInputElement).value).toBe('imported')
+    // toolLoading !== eager opens the advanced disclosure on mount of the draft.
+    expect(document.getElementById('mcp-scope-editor-tool-call-timeout')).not.toBeNull()
+    expect((document.getElementById('mcp-scope-editor-tool-call-timeout') as HTMLInputElement).value).toBe('1234')
+    expect((document.getElementById('mcp-scope-editor-startup-timeout') as HTMLInputElement).value).toBe('2345')
+    expect((document.getElementById('mcp-scope-editor-close-timeout') as HTMLInputElement).value).toBe('500')
+    expect((document.getElementById('mcp-scope-editor-tool-loading-on-demand') as HTMLInputElement).checked).toBe(true)
+  })
+})
 
   it('guards unsaved changes with a discard confirmation', async () => {
     const mounted = mountSection({ servers: [], overrides: {} })

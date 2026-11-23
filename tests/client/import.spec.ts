@@ -109,7 +109,8 @@ describe('parseMcpSnippet', () => {
         headers: [{ name: 'Authorization', ref: 'AUTHORIZATION', value: 'Bearer t' }],
         env: [],
         enabled: true,
-        timeoutMs: '3000',
+        toolCallTimeoutMs: '3000',
+        warnings: [],
       },
     })
   })
@@ -126,8 +127,9 @@ describe('parseMcpSnippet', () => {
       command: 'node',
       args: ['server.js', '--root', '/srv'],
       headers: [],
-      env: [{ key: 'FILES_TOKEN', value: 'secret' }],
+      env: [{ key: 'FILES_TOKEN', ref: '', value: 'secret' }],
       enabled: false,
+      warnings: [],
     })
   })
 
@@ -193,6 +195,7 @@ describe('parseMcpSnippet tolerance', () => {
       headers: [],
       env: [],
       enabled: true,
+      warnings: [],
     })
     expect(outcome.others).toEqual(['iMCP', 'email', 'sharelatex'])
   })
@@ -258,8 +261,8 @@ describe('parseMcpSnippet tolerance', () => {
     if (!outcome.ok) return
     expect(outcome.server).toMatchObject({ name: 'files', transport: 'stdio', command: 'node', args: ['server.js'] })
     expect(outcome.server.env).toEqual([
-      { key: 'BASE', value: 'https://host//x' },
-      { key: 'RAW', value: 'a/*b*/c' },
+      { key: 'BASE', ref: '', value: 'https://host//x' },
+      { key: 'RAW', ref: '', value: 'a/*b*/c' },
     ])
   })
 
@@ -343,7 +346,12 @@ describe('parseMcpSnippet: pasted transcripts and torn sections', () => {
   it('reads the remaining field shapes the audit called out', () => {
     const envList = parseMcpSnippet('{"mcpServers":{"a":{"command":"node","env":["A=1","B=2"]}}}')
     expect(envList.ok).toBe(true)
-    if (envList.ok) expect(envList.server.env).toEqual([{ key: 'A', value: '1' }, { key: 'B', value: '2' }])
+    if (envList.ok) {
+      expect(envList.server.env).toEqual([
+        { key: 'A', ref: '', value: '1' },
+        { key: 'B', ref: '', value: '2' },
+      ])
+    }
     const nestedArgs = parseMcpSnippet('{"mcpServers":{"a":{"command":"node","args":["a.js",["nested"]]}}}')
     expect(nestedArgs.ok).toBe(true)
     if (nestedArgs.ok) expect(nestedArgs.server.args).toEqual(['a.js'])
@@ -358,7 +366,7 @@ describe('parseMcpSnippet: pasted transcripts and torn sections', () => {
     }
     const fallbackTimeout = parseMcpSnippet('{"mcpServers":{"a":{"command":"node","timeoutMs":"bad","timeout":7000}}}')
     expect(fallbackTimeout.ok).toBe(true)
-    if (fallbackTimeout.ok) expect(fallbackTimeout.server.timeoutMs).toBe('7000')
+    if (fallbackTimeout.ok) expect(fallbackTimeout.server.toolCallTimeoutMs).toBe('7000')
     const stringHeaders = parseMcpSnippet('{"mcpServers":{"a":{"url":"https://x","headers":["Authorization: Bearer x"]}}}')
     expect(stringHeaders.ok).toBe(true)
     if (stringHeaders.ok) {
@@ -445,23 +453,35 @@ describe('parseMcpSnippet hardening', () => {
   it('reads env as a {name,value} list and serializes structural values', () => {
     const list = parseMcpSnippet('{"mcp":{"a":{"command":"node","env":[{"name":"K","value":"v"},{"key":"K2","value":7}]}}}')
     expect(list.ok).toBe(true)
-    if (list.ok) expect(list.server.env).toEqual([{ key: 'K', value: 'v' }, { key: 'K2', value: '7' }])
+    if (list.ok) {
+      expect(list.server.env).toEqual([
+        { key: 'K', ref: '', value: 'v' },
+        { key: 'K2', ref: '', value: '7' },
+      ])
+    }
     const nested = parseMcpSnippet('{"mcp":{"a":{"command":"node","env":{"K":{"mode":"x"},"N":null}}}}')
     expect(nested.ok).toBe(true)
-    if (nested.ok) expect(nested.server.env).toEqual([{ key: 'K', value: '{"mode":"x"}' }, { key: 'N', value: '' }])
+    if (nested.ok) {
+      expect(nested.server.env).toEqual([
+        { key: 'K', ref: '', value: '{"mode":"x"}' },
+        { key: 'N', ref: '', value: '' },
+      ])
+    }
   })
 
   it('splits a string args field and reads numeric timeouts and flags', () => {
     const outcome = parseMcpSnippet('{"mcp":{"a":{"command":"npx","args":"-y @a/mcp","timeout":"3000","enabled":0}}}')
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) return
-    expect(outcome.server).toMatchObject({ command: 'npx', args: ['-y', '@a/mcp'], timeoutMs: '3000', enabled: false })
+    const timeout = (outcome.server as { toolCallTimeoutMs?: string }).toolCallTimeoutMs
+    expect(timeout).toBe('3000')
+    expect(outcome.server).toMatchObject({ command: 'npx', args: ['-y', '@a/mcp'], enabled: false })
     const disabled = parseMcpSnippet('{"mcp":{"a":{"command":"node","disabled":1}}}')
     expect(disabled.ok).toBe(true)
     if (disabled.ok) expect(disabled.server.enabled).toBe(false)
     const unparsable = parseMcpSnippet('{"mcp":{"a":{"command":"node","timeoutMs":"abc"}}}')
     expect(unparsable.ok).toBe(true)
-    if (unparsable.ok) expect(unparsable.server.timeoutMs).toBeUndefined()
+    if (unparsable.ok) expect(unparsable.server.toolCallTimeoutMs).toBeUndefined()
   })
 
   it('skips null-ish command tokens instead of discarding the whole list', () => {
@@ -507,8 +527,8 @@ describe('parseMcpSnippetCandidates', () => {
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) return
     expect(outcome.candidates[0]!.server.env).toEqual([
-      { key: 'TOKEN', value: '' },
-      { key: 'REGION', value: '' },
+      { key: 'TOKEN', ref: 'TOKEN', value: '' },
+      { key: 'REGION', ref: 'REGION', value: '' },
     ])
   })
 
@@ -524,5 +544,236 @@ describe('parseMcpSnippetCandidates', () => {
     expect(parseMcpSnippetCandidates('')).toEqual({ ok: false, reason: 'empty' })
     expect(parseMcpSnippetCandidates('not json at all')).toEqual({ ok: false, reason: 'invalid' })
     expect(parseMcpSnippetCandidates('{"hello":"world"}')).toEqual({ ok: false, reason: 'unsupported' })
+  })
+})
+
+describe('official manager config map (alpha.2 Config shape)', () => {
+  it('reads servers{name:{transport,enabled,knobs,toolLoading,oauth}}', () => {
+    const outcome = parseMcpSnippet(JSON.stringify({
+      servers: {
+        docs: {
+          transport: 'streamable-http',
+          url: 'https://mcp.example.test/x',
+          enabled: true,
+          toolCallTimeoutMs: 120_000,
+          startupTimeoutMs: 45_000,
+          closeTimeoutMs: 7_000,
+          reconnect: { enabled: false, initialDelayMs: 1000, maxDelayMs: 60_000, maxAttempts: 3 },
+          toolLoading: 'on-demand',
+          oauth: {
+            credentialKey: 'mcp-client/docs',
+            clientId: 'client-1',
+            scope: 'read write',
+            requestTimeoutMs: 15_000,
+            authorizationTimeoutMs: 600_000,
+          },
+        },
+      },
+    }))
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.server).toMatchObject({
+      name: 'docs',
+      transport: 'streamable-http',
+      url: 'https://mcp.example.test/x',
+      enabled: true,
+      startupTimeoutMs: '45000',
+      closeTimeoutMs: '7000',
+      toolCallTimeoutMs: '120000',
+      reconnect: { enabled: false, initialDelayMs: '1000', maxDelayMs: '60000', maxAttempts: '3' },
+      toolLoading: 'on-demand',
+      oauth: { clientId: 'client-1', scope: 'read write' },
+    })
+    // The grant address (credentialKey) and the authorization budgets do not
+    // transfer: the record key is host-derived from the server name.
+    expect(outcome.server.warnings).toEqual([
+      { code: 'dropped-field', field: 'oauth.credentialKey' },
+      { code: 'dropped-field', field: 'oauth.requestTimeoutMs' },
+      { code: 'dropped-field', field: 'oauth.authorizationTimeoutMs' },
+    ])
+  })
+
+  it('maps the timeout names and their legacy aliases', () => {
+    const official = parseMcpSnippet(JSON.stringify({
+      servers: { a: { transport: 'stdio', command: 'node', toolCallTimeoutMs: 5000 } },
+    }))
+    expect(official.ok && official.server.toolCallTimeoutMs).toBe('5000')
+    const legacyMs = parseMcpSnippet(JSON.stringify({ mcpServers: { a: { command: 'node', timeoutMs: 3000 } } }))
+    expect(legacyMs.ok && legacyMs.server.toolCallTimeoutMs).toBe('3000')
+    const legacySeconds = parseMcpSnippet(JSON.stringify({ mcpServers: { a: { command: 'node', timeout: '7000' } } }))
+    expect(legacySeconds.ok && legacySeconds.server.toolCallTimeoutMs).toBe('7000')
+    // The new upstream name wins over both aliases.
+    const precedence = parseMcpSnippet(
+      JSON.stringify({ mcpServers: { a: { command: 'node', toolCallTimeoutMs: 9000, timeoutMs: 3000, timeout: 1000 } } }),
+    )
+    expect(precedence.ok && precedence.server.toolCallTimeoutMs).toBe('9000')
+  })
+
+  it('reads exact template tokens as ref rows and rejects mixed expressions with a warning', () => {
+    const outcome = parseMcpSnippet(JSON.stringify({
+      servers: {
+        a: {
+          transport: 'stdio',
+          command: 'node',
+          env: {
+            REF_ONLY: '${credential:ENV_TOKEN}',
+            LITERAL: 'plain-value',
+            MIXED: 'Bearer ${credential:OTHER}',
+          },
+        },
+      },
+    }))
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.server.env).toEqual([
+      { key: 'REF_ONLY', ref: 'ENV_TOKEN', value: '' },
+      { key: 'LITERAL', ref: '', value: 'plain-value' },
+    ])
+    expect(outcome.server.warnings).toEqual([{ code: 'mixed-template', field: 'env[MIXED]' }])
+    // Document values are only ever credential TEMPLATES: the literal is
+    // staged as a write-only draft value, never stored in the document.
+    for (const row of outcome.server.env) {
+      expect(row.value === '' || row.ref === '').toBe(true)
+    }
+  })
+
+  it('reads header template tokens as ref rows and mixed headers as warnings', () => {
+    const outcome = parseMcpSnippet(JSON.stringify({
+      servers: {
+        h: {
+          transport: 'streamable-http',
+          url: 'https://mcp.example.test/x',
+          headers: {
+            Authorization: '${credential:AUTH}',
+            'X-Api-Key': 'literal-key',
+            'X-Broken': 'prefix-${credential:X}',
+          },
+        },
+      },
+    }))
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.server.headers).toEqual([
+      { name: 'Authorization', ref: 'AUTH', value: '' },
+      { name: 'X-Api-Key', ref: 'X_API_KEY', value: 'literal-key' },
+    ])
+    expect(outcome.server.warnings).toEqual([{ code: 'mixed-template', field: 'headers[X-Broken]' }])
+  })
+
+  it('prefers the explicit transport over type heuristics and drops cross-transport fields', () => {
+    const stdio = parseMcpSnippet(JSON.stringify({
+      servers: { a: { transport: 'stdio', type: 'remote', command: 'node', url: 'https://mcp.example.test/x' } },
+    }))
+    expect(stdio.ok).toBe(true)
+    if (!stdio.ok) return
+    expect(stdio.server.transport).toBe('stdio')
+    expect(stdio.server.warnings).toContainEqual({ code: 'dropped-field', field: 'url' })
+    const http = parseMcpSnippet(JSON.stringify({
+      servers: { b: { transport: 'streamable-http', url: 'https://mcp.example.test/x', command: 'node' } },
+    }))
+    expect(http.ok).toBe(true)
+    if (!http.ok) return
+    expect(http.server.transport).toBe('streamable-http')
+    expect(http.server.warnings).toContainEqual({ code: 'dropped-field', field: 'command' })
+  })
+
+  it('strips unsupported fields with a warning instead of silently dropping them', () => {
+    const outcome = parseMcpSnippet(JSON.stringify({
+      servers: {
+        a: {
+          transport: 'stdio',
+          command: 'node',
+          maxInstructionBytes: 1024,
+          catalogDescriptionMaxLength: 80,
+          failOnStartupError: true,
+          expandTemplates: true,
+        },
+      },
+    }))
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.server.warnings.map((warning) => warning.field).sort()).toEqual([
+      'catalogDescriptionMaxLength',
+      'expandTemplates',
+      'failOnStartupError',
+      'maxInstructionBytes',
+    ])
+  })
+
+  it('warns on unsupported values instead of coercing them', () => {
+    const outcome = parseMcpSnippet(JSON.stringify({
+      servers: {
+        a: {
+          transport: 'stdio',
+          command: 'node',
+          toolCallTimeoutMs: 'soon',
+          toolLoading: 'sometimes',
+          reconnect: { enabled: true, maxAttempts: 1.5 },
+        },
+      },
+    }))
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.server.toolCallTimeoutMs).toBeUndefined()
+    expect(outcome.server.toolLoading).toBeUndefined()
+    expect(outcome.server.reconnect).toBeUndefined()
+    const fields = outcome.server.warnings.filter((warning) => warning.code === 'invalid-value').map((warning) => warning.field)
+    expect(fields).toEqual(['toolCallTimeoutMs', 'reconnect.maxAttempts', 'toolLoading'])
+  })
+
+  it('maps the official enabled flag to the global-allowed flag only (default OFF stays OFF)', () => {
+    // Import never writes a workspace enable row: our default is OFF, so the
+    // server is allowed but enabled in NO workspace until the user turns it on.
+    const enabled = parseMcpSnippet(JSON.stringify({ servers: { a: { transport: 'stdio', command: 'node', enabled: true } } }))
+    expect(enabled.ok && enabled.server.enabled).toBe(true)
+    const disabled = parseMcpSnippet(JSON.stringify({ servers: { a: { transport: 'stdio', command: 'node', enabled: false } } }))
+    expect(disabled.ok && disabled.server.enabled).toBe(false)
+  })
+
+  it('re-imports this plugin own Copy JSON round trip (serverName, templates, knobs, oauth)', () => {
+    const copy = {
+      mcpServers: {
+        remote: {
+          serverName: 'remote',
+          transport: 'streamable-http',
+          url: 'https://mcp.example.test/x',
+          toolCallTimeoutMs: 45_000,
+          startupTimeoutMs: 20_000,
+          toolLoading: 'on-demand',
+          headers: { Authorization: '${credential:AUTH}' },
+          oauth: { clientId: 'client-1', scope: 'read' },
+        },
+      },
+    }
+    const outcome = parseMcpSnippet(JSON.stringify(copy))
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.server).toMatchObject({
+      name: 'remote',
+      toolCallTimeoutMs: '45000',
+      startupTimeoutMs: '20000',
+      toolLoading: 'on-demand',
+      headers: [{ name: 'Authorization', ref: 'AUTH', value: '' }],
+      oauth: { clientId: 'client-1', scope: 'read' },
+    })
+  })
+})
+
+describe('cross-transport stray fields', () => {
+  it('warns when oauth/envKeys cannot belong to the chosen transport', () => {
+    const stdio = parseMcpSnippet(
+      JSON.stringify({ servers: { a: { transport: 'stdio', command: 'node', oauth: { clientId: 'c' } } } }),
+    )
+    expect(stdio.ok).toBe(true)
+    if (!stdio.ok) return
+    expect(stdio.server.oauth).toBeUndefined()
+    expect(stdio.server.warnings).toContainEqual({ code: 'dropped-field', field: 'oauth' })
+    const http = parseMcpSnippet(
+      JSON.stringify({ servers: { h: { transport: 'streamable-http', url: 'https://x.test/mcp', envKeys: ['TOKEN'] } } }),
+    )
+    expect(http.ok).toBe(true)
+    if (!http.ok) return
+    expect(http.server.env).toEqual([])
+    expect(http.server.warnings).toContainEqual({ code: 'dropped-field', field: 'envKeys' })
   })
 })

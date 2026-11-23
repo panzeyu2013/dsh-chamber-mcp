@@ -411,6 +411,111 @@ describe('MCP injection node definition', () => {
   })
 })
 
+
+const NL = String.fromCharCode(10)
+/** The exact upstream on-demand catalog section (dsh-mcp-client tool-loading). */
+const catalogPrompt = (name: string, entries: readonly string[]): string =>
+  [
+    '### On-demand tools from MCP server ' + name,
+    'These tools are not in your tool list. Before calling one, load it with mcp__' + name + '__load_tools.',
+    ...entries.map((entry) => '- ' + entry),
+  ].join(NL)
+
+const onDemand = (serverName: string): ServerDef => ({
+  serverName,
+  transport: 'stdio',
+  command: 'run',
+  toolLoading: 'on-demand',
+})
+
+describe('MCP injection row view (on-demand catalog)', () => {
+  it('marks an on-demand server by its catalog, not by a tool count', async () => {
+    const node = await render({
+      servers: [
+        {
+          name: 'github',
+          toolCount: 0,
+          tools: [],
+          catalog: 2,
+          catalogNames: ['search_repos', 'create_issue'],
+          onDemand: true,
+        },
+      ],
+    })
+    const summary = t('injection.catalog', { name: 'github', count: 2 })
+    expect(summary).toContain('github')
+    headOf(node).click()
+    await flush()
+    expect(node.querySelector('[data-injection-summary]')?.textContent).toBe(summary)
+    const source = node.querySelector('[data-injection-server-head]') as HTMLElement
+    expect(source.textContent).toBe(summary)
+    source.click()
+    await flush()
+    // The catalog names are RAW names under their own title…
+    expect(node.querySelector('[data-injection-catalog]')?.textContent).toBe(t('injection.catalogTitle'))
+    expect(Array.from(node.querySelectorAll('[data-injection-catalog-tool]')).map((el) => el.textContent)).toEqual([
+      'search_repos',
+      'create_issue',
+    ])
+    // …never public mcp__ names and never an eager "name (0)" claim.
+    expect(node.textContent).not.toContain('mcp__')
+    expect(node.textContent).not.toContain(t('injection.entry', { name: 'github', count: 0 }))
+  })
+
+  it('reports catalog names the cap left out instead of dropping them', async () => {
+    const carried = Array.from({ length: INJECTION_NAME_LIMIT }, (_, index) => 't' + String(index))
+    const node = await render({
+      servers: [{ name: 'big', toolCount: 0, tools: [], catalog: INJECTION_NAME_LIMIT + 5, catalogNames: carried, onDemand: true }],
+    })
+    headOf(node).click()
+    await flush()
+    ;(node.querySelector('[data-injection-server-head]') as HTMLElement).click()
+    await flush()
+    expect(node.querySelectorAll('[data-injection-catalog-tool]')).toHaveLength(INJECTION_NAME_LIMIT)
+    expect(node.textContent).toContain(t('injection.catalogOmitted', { count: 5 }))
+  })
+})
+
+describe('MCP injection node definition (on-demand)', () => {
+  const definitionWith = (servers: ServerDef[]) => createInjectionNodeDefinition({ servers: () => servers })
+
+  it('reports the catalog of an on-demand server whose header exposed no tools', () => {
+    // Under on-demand the header carries only the loader; the catalog is the
+    // registration, so a loader-only request still derives one notice entry.
+    const scoped = definitionWith([onDemand('github')])
+    const data = { header: { config: {}, tools: [{ name: 'mcp__github__load_tools' }] }, reason: 'initial' }
+    const state = scoped.start(undefined, { event: { type: 'request/header', seq: 9, data } }, readerWith(undefined, catalogPrompt('github', ['search'])))
+    expect(state.servers).toEqual([
+      { name: 'github', toolCount: 0, tools: [], catalog: 1, catalogNames: ['search'], onDemand: true },
+    ])
+    expect(nodeOf(state)).toMatchObject({ visibility: 'visible' })
+  })
+
+  it('adds NO row for a waiting-authorization server that exposed nothing', () => {
+    // A server waiting for authorization registers no tool and renders no
+    // catalog, so the notice must stay silent instead of claiming a
+    // registration with zero tools.
+    const waiting = definitionWith([{ serverName: 'github', transport: 'streamable-http', url: 'https://mcp.example.com' }])
+    const state = waiting.start(undefined, {
+      event: { type: 'request/header', seq: 4, data: { header: { config: {}, tools: [{ name: 'run_code' }] }, reason: 'initial' } },
+    })
+    expect(state.servers).toEqual([])
+    expect(nodeOf(state)).toBeNull()
+  })
+
+  it('counts a real load_tools tool of an eager server as a registered tool', () => {
+    const eager = definitionWith([{ serverName: 'eager', transport: 'stdio', command: 'run' }])
+    const state = eager.start(undefined, {
+      event: {
+        type: 'request/header',
+        seq: 5,
+        data: { header: { config: {}, tools: [{ name: 'mcp__eager__load_tools' }] }, reason: 'initial' },
+      },
+    })
+    expect(state.servers).toEqual([{ name: 'eager', toolCount: 1, tools: ['mcp__eager__load_tools'] }])
+  })
+})
+
 describe('MCP injection row registration', () => {
   /** Minimal cordis-like host: the effect runs immediately, disposer retained. */
   const mountHost = (options: { inject?: boolean; injectThrows?: boolean; registerThrows?: boolean } = {}) => {
@@ -482,14 +587,5 @@ describe('MCP injection row registration', () => {
     const duplicate = mountHost({ registerThrows: true })
     expect(duplicate.errors).toHaveLength(1)
     expect(duplicate.definitions).toEqual([])
-  })
-})
-
-describe('MCP injection node definition (ownership)', () => {
-  it('uses the configured server list for longest-prefix ownership', () => {
-    const servers = (): ServerDef[] => [{ serverName: 'my_server', transport: 'stdio', command: 'run' }]
-    const scoped = createInjectionNodeDefinition({ servers })
-    const state = scoped.start(undefined, { event: header(3, 'initial', ['mcp__my_server__tool']) })
-    expect(state.servers).toEqual([{ name: 'my_server', toolCount: 1, tools: ['mcp__my_server__tool'] }])
   })
 })
