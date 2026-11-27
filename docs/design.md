@@ -8,7 +8,7 @@ the live smoke installs and boots through an anchor CLI of that line
 (`DSH_ANCHOR_CLI`, read at run time; the CI smoke job requires
 `DSH_SMOKE_ANCHORS`). Current release state: the GitHub Releases page; scope,
 cuts and known limitations: `docs/acceptance.md`; release process:
-`docs/RELEASE.md`. **Architecture A is LANDED at `0.2.6-alpha.0`:** the
+`docs/RELEASE.md`. **Architecture A is LANDED at `0.2.6`:** the
 plugin's own connection layer is retired into a mounted official
 `@deepseek-ai/dsh-mcp-client` instance per configured server, with capture-only
 façades and an applier-owned per-agent fan-out. §5(g) is the authoritative
@@ -310,7 +310,7 @@ breaking a child's creation.
 | `tests/fixture/{mcp-fixture-server.mjs,oauth-auth-server.mjs}` | spawnable real MCP stdio fixture (add/greet/fail/image/crash/admin.reset/dyn_add/env_probe; instructions, one resource and one URI TEMPLATE; the unused oversized/no-resources experiment switches were removed) and the in-process fake OAuth authorization server |
 | `tests/tools.spec.ts`, `tests/host/*.spec.ts` | 17 host suites (17 files) + `tests/tools.spec.ts`; browser half 15 client suites; 3 acceptance suites; `tests/delegation.spec.ts` — repo total **812 tests / 37 files** |
 
-Run: `npm run check` — typecheck (both tsconfigs), `vitest run --coverage`, build and `verify:package` (pack contents, consumer types, bundle purity, client artifact, determinism) — fully green at `0.2.6-alpha.0`: **37 spec files / 812 tests**, coverage statements/lines **93.27 %**, branches **87.27 %**, functions **89.22 %** (floors 93 / 85 / 86 / 93). Evidence: `.scratch/exec/check-ship5.log` (EXIT 0), `.scratch/exec/verify-gen-ship4.log` (`verify-generation 0.2.3-alpha.2` PASS, no `--pin`) and `.scratch/exec/m0-ship4.log` (alpha.2 M0 live smoke PASS). The branch ratio drifts by a few hundredths of a point between runs (v8 counts async paths as they are exercised), so the thresholds — not the second decimal — are the contract.
+Run: `npm run check` — typecheck (both tsconfigs), `vitest run --coverage`, build and `verify:package` (pack contents, consumer types, bundle purity, client artifact, determinism) — fully green at `0.2.6` on the release commit (2026-11-27): **37 spec files / 812 tests**, coverage statements/lines **93.27 %**, branches **87.27 %**, functions **89.22 %** (floors 93 / 85 / 86 / 93). Evidence: `.scratch/exec/release-0.2.6-check.log` (EXIT 0), `.scratch/exec/release-0.2.6-verify-gen.log` (`verify-generation 0.2.3-alpha.2` PASS, no `--pin`) and `.scratch/exec/release-0.2.6-smoke.log` (alpha.2 M0 live smoke PASS). The branch ratio drifts by a few hundredths of a point between runs (v8 counts async paths as they are exercised), so the thresholds — not the second decimal — are the contract.
 
 **Deleted by this line:** `src/server.ts`, `src/transport.ts`, `src/server-context.ts`, `src/tools.ts` (the plugin's own connection layer) and `src/client/nav-icon.ts` (the retired DOM patch). The host half no longer owns a transport, a definition builder or a resource-provider registrar of its own.
 
@@ -475,7 +475,7 @@ it is.
 
 ### (c) Landed design, deviations and why
 
-This list describes the `0.2.6-alpha.0` tree. Everything the pre-landing plan
+This list describes the `0.2.6` tree. Everything the pre-landing plan
 listed as a target has landed; §5(g) owns the architecture summary, the
 behaviour-change ledger and the deferred register.
 
@@ -650,7 +650,7 @@ behaviour-change ledger and the deferred register.
   the actual popup/browser callback is a manual/live check (same class as the
   unscripted UI click-through, `docs/acceptance.md` §Known limitations).
 
-### (d) 0.0.3 — runtime status, manual control, timeouts (wire v2 at 0.2.6-alpha.0)
+### (d) 0.0.3 — runtime status, manual control, timeouts (wire v2 at 0.2.6)
 
 - **Carrier choice.** The status/actions ride `ctx.connection.fetch.register`
   (`/api/mcp-scope.status|action|tools`), the same seam the official
@@ -891,7 +891,7 @@ written — through the platform's own seams rather than a new channel:
 
 ### (g) Landed architecture A (0.2.6 line)
 
-**Status: LANDED at `0.2.6-alpha.0`.** This section is the authoritative
+**Status: LANDED at `0.2.6`.** This section is the authoritative
 description of the shipped architecture; §4 and §5(c) describe its runtime
 consequences, and §5 lists the module inventory. User-facing limitations:
 `docs/acceptance.md` §"Known limitations".
@@ -1038,7 +1038,7 @@ seam-exempt) and never fans out from the façade.
   tools. Never an upstream message, credential value or token; an attempt id is
   never echoed.
 
-**Behaviour-change ledger (0.2.6-alpha.0 vs 0.2.5).**
+**Behaviour-change ledger (0.2.6 vs 0.2.5).**
 1. Connection-layer ownership retires into the mounted instance: the plugin's
    transports, reconnect policy, probe, instruction publishing and
    resource-provider registration are gone; client identity on the wire is the

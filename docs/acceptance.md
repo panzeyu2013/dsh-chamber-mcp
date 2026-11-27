@@ -125,7 +125,7 @@ there too (§5(g) "Deferred register"), not duplicated here.
   the verdict without failing on it.
 - **The multi-line support window is closed as of 0.2.6.** The 0.2.0/0.2.1/
   0.2.2 generations are no longer declared or verified: **0.2.5 is frozen as the
-  last release of that old line**. `0.2.6-alpha.0` declares exactly one peer
+  last release of that old line**. `0.2.6` declares exactly one peer
   line, `^0.2.3-alpha.2`, which is also its compile anchor and dev pin (cordis
   `~4.2.0-alpha.1`); the runtime preflight refuses an out-of-range host, so an
   old-line instance must upgrade dsh first. The 0.1.5/0.1.6 plugin generation —
@@ -236,32 +236,40 @@ there too (§5(g) "Deferred register"), not duplicated here.
   formatting are the mounted client's; the plugin only titles the transcript row
   ("Load tools") and parses the catalog for the registered-tools notice.
 
-## Gate evidence (0.2.6-alpha.0)
+## Gate evidence (0.2.6)
 
-- **Manual real-browser pass: NOT recorded for 0.2.6-alpha.0 — required before
-  the stable tag.** The Factory settings-section render, the Plugins-page reuse,
-  the `settings.section.icon` seat, the OAuth popup/callback roundtrip and the
-  official-plane visual coexistence have no real-browser transcript; everything
-  below is headless (jsdom + the M0/M1 drivers). The maintainer records this
-  pass before tagging the stable `0.2.6`.
+- **Real-browser pass: RECORDED on 2026-11-27.** A stock Chromium 131
+  (Playwright build 1148) over CDP against a scratch `dsh@0.2.3-alpha.2`
+  instance running the packed `0.2.6`: the Factory settings-section render, the
+  same section reused from the shell's Plugins page, the
+  `settings.section.icon` plug mark in the sidebar, an OAuth popup/callback
+  round-trip (fake authorization server; the row flips to authorized, Sign out
+  clears the grant and restarts the row as `waiting-authorization`), and an
+  official-plane same-name server rendering `failed{conflict}` (`名称冲突`)
+  instead of shadowing or a second process. Evidence:
+  `.scratch/browser-pass/report.md` and its `shots/` (local, gitignored).
 - `npm run check` — PASS: typecheck (both tsconfigs); **37 spec files / 812
   tests**; coverage statements/lines **93.27 %**, branches **87.27 %**,
   functions **89.22 %** against the floors 93 / 85 / 86 / 93; build;
   `verify:package` (65 tarball entries, consumer types, host entry,
   client-bundle purity, `verify-client-artifact`, determinism over 61 files).
-  Log: `.scratch/exec/check-ship5.log` (EXIT 0).
+  Log: `.scratch/exec/release-0.2.6-check.log` (EXIT 0).
 - `node scripts/verify-generation.mjs 0.2.3-alpha.2` — PASS: 28
   `@deepseek-ai/dsh-*` devDeps pinned, exact scratch install, `tsc` over src +
-  tests. Log: `.scratch/exec/verify-gen-ship4.log`.
+  tests. Log: `.scratch/exec/release-0.2.6-verify-gen.log`.
 - Alpha.2 M0 live smoke — PASS: the packed tree installs and boots through an
   `0.2.3-alpha.2` anchor; settings write → volatile commit → reconcile →
   connect; `/api/mcp-scope.tools` lists both fixture tools before and after a
   restart; the workspace flips are driven and a stale-revision write is refused
   (per-workspace tool visibility itself is asserted by the real-mount seam spec
   `tests/host/upstream-mount-gate.spec.ts` and the applier integration suites,
-  not by this headless smoke). Log: `.scratch/exec/m0-ship4.log` (EXIT 0); transcript under
-  `.smoke/logs/M0-raw.log` (gitignored). M1's model-facing capture remains
-  `not-captured` headlessly — transcript evidence, not a gate.
+  not by this headless smoke). Log: `.scratch/exec/release-0.2.6-smoke.log`
+  (EXIT 0); transcript under `.smoke/logs/M0-raw.log` (gitignored). M1's
+  model-facing capture remains `not-captured` headlessly — transcript evidence,
+  not a gate.
 - `node scripts/verify-workflow-action-pins.mjs` — PASS (CI/release action
-  pins), and `node scripts/release-notes.mjs 0.2.6-alpha.0` composes the
-  release body from the dated CHANGELOG section.
+  pins), and `node scripts/release-notes.mjs 0.2.6` composes the release body
+  from the dated CHANGELOG section.
+- **The shipped code is identical to `0.2.6-alpha.0`** — only the version
+  identity, this evidence and the CHANGELOG differ (see the release commit's
+  diff); the prerelease's acceptance status is superseded by the pass above.

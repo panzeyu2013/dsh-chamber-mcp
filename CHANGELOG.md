@@ -13,6 +13,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > only and ignores this one — an entry left here ships in the tree but never
 > appears in the release notes.
 
+## [0.2.6] - 2026-11-27
+
+The **first stable release of the 0.2.6 line** and the architecture-A landing.
+The shipped code is identical to `0.2.6-alpha.0`; this release only removes the
+prerelease suffix and records the stable acceptance gates on the release commit,
+including the real-browser pass the prerelease left outstanding. The exhaustive
+per-feature notes for the line are in the
+[0.2.6-alpha.0](https://github.com/panzeyu2013/dsh-chamber-mcp/blob/main/CHANGELOG.md#026-alpha0---2026-11-23)
+section below; this section is the stable summary.
+
+**Highlights.**
+
+- **Architecture A.** The plugin's own connection layer is retired into one
+  mounted official `@deepseek-ai/dsh-mcp-client` instance per configured
+  server: an isolated seat fiber plus four capture-only façades, with
+  `src/agents.ts` as the only per-agent fan-out. Transport, the
+  `${credential:…}` templates, reconnect/backoff, generation swaps,
+  instructions and the resource provider are upstream's; the plugin keeps the
+  per-workspace gate, its settings surface, the status/action routes, the OAuth
+  actions and the transcript rows.
+- **Per-workspace enablement, default OFF.** A server is configured once and
+  effective nowhere until a workspace explicitly enables it; tools register per
+  agent scope, never globally, a workspace without the record never sees the
+  server's tools in its session's model-visible tool set, and subagent
+  delegation narrows (never widens) the set.
+- **On-demand tool loading.** `toolLoading: 'on-demand'` lists only
+  `mcp__<serverName>__load_tools` and renders the catalog into the prompt;
+  a loaded tool enters an agent scope only through the fail-closed admission
+  (workspace gate + `toolFilter` narrowing, revocable).
+- **OAuth browser authorization (O2).** Streamable-HTTP rows can carry an
+  `oauth` block; the official browser flow (PKCE S256/DCR, the
+  `webserver/request` callback, grant read/refresh/redaction) runs through the
+  seat's private isolated `McpClientHost`, the grant lives in the credentials
+  domain under a derived key, and sign-out runs retire → disposeOwner → unmount
+  → delete record → remount with a cleanup guard.
+- **Settings and transcript surfaces.** The official
+  `settings.section.icon` seat, server list → detail → editor, the workspace
+  view, the runtime status/action/tool routes, the keyed MCP tool-call rows
+  ("Load tools" for the loader) and the registered-tools notice.
+- **One support line.** dsh `0.2.3-alpha.2` (cordis `4.2.0-alpha.1`) is the
+  compile anchor, the dev pin and the only declared peer line
+  (`^0.2.3-alpha.2`); the runtime preflight refuses an out-of-range host, so a
+  0.2.0/0.2.1/0.2.2 instance must upgrade dsh first. **0.2.5 stays the frozen
+  last release of the old line.**
+
+**Acceptance (release commit, 2026-11-27).**
+
+- **Real-browser pass: RECORDED.** A stock Chromium 131 (Playwright build 1148)
+  over CDP against a scratch `dsh@0.2.3-alpha.2` instance running the packed
+  `0.2.6`: the Factory settings section renders, the same section is reused
+  from the shell's Plugins page, the `settings.section.icon` plug mark renders
+  in the sidebar, an OAuth popup/callback round-trip (fake authorization server)
+  flips the row to authorized and Sign out clears the grant, and an
+  official-plane same-name server renders `failed{conflict}` (`名称冲突`)
+  instead of shadowing or a second process. Transcript:
+  `.scratch/browser-pass/report.md` with screenshots under
+  `.scratch/browser-pass/shots/` (local evidence, gitignored).
+- `npm run check` — PASS: typecheck (both tsconfigs); **37 spec files / 812
+  tests**; coverage statements/lines **93.27 %**, branches **87.27 %**,
+  functions **89.22 %** (floors 93 / 85 / 86 / 93); build; `verify:package`
+  (65 tarball entries, consumer types, host entry, client-bundle purity,
+  `verify-client-artifact`, determinism over 61 files). Log:
+  `.scratch/exec/release-0.2.6-check.log` (EXIT 0).
+- `node scripts/verify-generation.mjs 0.2.3-alpha.2` — PASS (no `--pin`).
+  Log: `.scratch/exec/release-0.2.6-verify-gen.log`.
+- Live smoke on an `0.2.3-alpha.2` anchor — M0 PASS (install/boot through the
+  anchor CLI, settings write → volatile commit → reconcile → connect, the tools
+  route listing both fixture tools before and after a restart, stale-revision
+  write refused, workspace flips driven). M1's model-facing capture stays
+  `not-captured` on headless anchors (transcript evidence, not a gate). Log:
+  `.scratch/exec/release-0.2.6-smoke.log` (EXIT 0).
+
 ## [0.2.6-alpha.0] - 2026-11-23
 
 First prerelease of the 0.2.6 line: the plugin moves to dsh `0.2.3-alpha.2` as

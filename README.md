@@ -105,9 +105,9 @@ dsh plugin --profile web add file:./.smoke/dsh-chamber-mcp-<version>.tgz
 | 唯一声明线（peer 范围） | `^0.2.3-alpha.2`；cordis `~4.2.0-alpha.1`（`dsh-mcp-client` 是必需 peer） |
 | 实机验证锚点 | 只有这条线：`DSH_ANCHOR_CLI` / CI 的 `DSH_SMOKE_ANCHORS` 必须指向 **0.2.3-alpha.2** 的 CLI（每条声明线一次 M0/M1） |
 
-**单线支持窗口。** 0.2.6 线只声明**一条**支持线 `^0.2.3-alpha.2`：编译锚点、dev 固定、CI 守卫与实机 smoke 都只对这条线。上一代的多线窗口已经结束——**0.2.5 冻结为旧线末版**（0.2.0/0.2.1/0.2.2 不再声明，也不再编译验证或实机验证）。本仓库不为旧代际保留兼容或 shim：0.2.3-alpha.2 移除了 `ctx.root` 属性，源码三处直接改成 `ctx[Context.root]`（没有 feature-detect 回退）；宿主版本不在 peer 范围内时，运行时的插件兼容预检会在加载前拒绝该行，需先升级 dsh。2026-11-23 的落地门禁：`npm run check` 绿（37 个 spec 文件 / 812 个测试，覆盖率 statements/lines 93.27%、branches 87.27%、functions 89.22%，含打包校验）、`verify-generation 0.2.3-alpha.2` PASS（同代际无需 `--pin`）、alpha.2 M0 实机 smoke PASS（安装/启动、设置写入 → volatile 提交 → reconcile → 连接、重启后路由仍列出工具（按工作区注入本身由真实挂载 seam 测试与 applier 集成套件断言，不由该 headless smoke 断言））。
+**单线支持窗口。** 0.2.6 线只声明**一条**支持线 `^0.2.3-alpha.2`：编译锚点、dev 固定、CI 守卫与实机 smoke 都只对这条线。上一代的多线窗口已经结束——**0.2.5 冻结为旧线末版**（0.2.0/0.2.1/0.2.2 不再声明，也不再编译验证或实机验证）。本仓库不为旧代际保留兼容或 shim：0.2.3-alpha.2 移除了 `ctx.root` 属性，源码三处直接改成 `ctx[Context.root]`（没有 feature-detect 回退）；宿主版本不在 peer 范围内时，运行时的插件兼容预检会在加载前拒绝该行，需先升级 dsh。2026-11-27 的正式版门禁：`npm run check` 绿（37 个 spec 文件 / 812 个测试，覆盖率 statements/lines 93.27%、branches 87.27%、functions 89.22%，含打包校验）、`verify-generation 0.2.3-alpha.2` PASS（同代际无需 `--pin`）、alpha.2 M0 实机 smoke PASS（安装/启动、设置写入 → volatile 提交 → reconcile → 连接、重启后路由仍列出工具（按工作区注入本身由真实挂载 seam 测试与 applier 集成套件断言，不由该 headless smoke 断言））。
 
-**0.2.6-alpha.0 是 0.2.6 线的第一个预发布，也是架构 A 的落地版。** 连接层退役进官方 `McpClientHost` 实例（每台服务器一个隔离 seat fiber + 四个只捕获 façade + applier 独占 fan-out），新增按需工具加载与 OAuth 浏览器授权；客户端增加官方 `settings.section.icon` 图标位、OAuth 面板、目录提示与「加载工具」转录行。完整行为变化清单与已延迟项见 `docs/design.md` §5(g)，已知限制见 `docs/acceptance.md`。
+**0.2.6 是 0.2.6 线的首个正式版，也是架构 A 的落地版。** 连接层退役进官方 `McpClientHost` 实例（每台服务器一个隔离 seat fiber + 四个只捕获 façade + applier 独占 fan-out），新增按需工具加载与 OAuth 浏览器授权；客户端增加官方 `settings.section.icon` 图标位、OAuth 面板、目录提示与「加载工具」转录行。完整行为变化清单与已延迟项见 `docs/design.md` §5(g)，已知限制见 `docs/acceptance.md`。
 
 ## 排障
 
@@ -139,7 +139,7 @@ dsh plugin --profile web remove dsh-chamber-mcp   # 之后重启实例
 | --- | --- |
 | [`docs/README.en.md`](docs/README.en.md) | 本 README 的英文版 |
 | [`docs/design.md`](docs/design.md) | 架构：宿主/浏览器两半、官方实例挂载 + 按工作区注入模型、设置文档、启动时序、OAuth O2、wire 词汇、行为变化账本、UI 布局参考 |
-| [`docs/acceptance.md`](docs/acceptance.md) | 需求与裁剪矩阵（R1–R4 / E1–E13 / C1–C6）、线路已知限制与 0.2.6-alpha.0 门禁证据 |
+| [`docs/acceptance.md`](docs/acceptance.md) | 需求与裁剪矩阵（R1–R4 / E1–E13 / C1–C6）、线路已知限制与 0.2.6 门禁证据 |
 | [`docs/RELEASE.md`](docs/RELEASE.md) | 发布与 CI 运行手册 |
 
 ## License

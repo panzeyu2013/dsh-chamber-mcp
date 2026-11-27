@@ -108,9 +108,9 @@ npm run test:smoke
 #    DSH_SMOKE_ANCHORS (comma-separated CLI paths of the declared line) and
 #    hard-fails when the variable is empty.
 
-# 3a. MANUAL real-browser pass — REQUIRED before the STABLE tag (0.2.6); a
-#     prerelease may ship with it outstanding, and must say so in its release
-#     notes. In a real browser on the smoke machine, record under .scratch/:
+# 3a. REAL-BROWSER pass — REQUIRED before a STABLE tag. A prerelease may ship
+#     with it outstanding, and must say so in its release notes. In a real
+#     browser on the smoke machine, record under .scratch/:
 #       - Settings → MCP servers renders from the Factory settings section;
 #       - the same section is reused from the shell's Plugins page;
 #       - the settings.section.icon seat renders the plug mark in the sidebar;
@@ -118,9 +118,10 @@ npm run test:smoke
 #         the detail flips to authorized, Sign out clears the grant);
 #       - coexistence with an official-plane manager server (no visual/name
 #         collision beyond the documented failed{conflict} row).
-#     0.2.6-alpha.0 ships with this pass NOT recorded — its release notes state
-#     so; do not tag the stable 0.2.6 until the pass (or an explicit maintainer
-#     waiver) is recorded.
+#     0.2.6 ships with the pass RECORDED (2026-11-27: scripted Chromium 131 over
+#     CDP against a scratch 0.2.3-alpha.2 instance running the packed 0.2.6;
+#     evidence .scratch/browser-pass/report.md). The pass (or an explicit
+#     maintainer waiver) remains required before every stable tag.
 
 # 3b. commit, push main, and wait for the CI run on main to finish GREEN.
 #     The Release workflow runs `npm run check` only, and the tag-triggered
@@ -272,8 +273,8 @@ Compatibility notes for consumers:
   `@deepseek-ai/cordis-plugin-loader` **1.2.0-alpha.1** and schemastery
   **~3.20.0-alpha.1** (a single range; the 0.2.2-line union is gone). The
   previous multi-line window (0.2.0/0.2.1/0.2.2) is CLOSED: **0.2.5 is the
-  frozen last release of the old line**, and `0.2.6-alpha.0` starts the
-  single-line 0.2.6 prerelease series. The runtime preflight evaluates the peer
+  frozen last release of the old line**, and `0.2.6` is the first stable
+  release of the single-line series. The runtime preflight evaluates the peer
   range against the host's own version and refuses an out-of-range bundle, so an
   old-line instance must upgrade dsh first.
 - **There is no cross-line `compat` matrix any more.** `npm run check`
@@ -422,8 +423,8 @@ never committed.
 - GitHub Release: edit/delete the Release (or delete just the asset). A fix
   release needs its own version identity: bump `package.json` +
   `package-lock.json` (`packages[""]`) and add a dated
-  `## [<next-version>]` CHANGELOG section (e.g. `0.2.6-alpha.1` for a bad
-  `0.2.6-alpha.0`), commit, re-gate, then annotate-tag and push that version.
+  `## [<next-version>]` CHANGELOG section (e.g. `0.2.7` for a bad
+  `0.2.6`), commit, re-gate, then annotate-tag and push that version.
   Never reuse the released version under a suffix tag: the identity gate
   requires package.json == lock root == dated CHANGELOG heading == tag. To
   withdraw a bad release commit without a version bump, `git revert` the
